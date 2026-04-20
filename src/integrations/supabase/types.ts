@@ -102,10 +102,15 @@ export type Database = {
           expiry_date: string | null
           id: string
           item_name: string
+          batch_no: string | null
           location: string | null
           min_stock_level: number | null
           notes: string | null
+          quality_status: string | null
           quantity: number | null
+          reserved_quantity: number | null
+          supplier_id: string | null
+          unit_cost: number | null
           unit: string | null
           updated_at: string | null
         }
@@ -115,10 +120,15 @@ export type Database = {
           expiry_date?: string | null
           id?: string
           item_name: string
+          batch_no?: string | null
           location?: string | null
           min_stock_level?: number | null
           notes?: string | null
+          quality_status?: string | null
           quantity?: number | null
+          reserved_quantity?: number | null
+          supplier_id?: string | null
+          unit_cost?: number | null
           unit?: string | null
           updated_at?: string | null
         }
@@ -128,14 +138,77 @@ export type Database = {
           expiry_date?: string | null
           id?: string
           item_name?: string
+          batch_no?: string | null
           location?: string | null
           min_stock_level?: number | null
           notes?: string | null
+          quality_status?: string | null
           quantity?: number | null
+          reserved_quantity?: number | null
+          supplier_id?: string | null
+          unit_cost?: number | null
           unit?: string | null
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "inventory_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory_movements: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          id: string
+          inventory_id: string
+          movement_date: string | null
+          movement_type: string
+          notes: string | null
+          quantity: number
+          reference_id: string | null
+          source_module: string | null
+          unit_cost: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          inventory_id: string
+          movement_date?: string | null
+          movement_type: string
+          notes?: string | null
+          quantity: number
+          reference_id?: string | null
+          source_module?: string | null
+          unit_cost?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          inventory_id?: string
+          movement_date?: string | null
+          movement_type?: string
+          notes?: string | null
+          quantity?: number
+          reference_id?: string | null
+          source_module?: string | null
+          unit_cost?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_movements_inventory_id_fkey"
+            columns: ["inventory_id"]
+            isOneToOne: false
+            referencedRelation: "inventory"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       land_parcels: {
         Row: {
@@ -297,11 +370,14 @@ export type Database = {
           created_at: string | null
           expected_date: string | null
           id: string
+          inventory_id: string | null
           item_name: string
           notes: string | null
           quantity: number | null
+          received_at: string | null
           status: string | null
           supplier: string | null
+          supplier_id: string | null
           total_cost: number | null
           unit_price: number | null
           updated_at: string | null
@@ -310,11 +386,14 @@ export type Database = {
           created_at?: string | null
           expected_date?: string | null
           id?: string
+          inventory_id?: string | null
           item_name: string
           notes?: string | null
           quantity?: number | null
+          received_at?: string | null
           status?: string | null
           supplier?: string | null
+          supplier_id?: string | null
           total_cost?: number | null
           unit_price?: number | null
           updated_at?: string | null
@@ -323,16 +402,34 @@ export type Database = {
           created_at?: string | null
           expected_date?: string | null
           id?: string
+          inventory_id?: string | null
           item_name?: string
           notes?: string | null
           quantity?: number | null
+          received_at?: string | null
           status?: string | null
           supplier?: string | null
+          supplier_id?: string | null
           total_cost?: number | null
           unit_price?: number | null
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "procurement_inventory_id_fkey"
+            columns: ["inventory_id"]
+            isOneToOne: false
+            referencedRelation: "inventory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "procurement_supplier_id_fkey"
+            columns: ["supplier_id"]
+            isOneToOne: false
+            referencedRelation: "suppliers"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       production_batches: {
         Row: {
@@ -404,6 +501,42 @@ export type Database = {
           email?: string | null
           full_name?: string | null
           id?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      suppliers: {
+        Row: {
+          address: string | null
+          contact_person: string | null
+          created_at: string | null
+          email: string | null
+          id: string
+          name: string
+          notes: string | null
+          phone: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          address?: string | null
+          contact_person?: string | null
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          name: string
+          notes?: string | null
+          phone?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          address?: string | null
+          contact_person?: string | null
+          created_at?: string | null
+          email?: string | null
+          id?: string
+          name?: string
+          notes?: string | null
+          phone?: string | null
           updated_at?: string | null
         }
         Relationships: []
