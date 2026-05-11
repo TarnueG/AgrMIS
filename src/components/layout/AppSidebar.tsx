@@ -1,4 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import api from '@/lib/api';
 import {
   LayoutDashboard,
   Users,
@@ -50,7 +52,6 @@ const menuItems = [
     items: [
       { title: 'Land Parcels', path: '/assets/land', icon: Wheat },
       { title: 'Machinery', path: '/assets/machinery', icon: Tractor },
-      { title: 'Livestock', path: '/assets/livestock', icon: Leaf },
     ],
   },
   {
@@ -69,14 +70,20 @@ const menuItems = [
     path: '/customers',
   },
   {
-    title: 'Sales & Orders',
+    title: 'Marketing',
     icon: ShoppingCart,
-    path: '/orders',
+    items: [
+      { title: 'Marketing Dashboard', path: '/marketing', icon: ShoppingCart },
+      { title: 'Sales & Order Points', path: '/sales-order-points', icon: Factory },
+    ],
   },
   {
     title: 'Production',
     icon: Factory,
-    path: '/production',
+    items: [
+      { title: 'Production', path: '/production', icon: Factory },
+      { title: 'Livestock Dashboard', path: '/assets/livestock', icon: Leaf },
+    ],
   },
   {
     title: 'Finance',
@@ -106,7 +113,13 @@ const menuItems = [
 export function AppSidebar() {
   const location = useLocation();
   const { signOut, user } = useAuth();
-  const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management']);
+  const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management', 'Marketing', 'Production']);
+
+  const { data: alertData } = useQuery<{ count: number }>({
+    queryKey: ['inventory-alert-count'],
+    queryFn: () => api.get('/inventory/alerts/count'),
+    refetchInterval: 60_000,
+  });
 
   const toggleGroup = (title: string) => {
     setOpenGroups(prev =>
@@ -189,7 +202,12 @@ export function AppSidebar() {
                         }`}
                       >
                         <item.icon className="h-4 w-4" />
-                        {item.title}
+                        <span className="flex-1">{item.title}</span>
+                        {item.title === 'Inventory' && (alertData?.count ?? 0) > 0 && (
+                          <span className="ml-auto text-xs bg-destructive text-destructive-foreground rounded-full px-1.5 py-0.5 leading-none">
+                            {alertData!.count}
+                          </span>
+                        )}
                       </SidebarMenuButton>
                     </Link>
                   </SidebarMenuItem>

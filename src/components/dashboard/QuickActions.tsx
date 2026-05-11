@@ -1,40 +1,13 @@
 import { Link } from 'react-router-dom';
-import { 
-  Plus, 
-  FileText, 
-  TrendingUp, 
-  Package,
-  ShoppingCart,
-  Users,
-} from 'lucide-react';
+import { Package, ShoppingCart, Users, TrendingUp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 const actions = [
-  { 
-    title: 'New Order', 
-    icon: ShoppingCart, 
-    path: '/orders',
-    color: 'bg-primary hover:bg-primary/90' 
-  },
-  { 
-    title: 'Add Inventory', 
-    icon: Package, 
-    path: '/inventory',
-    color: 'bg-accent hover:bg-accent/90 text-accent-foreground' 
-  },
-  { 
-    title: 'New Customer', 
-    icon: Users, 
-    path: '/customers',
-    color: 'bg-info hover:bg-info/90' 
-  },
-  { 
-    title: 'View Reports', 
-    icon: TrendingUp, 
-    path: '/reports',
-    color: 'bg-secondary hover:bg-secondary/90' 
-  },
+  { title: 'New Order', icon: ShoppingCart, path: '/orders' },
+  { title: 'Add Inventory', icon: Package, path: '/inventory' },
+  { title: 'New Customer', icon: Users, path: '/customers' },
+  { title: 'View Reports', icon: TrendingUp, path: '/reports' },
 ];
 
 export function QuickActions() {
@@ -49,7 +22,7 @@ export function QuickActions() {
             <Link key={action.path} to={action.path}>
               <Button
                 variant="outline"
-                className={`w-full h-auto py-4 flex flex-col gap-2 ${action.color}`}
+                className="w-full h-auto py-4 flex flex-col gap-2 text-white hover:text-white"
               >
                 <action.icon className="h-5 w-5" />
                 <span className="text-xs">{action.title}</span>

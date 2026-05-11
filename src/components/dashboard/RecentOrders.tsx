@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import api from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -16,16 +16,8 @@ const statusColors: Record<string, string> = {
 export function RecentOrders() {
   const { data: orders, isLoading } = useQuery({
     queryKey: ['recent-orders'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*, customers(name)')
-        .order('created_at', { ascending: false })
-        .limit(5);
-      
-      if (error) throw error;
-      return data;
-    },
+    queryFn: () => api.get<any[]>('/sales/orders'),
+    select: (data) => data.slice(0, 5),
   });
 
   return (

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import api from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { AlertTriangle, Package } from 'lucide-react';
@@ -9,14 +9,15 @@ export function InventoryAlerts() {
   const { data: lowStockItems, isLoading } = useQuery({
     queryKey: ['low-stock-alerts'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('inventory')
-        .select('*')
-        .order('quantity', { ascending: true })
-        .limit(5);
-      
-      if (error) throw error;
-      return data?.filter(item => item.quantity <= item.min_stock_level) || [];
+      const alerts = await api.get<any[]>('/inventory/alerts?status=open');
+      return alerts.slice(0, 5).map(a => ({
+        id: a.id,
+        item_name: a.stock_items?.name ?? '',
+        category: a.stock_items?.unit_of_measure ?? '',
+        quantity: Number(a.quantity_at_trigger),
+        min_stock_level: Number(a.stock_items?.reorder_threshold ?? 0),
+        unit: a.stock_items?.unit_of_measure ?? '',
+      }));
     },
   });
 
