@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Truck, Search, Trash2, Package, Inbox, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const PO_STATUSES_MAP = [
   { value: 'draft', label: 'Pending' },
@@ -38,6 +39,7 @@ type DashView = null | 'total' | 'pending' | 'received' | 'requested' | 'decline
 export default function Procurement() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { canCreate, canEdit, canDelete } = usePermissions();
 
   const [poSearch, setPoSearch] = useState('');
   const [supplierSearch, setSupplierSearch] = useState('');
@@ -177,7 +179,7 @@ export default function Procurement() {
 
   const showTabs = dashView === null || dashView === 'total';
 
-  const newPODialog = (
+  const newPODialog = canCreate('procurement') ? (
     <Dialog open={isAddPoOpen} onOpenChange={setIsAddPoOpen}>
       <DialogContent>
         <DialogHeader><DialogTitle>Create Purchase Order</DialogTitle></DialogHeader>
@@ -247,7 +249,7 @@ export default function Procurement() {
         </form>
       </DialogContent>
     </Dialog>
-  );
+  ) : null;
 
   return (
     <DashboardLayout>
@@ -329,8 +331,8 @@ export default function Procurement() {
                   <TableHead>Type</TableHead>
                   <TableHead>Date</TableHead>
                   <TableHead>Status</TableHead>
-                  {dashView === 'requested' && <TableHead>Action</TableHead>}
-                  <TableHead className="text-right">Delete</TableHead>
+                  {dashView === 'requested' && (canEdit('procurement') || canDelete('procurement')) && <TableHead>Action</TableHead>}
+                  {canDelete('procurement') && <TableHead className="text-right">Delete</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -352,32 +354,38 @@ export default function Procurement() {
                         {r.status}
                       </Badge>
                     </TableCell>
-                    {dashView === 'requested' && (
+                    {dashView === 'requested' && (canEdit('procurement') || canDelete('procurement')) && (
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            className="gradient-primary text-black"
-                            onClick={() => { if (confirm('Accept this request?')) acceptRequest.mutate({ id: r.id, itemType: r.item_type }); }}
-                            disabled={acceptRequest.isPending}
-                          >
-                            Accept
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => { if (confirm('Decline this request?')) declineRequest.mutate({ id: r.id, itemType: r.item_type }); }}
-                            disabled={declineRequest.isPending}
-                          >
-                            Cancel
-                          </Button>
+                          {canEdit('procurement') && (
+                            <Button
+                              size="sm"
+                              className="gradient-primary text-black"
+                              onClick={() => { if (confirm('Accept this request?')) acceptRequest.mutate({ id: r.id, itemType: r.item_type }); }}
+                              disabled={acceptRequest.isPending}
+                            >
+                              Accept
+                            </Button>
+                          )}
+                          {canDelete('procurement') && (
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => { if (confirm('Decline this request?')) declineRequest.mutate({ id: r.id, itemType: r.item_type }); }}
+                              disabled={declineRequest.isPending}
+                            >
+                              Cancel
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     )}
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" disabled={r.status !== 'pending'}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {canDelete('procurement') && (
+                        <Button variant="ghost" size="icon" disabled={r.status !== 'pending'}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -417,20 +425,26 @@ export default function Procurement() {
                     <TableCell>{po.quantity != null ? Number(po.quantity).toFixed(2) : '-'}</TableCell>
                     <TableCell>${Number(po.total_amount).toFixed(2)}</TableCell>
                     <TableCell>
-                      <select
-                        value={po.status}
-                        onChange={(e) => updatePOStatus.mutate({ id: po.id, status: e.target.value })}
-                        className={`h-8 rounded border border-input bg-background px-2 text-sm ${poStatusColor[po.status] ?? ''}`}
-                      >
-                        {PO_STATUSES_MAP.map(s => (
-                          <option key={s.value} value={s.value}>{s.label}</option>
-                        ))}
-                      </select>
+                      {canEdit('procurement') ? (
+                        <select
+                          value={po.status}
+                          onChange={(e) => updatePOStatus.mutate({ id: po.id, status: e.target.value })}
+                          className={`h-8 rounded border border-input bg-background px-2 text-sm ${poStatusColor[po.status] ?? ''}`}
+                        >
+                          {PO_STATUSES_MAP.map(s => (
+                            <option key={s.value} value={s.value}>{s.label}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <Badge className={poStatusColor[po.status] ?? ''}>{getPoLabel(po.status)}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" onClick={() => deletePO.mutate(po.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {canDelete('procurement') && (
+                        <Button variant="ghost" size="icon" onClick={() => deletePO.mutate(po.id)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -484,9 +498,11 @@ export default function Procurement() {
                         <Badge className={poStatusColor[po.status]}>{getPoLabel(po.status)}</Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="icon" onClick={() => deletePO.mutate(po.id)}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                        {canDelete('procurement') && (
+                          <Button variant="ghost" size="icon" onClick={() => deletePO.mutate(po.id)}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -513,7 +529,7 @@ export default function Procurement() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input placeholder="Search orders..." value={poSearch} onChange={(e) => setPoSearch(e.target.value)} onBlur={() => setPoSearch('')} className="pl-9 text-white placeholder:text-white/50" />
                 </div>
-                <Button className="gradient-primary text-black" onClick={() => setIsAddPoOpen(true)}><Plus className="h-4 w-4 mr-2" />New PO</Button>
+                {canCreate('procurement') && <Button className="gradient-primary text-black" onClick={() => setIsAddPoOpen(true)}><Plus className="h-4 w-4 mr-2" />New PO</Button>}
               </div>
 
               <Card>
@@ -542,20 +558,26 @@ export default function Procurement() {
                         <TableCell>{po.quantity != null ? Number(po.quantity).toFixed(2) : '-'}</TableCell>
                         <TableCell>${Number(po.total_amount).toFixed(2)}</TableCell>
                         <TableCell>
-                          <select
-                            value={po.status}
-                            onChange={(e) => updatePOStatus.mutate({ id: po.id, status: e.target.value })}
-                            className={`h-8 rounded border border-input bg-background px-2 text-sm ${poStatusColor[po.status] ?? ''}`}
-                          >
-                            {PO_STATUSES_MAP.map(s => (
-                              <option key={s.value} value={s.value}>{s.label}</option>
-                            ))}
-                          </select>
+                          {canEdit('procurement') ? (
+                            <select
+                              value={po.status}
+                              onChange={(e) => updatePOStatus.mutate({ id: po.id, status: e.target.value })}
+                              className={`h-8 rounded border border-input bg-background px-2 text-sm ${poStatusColor[po.status] ?? ''}`}
+                            >
+                              {PO_STATUSES_MAP.map(s => (
+                                <option key={s.value} value={s.value}>{s.label}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <Badge className={poStatusColor[po.status] ?? ''}>{getPoLabel(po.status)}</Badge>
+                          )}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" onClick={() => deletePO.mutate(po.id)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
+                          {canDelete('procurement') && (
+                            <Button variant="ghost" size="icon" onClick={() => deletePO.mutate(po.id)}>
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -573,6 +595,7 @@ export default function Procurement() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input placeholder="Search suppliers..." value={supplierSearch} onChange={(e) => setSupplierSearch(e.target.value)} onBlur={() => setSupplierSearch('')} className="pl-9 text-white placeholder:text-white/50" />
                 </div>
+                {canCreate('procurement') && (
                 <Dialog open={isAddSupplierOpen} onOpenChange={setIsAddSupplierOpen}>
                   <Button className="gradient-primary text-black" onClick={() => setIsAddSupplierOpen(true)}><Plus className="h-4 w-4 mr-2" />Add Supplier</Button>
                   <DialogContent>
@@ -628,6 +651,7 @@ export default function Procurement() {
                     </form>
                   </DialogContent>
                 </Dialog>
+                )}
               </div>
 
               <Card>
@@ -653,9 +677,11 @@ export default function Procurement() {
                         <TableCell>{s.account_number || '-'}</TableCell>
                         <TableCell>{s.commodity || '-'}</TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="icon" onClick={() => deleteSupplier.mutate(s.id)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
+                          {canDelete('procurement') && (
+                            <Button variant="ghost" size="icon" onClick={() => deleteSupplier.mutate(s.id)}>
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}

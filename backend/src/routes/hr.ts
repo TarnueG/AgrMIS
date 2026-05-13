@@ -1,12 +1,17 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
+import { deactivateUser, reactivateUser } from '../lib/userStatus';
 
 const router = Router();
 router.use(requireAuth);
 router.use(setFarmContext);
+router.use((req, res, next) => {
+  const action = req.method === 'GET' ? 'view' as const : req.method === 'POST' ? 'create' as const : req.method === 'DELETE' ? 'delete' as const : 'edit' as const;
+  return requirePermission('human_capital', action)(req, res, next);
+});
 
 const noop = () => {};
 
@@ -14,6 +19,16 @@ function generatePersonnelId(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   const rand = Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
   return `PER-${rand}`;
+}
+
+function normalizeEmpType(t: string): string {
+  return t === 'employee' ? 'permanent' : t;
+}
+
+function normalizeSector(s: string): string {
+  if (s === 'crops') return 'crop';
+  if (s === 'administration') return 'admin';
+  return s;
 }
 
 function generateContractorId(): string {
@@ -53,7 +68,7 @@ router.get('/stats', async (req, res) => {
       prisma.employees.count({ where: { farm_id: farmId, deleted_at: null, status: 'active' } as any }),
       prisma.employees.count({ where: { farm_id: farmId, deleted_at: null, status: 'inactive' } as any }),
       prisma.employees.count({ where: { farm_id: farmId, deleted_at: null, status: 'suspended' } as any }),
-      prisma.employees.count({ where: { farm_id: farmId, deleted_at: null, employment_type: 'employee', status: { not: 'inactive' } } as any }),
+      prisma.employees.count({ where: { farm_id: farmId, deleted_at: null, employment_type: { in: ['permanent', 'contract', 'employee'] }, status: { not: 'inactive' } } as any }),
       prisma.employees.count({ where: { farm_id: farmId, deleted_at: null, employment_type: 'daily', status: 'active' } as any }),
     ]);
     const presentAtLeastOnce = await prisma.employees.count({
@@ -121,14 +136,15 @@ router.post('/employees', async (req, res) => {
       personnelId = generatePersonnelId();
       if (++attempts > 10) throw new Error('Cannot generate unique personnel ID');
     }
-    const isMonthly = d.employmentType === 'employee' || d.employmentType === 'permanent' || d.employmentType === 'contract';
+    const empType = normalizeEmpType(d.employmentType);
+    const isMonthly = empType === 'permanent' || empType === 'contract';
     const employee = await prisma.employees.create({
       data: {
         full_name: d.fullName,
-        employment_type: d.employmentType,
+        employment_type: empType,
         job_title: d.jobTitle ?? null,
         department: d.department ?? null,
-        sector: d.sector ?? null,
+        sector: d.sector ? normalizeSector(d.sector) : null,
         phone: d.phone ?? null,
         national_id: d.nationalId ?? null,
         date_hired: d.dateHired ? new Date(d.dateHired) : null,
@@ -166,14 +182,15 @@ router.patch('/employees/:id', async (req, res) => {
     const parsed = employeeSchema.partial().safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
     const d = parsed.data;
-    const isMonthly = d.employmentType ? (d.employmentType === 'employee' || d.employmentType === 'permanent' || d.employmentType === 'contract') : (emp.employment_type === 'employee' || emp.employment_type === 'permanent');
+    const empType = d.employmentType ? normalizeEmpType(d.employmentType) : null;
+    const isMonthly = empType ? (empType === 'permanent' || empType === 'contract') : (emp.employment_type === 'permanent' || emp.employment_type === 'contract');
     const updated = await prisma.employees.update({
       where: { id: req.params.id },
       data: {
         ...(d.fullName && { full_name: d.fullName }),
-        ...(d.employmentType && { employment_type: d.employmentType }),
+        ...(empType && { employment_type: empType }),
         ...(d.jobTitle !== undefined && { job_title: d.jobTitle }),
-        ...(d.sector !== undefined && { sector: d.sector }),
+        ...(d.sector !== undefined && { sector: d.sector ? normalizeSector(d.sector) : null }),
         ...(d.phone !== undefined && { phone: d.phone }),
         ...(d.email !== undefined && { email: d.email || null }),
         ...(d.address !== undefined && { address: d.address }),
@@ -205,6 +222,8 @@ router.patch('/employees/:id/terminate', async (req, res) => {
       where: { id: req.params.id },
       data: { status: 'inactive', terminated_at: new Date(), updated_at: new Date() } as any,
     });
+    const userId = (updated as any).user_id;
+    if (userId) await deactivateUser(userId).catch(() => {});
     res.json(updated);
   } catch {
     res.status(500).json({ error: 'Failed to terminate employee', code: 'DB_ERROR' });
@@ -223,6 +242,8 @@ router.patch('/employees/:id/unterminate', async (req, res) => {
       where: { id: req.params.id },
       data: { status: 'active', terminated_at: null, updated_at: new Date() } as any,
     });
+    const userId = (updated as any).user_id;
+    if (userId) await reactivateUser(userId).catch(() => {});
     res.json(updated);
   } catch {
     res.status(500).json({ error: 'Failed to restore employee', code: 'DB_ERROR' });
@@ -246,6 +267,8 @@ router.patch('/employees/:id/suspend', async (req, res) => {
         updated_at: new Date(),
       } as any,
     });
+    const userId = (updated as any).user_id;
+    if (userId) await deactivateUser(userId).catch(() => {});
     res.json(updated);
   } catch {
     res.status(500).json({ error: 'Failed to suspend employee', code: 'DB_ERROR' });
@@ -258,6 +281,8 @@ router.patch('/employees/:id/cancel-suspension', async (req, res) => {
       where: { id: req.params.id },
       data: { status: 'active', suspension_reason: null, suspension_expires_at: null, updated_at: new Date() } as any,
     });
+    const userId = (updated as any).user_id;
+    if (userId) await reactivateUser(userId).catch(() => {});
     res.json(updated);
   } catch {
     res.status(500).json({ error: 'Failed to cancel suspension', code: 'DB_ERROR' });

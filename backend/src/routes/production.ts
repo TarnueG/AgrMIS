@@ -1,12 +1,17 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 
 const router = Router();
 router.use(requireAuth);
 router.use(setFarmContext);
+router.use((req, res, next) => {
+  const subsystem = req.path.startsWith('/livestock') ? 'livestock' : 'production';
+  const action = req.method === 'GET' ? 'view' as const : req.method === 'POST' ? 'create' as const : req.method === 'DELETE' ? 'delete' as const : 'edit' as const;
+  return requirePermission(subsystem, action)(req, res, next);
+});
 
 // ── Status translation helpers ──────────────────────────────────
 
@@ -211,6 +216,55 @@ router.delete('/livestock/:id', async (req, res) => {
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Record not found', code: 'NOT_FOUND' });
     res.status(500).json({ error: 'Failed to delete livestock record', code: 'DB_ERROR' });
+  }
+});
+
+// ── Daily Production Logs ────────────────────────────────────────
+
+const dailyLogSchema = z.object({
+  sector: z.string().min(1),
+  activity: z.string().min(1),
+  quantity: z.number().positive().optional(),
+  unit: z.string().optional(),
+  stockItemId: z.string().uuid().optional(),
+  notes: z.string().optional(),
+});
+
+router.get('/daily-logs', async (req, res) => {
+  try {
+    const logs = await prisma.daily_production_logs.findMany({
+      where: { farm_id: req.user!.farmId ?? undefined },
+      orderBy: { log_date: 'desc' },
+      take: 100,
+    });
+    res.json(logs);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch daily logs', code: 'DB_ERROR' });
+  }
+});
+
+router.post('/daily-logs', async (req, res) => {
+  const parsed = dailyLogSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  }
+  const d = parsed.data;
+  try {
+    const log = await prisma.daily_production_logs.create({
+      data: {
+        farm_id: req.user!.farmId,
+        logged_by: req.user!.userId,
+        sector: d.sector,
+        activity: d.activity,
+        quantity: d.quantity ?? null,
+        unit: d.unit ?? null,
+        stock_item_id: d.stockItemId ?? null,
+        notes: d.notes ?? null,
+      },
+    });
+    res.status(201).json(log);
+  } catch {
+    res.status(500).json({ error: 'Failed to create daily log', code: 'DB_ERROR' });
   }
 });
 

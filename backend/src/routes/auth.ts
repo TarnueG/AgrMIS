@@ -5,11 +5,14 @@ import crypto from 'crypto';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { requireAuth, AuthUser } from '../middleware/auth';
+import { logAuditEvent, clientInfo } from '../lib/audit';
+import { hashPassword, verifyPassword } from '../lib/crypto';
+import { getPermissions, VALID_ROLE_NAMES } from '../lib/permissions';
 
 const router = Router();
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  identifier: z.string().min(1),
   password: z.string().min(1),
 });
 
@@ -17,6 +20,11 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   fullName: z.string().min(2),
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8, 'Password must be at least 8 characters'),
 });
 
 function hashToken(token: string): string {
@@ -47,6 +55,12 @@ async function getFarmId(userId: string): Promise<string | null> {
   return employee?.farm_id ?? null;
 }
 
+async function checkPassword(password: string, stored: string): Promise<boolean> {
+  if (stored.startsWith('pbkdf2:')) return verifyPassword(password, stored);
+  // Legacy bcrypt
+  return bcrypt.compare(password, stored);
+}
+
 // POST /api/v1/auth/login
 router.post('/login', async (req, res) => {
   const result = loginSchema.safeParse(req.body);
@@ -54,21 +68,38 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Invalid input', code: 'VALIDATION_ERROR' });
   }
 
-  const { email, password } = result.data;
+  const { identifier, password } = result.data;
 
   const user = await prisma.users.findFirst({
-    where: { email: { equals: email, mode: 'insensitive' }, deleted_at: null },
+    where: {
+      deleted_at: null,
+      OR: [
+        { email: { equals: identifier, mode: 'insensitive' } },
+        { username: { equals: identifier, mode: 'insensitive' } },
+      ],
+    },
     include: { role: true },
   });
 
-  if (!user || !(await bcrypt.compare(password, user.password_hash))) {
-    return res.status(401).json({ error: 'Invalid email or password', code: 'INVALID_CREDENTIALS' });
+  const valid = user ? await checkPassword(password, user.password_hash) : false;
+
+  if (!user || !valid) {
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({ eventType: 'login_failed', description: `Failed login attempt for ${identifier}`, ipAddress: ip, userAgent });
+    return res.status(401).json({ error: 'Invalid username/email or password', code: 'INVALID_CREDENTIALS' });
+  }
+
+  if (!VALID_ROLE_NAMES.has(user.role.name)) {
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({ eventType: 'login_failed', description: `Login rejected — unknown role '${user.role.name}' for ${identifier}`, ipAddress: ip, userAgent });
+    return res.status(403).json({ error: 'Account role is not recognized. Contact your administrator.', code: 'INVALID_ROLE' });
   }
 
   const farmId = await getFarmId(user.id);
 
   const tokenPayload: AuthUser = {
     userId: user.id,
+    username: user.username ?? '',
     fullName: user.full_name,
     email: user.email,
     roleId: user.role_id,
@@ -93,6 +124,9 @@ router.post('/login', async (req, res) => {
     where: { id: user.id },
     data: { last_login: new Date() },
   });
+
+  const { ip, userAgent } = clientInfo(req);
+  logAuditEvent({ actorUserId: user.id, eventType: 'login_success', description: `${user.full_name} logged in`, ipAddress: ip, userAgent });
 
   return res.json({
     accessToken,
@@ -125,6 +159,7 @@ router.post('/refresh', async (req, res) => {
 
     const tokenPayload: AuthUser = {
       userId: session.user.id,
+      username: session.user.username ?? '',
       fullName: session.user.full_name,
       email: session.user.email,
       roleId: session.user.role_id,
@@ -147,11 +182,61 @@ router.post('/logout', requireAuth, async (req, res) => {
   if (refreshToken) {
     await prisma.sessions.deleteMany({ where: { token_hash: hashToken(refreshToken) } });
   }
+  const { ip, userAgent } = clientInfo(req);
+  logAuditEvent({ actorUserId: req.user!.userId, eventType: 'logout', description: `${req.user!.fullName} logged out`, ipAddress: ip, userAgent });
   return res.json({ message: 'Logged out' });
 });
 
-// POST /api/v1/auth/register
-// Admin-only: creates a new user account
+// GET /api/v1/auth/permissions
+router.get('/permissions', requireAuth, async (req, res) => {
+  const { roleId, roleName, farmId } = req.user!;
+  try {
+    const permissions = await getPermissions(roleId, roleName, farmId);
+    return res.json({ role: roleName, permissions });
+  } catch {
+    return res.status(500).json({ error: 'Failed to fetch permissions', code: 'DB_ERROR' });
+  }
+});
+
+// GET /api/v1/auth/me
+router.get('/me', requireAuth, (req, res) => {
+  return res.json({ user: req.user });
+});
+
+// POST /api/v1/auth/change-password
+router.post('/change-password', requireAuth, async (req, res) => {
+  const parsed = changePasswordSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  }
+  const { currentPassword, newPassword } = parsed.data;
+
+  try {
+    const user = await prisma.users.findUnique({
+      where: { id: req.user!.userId },
+      select: { password_hash: true },
+    });
+    if (!user) return res.status(404).json({ error: 'User not found', code: 'NOT_FOUND' });
+
+    const valid = await checkPassword(currentPassword, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Current password is incorrect', code: 'INVALID_PASSWORD' });
+
+    const newHash = hashPassword(newPassword);
+    await prisma.users.update({
+      where: { id: req.user!.userId },
+      data: { password_hash: newHash, updated_at: new Date() },
+    });
+
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({ actorUserId: req.user!.userId, eventType: 'settings_changed', subsystem: 'settings', description: 'Password changed', ipAddress: ip, userAgent });
+
+    return res.json({ message: 'Password updated' });
+  } catch {
+    return res.status(500).json({ error: 'Failed to update password', code: 'DB_ERROR' });
+  }
+});
+
+// POST /api/v1/auth/register (admin-only account creation fallback)
 router.post('/register', async (req, res) => {
   const result = registerSchema.safeParse(req.body);
   if (!result.success) {
@@ -167,18 +252,17 @@ router.post('/register', async (req, res) => {
     return res.status(409).json({ error: 'Email already registered', code: 'EMAIL_TAKEN' });
   }
 
-  const fieldStaffRole = await prisma.roles.findFirst({ where: { name: 'field_staff' } });
-  if (!fieldStaffRole) {
+  const customerRole = await prisma.roles.findFirst({ where: { name: 'customer' } });
+  if (!customerRole) {
     return res.status(500).json({ error: 'Roles not seeded', code: 'SETUP_REQUIRED' });
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
   const user = await prisma.users.create({
     data: {
-      role_id: fieldStaffRole.id,
+      role_id: customerRole.id,
       full_name: fullName,
       email,
-      password_hash: passwordHash,
+      password_hash: hashPassword(password),
     },
     include: { role: true },
   });

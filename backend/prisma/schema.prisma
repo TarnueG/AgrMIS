@@ -27,6 +27,9 @@ model users {
   phone                                       String?                   @db.VarChar(30)
   username                                    String?                   @db.VarChar(50)
   profile_picture_url                         String?
+  is_active                                   Boolean                   @default(true)
+  deactivated_at                              DateTime?                 @db.Timestamptz(6)
+  linked_customer_id                          String?                   @db.Uuid
   last_login                                  DateTime?                 @db.Timestamptz(6)
   deleted_at                                  DateTime?                 @db.Timestamptz(6)
   created_at                                  DateTime                  @default(now()) @db.Timestamptz(6)
@@ -147,6 +150,8 @@ model employees {
   suspension_reason     String?
   suspension_expires_at DateTime?          @db.Timestamptz(6)
   terminated_at         DateTime?          @db.Timestamptz(6)
+  days_worked           Int                @default(0)
+  total_days_worked     Int                @default(0)
   asset_usage_logs      asset_usage_logs[]
   assets                assets[]
   attendance_logs       attendance_logs[]
@@ -403,6 +408,8 @@ model customers {
   tax_id         String?        @db.VarChar(80)
   credit_limit   Decimal?       @db.Decimal(14, 2)
   notes          String?
+  is_active      Boolean        @default(true)
+  deactivated_at DateTime?      @db.Timestamptz(6)
   deleted_at     DateTime?      @db.Timestamptz(6)
   created_at     DateTime       @default(now()) @db.Timestamptz(6)
   updated_at     DateTime       @default(now()) @db.Timestamptz(6)
@@ -1298,4 +1305,24 @@ model subsystem_permissions {
   @@unique([farm_id, role_id, subsystem], map: "uq_subsystem_perm")
   @@index([farm_id], map: "idx_subperm_farm")
   @@index([role_id], map: "idx_subperm_role")
+}
+
+model audit_events {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  occurred_at    DateTime  @default(now()) @db.Timestamptz(6)
+  actor_user_id  String?   @db.Uuid
+  event_type     String    @db.VarChar(50)
+  subsystem      String?   @db.VarChar(50)
+  card           String?   @db.VarChar(100)
+  action         String?   @db.VarChar(50)
+  target_user_id String?   @db.Uuid
+  description    String?
+  ip_address     String?
+  user_agent     String?
+  metadata       Json?
+
+  @@index([occurred_at(sort: Desc)], map: "idx_audit_occurred")
+  @@index([actor_user_id], map: "idx_audit_actor")
+  @@index([event_type], map: "idx_audit_event_type")
+  @@index([subsystem], map: "idx_audit_subsystem")
 }

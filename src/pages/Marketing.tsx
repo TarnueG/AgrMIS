@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { ShoppingCart, Tag, CheckCircle, Loader2, Plus, Trash2, CreditCard, Smartphone, Clock, Navigation, Search } from 'lucide-react';
 import { format } from 'date-fns';
+import { usePermissions } from '@/hooks/usePermissions';
 
 type MarketingView = 'cart' | 'prices' | 'pending' | 'in_route' | 'in_process' | 'completed';
 type PaymentStep = 'none' | 'method' | 'form' | 'success';
@@ -30,6 +31,7 @@ const BLANK_PAYMENT = { name: '', cardNumber: '', cvv: '', expiry: '', totalAmou
 export default function Marketing() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const [view, setView] = useState<MarketingView>('cart');
   const [priceOpen, setPriceOpen] = useState(false);
   const [editPrice, setEditPrice] = useState<any>(null);
@@ -164,13 +166,17 @@ export default function Marketing() {
             <p className="text-muted-foreground">Manage sales, pricing, and orders</p>
           </div>
           {view === 'prices' ? (
-            <Button className="gradient-primary text-black font-medium" onClick={() => { setEditPrice(null); setPriceForm({ ...BLANK_PRICE }); setPriceOpen(true); }}>
-              <Plus className="h-4 w-4 mr-2" />Set Price
-            </Button>
+            canCreate('marketing') && (
+              <Button className="gradient-primary text-black font-medium" onClick={() => { setEditPrice(null); setPriceForm({ ...BLANK_PRICE }); setPriceOpen(true); }}>
+                <Plus className="h-4 w-4 mr-2" />Set Price
+              </Button>
+            )
           ) : (
-            <Button className="gradient-primary text-black font-medium" onClick={() => { setCartForm({ ...BLANK_CART }); setCartOpen(true); }}>
-              <Plus className="h-4 w-4 mr-2" />Add to Cart
-            </Button>
+            canCreate('marketing') && (
+              <Button className="gradient-primary text-black font-medium" onClick={() => { setCartForm({ ...BLANK_CART }); setCartOpen(true); }}>
+                <Plus className="h-4 w-4 mr-2" />Add to Cart
+              </Button>
+            )
           )}
         </div>
 
@@ -229,9 +235,11 @@ export default function Marketing() {
                       <TableCell>${Number(item.unit_price).toFixed(2)}</TableCell>
                       <TableCell className="font-medium">${Number(item.total_amount).toFixed(2)}</TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remove from cart?')) removeFromCart.mutate(item.id); }}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                        {canDelete('marketing') && (
+                          <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remove from cart?')) removeFromCart.mutate(item.id); }}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -245,12 +253,14 @@ export default function Marketing() {
               {cart.length > 0 && (
                 <div className="p-4 border-t flex flex-col items-center gap-3">
                   <p className="text-lg font-bold">Total: ${cartTotal.toFixed(2)}</p>
-                  <Button
-                    className="gradient-primary text-black font-medium px-8"
-                    onClick={() => { setPayForm({ ...BLANK_PAYMENT, totalAmount: cartTotal }); setPayStep('method'); setPayMethod(null); }}
-                  >
-                    Pay
-                  </Button>
+                  {canEdit('marketing') && (
+                    <Button
+                      className="gradient-primary text-black font-medium px-8"
+                      onClick={() => { setPayForm({ ...BLANK_PAYMENT, totalAmount: cartTotal }); setPayStep('method'); setPayMethod(null); }}
+                    >
+                      Pay
+                    </Button>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -279,9 +289,11 @@ export default function Marketing() {
                       <TableCell>${Number(p.price_per_unit).toFixed(2)}</TableCell>
                       <TableCell>{p.updated_at ? format(new Date(p.updated_at), 'MMM d, yyyy') : '-'}</TableCell>
                       <TableCell className="text-right">
-                        <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => openEditPrice(p)}>
-                          Edit
-                        </Button>
+                        {canEdit('marketing') && (
+                          <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => openEditPrice(p)}>
+                            Edit
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -322,7 +334,7 @@ export default function Marketing() {
                       <TableCell>
                         {view === 'completed' ? (
                           <span className="px-2 py-1 rounded-full text-xs font-medium bg-success/20 text-success">Completed</span>
-                        ) : (
+                        ) : canEdit('marketing') ? (
                           <select
                             value={
                               o.status === 'processing' ? 'in_process' :
@@ -337,6 +349,8 @@ export default function Marketing() {
                             <option value="in_process">In Process</option>
                             <option value="completed">Completed</option>
                           </select>
+                        ) : (
+                          <span className="px-2 py-1 rounded-full text-xs font-medium bg-muted text-muted-foreground capitalize">{o.status.replace('_', ' ')}</span>
                         )}
                       </TableCell>
                     </TableRow>
@@ -353,6 +367,7 @@ export default function Marketing() {
         )}
 
         {/* Set Price Dialog */}
+        {(editPrice ? canEdit('marketing') : canCreate('marketing')) && (
         <Dialog open={priceOpen} onOpenChange={(o) => { setPriceOpen(o); if (!o) { setEditPrice(null); setPriceForm({ ...BLANK_PRICE }); } }}>
           <DialogContent>
             <DialogHeader>
@@ -410,8 +425,10 @@ export default function Marketing() {
             </form>
           </DialogContent>
         </Dialog>
+        )}
 
         {/* Add to Cart Dialog */}
+        {canCreate('marketing') && (
         <Dialog open={cartOpen} onOpenChange={(o) => { setCartOpen(o); if (!o) setCartForm({ ...BLANK_CART }); }}>
           <DialogContent>
             <DialogHeader>
@@ -465,8 +482,10 @@ export default function Marketing() {
             </form>
           </DialogContent>
         </Dialog>
+        )}
 
         {/* Payment Dialog — Method Selection */}
+        {canEdit('marketing') && (
         <Dialog open={payStep === 'method'} onOpenChange={(o) => { if (!o) setPayStep('none'); }}>
           <DialogContent>
             <DialogHeader>
@@ -491,8 +510,10 @@ export default function Marketing() {
             </div>
           </DialogContent>
         </Dialog>
+        )}
 
         {/* Payment Dialog — Form */}
+        {canEdit('marketing') && (
         <Dialog open={payStep === 'form'} onOpenChange={(o) => { if (!o) setPayStep('none'); }}>
           <DialogContent>
             <DialogHeader>
@@ -540,6 +561,7 @@ export default function Marketing() {
             </form>
           </DialogContent>
         </Dialog>
+        )}
 
         {/* Payment Success Dialog */}
         <Dialog open={payStep === 'success'} onOpenChange={(o) => { if (!o) { setPayStep('none'); setView('pending'); } }}>

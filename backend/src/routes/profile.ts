@@ -5,6 +5,7 @@ import fs from 'fs';
 import multer from 'multer';
 import prisma from '../lib/prisma';
 import { requireAuth } from '../middleware/auth';
+import { logAuditEvent, clientInfo } from '../lib/audit';
 
 const router = Router();
 router.use(requireAuth);
@@ -115,6 +116,8 @@ router.patch('/', async (req, res) => {
       where: { id: req.user!.userId },
       data: { ...(username ? { username } : {}), updated_at: new Date() },
     });
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({ actorUserId: req.user!.userId, eventType: 'profile_updated', subsystem: 'settings', description: username ? `Username changed to @${username}` : 'Profile updated', ipAddress: ip, userAgent });
     return res.json({ message: 'Profile updated' });
   } catch {
     return res.status(500).json({ error: 'Failed to update profile', code: 'DB_ERROR' });
@@ -139,6 +142,8 @@ router.post('/picture', upload.single('picture'), async (req, res) => {
       where: { id: req.user!.userId },
       data: { profile_picture_url: pictureUrl, updated_at: new Date() },
     });
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({ actorUserId: req.user!.userId, eventType: 'profile_picture_updated', subsystem: 'settings', description: 'Profile picture updated', ipAddress: ip, userAgent });
     return res.json({ profilePictureUrl: pictureUrl });
   } catch {
     return res.status(500).json({ error: 'Failed to save picture', code: 'DB_ERROR' });

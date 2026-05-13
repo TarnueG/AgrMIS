@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Wheat, Search, Trash2, MapPin, Edit, ClipboardList } from 'lucide-react';
+import { usePermissions } from '@/hooks/usePermissions';
 
 type ParcelView = 'requested' | 'active' | 'inactive' | 'total';
 
@@ -19,6 +20,7 @@ const soilTypes = ['loamy', 'clay', 'sandy', 'silty', 'peaty'];
 export default function LandParcels() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const [selectedView, setSelectedView] = useState<ParcelView>('requested');
   const [search, setSearch] = useState('');
   const [totalFilter, setTotalFilter] = useState('');
@@ -161,12 +163,12 @@ export default function LandParcels() {
             <p className="text-muted-foreground">Manage agricultural land and crops</p>
           </div>
           <div className="flex gap-2">
-            {(selectedView === 'requested' || selectedView === 'total') && (
+            {(selectedView === 'requested' || selectedView === 'total') && canCreate('land_parcels') && (
               <Button className="gradient-primary text-black font-medium" onClick={() => setIsRequestOpen(true)}>
                 <Plus className="h-4 w-4 mr-2" /> Request Parcel
               </Button>
             )}
-            {(selectedView === 'active' || selectedView === 'inactive') && (
+            {(selectedView === 'active' || selectedView === 'inactive') && canEdit('land_parcels') && (
               <Button variant="outline" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => { setAssignForm({ parcelId: '', cropName: '', status: 'active' }); setIsAssignOpen(true); }}>
                 <MapPin className="h-4 w-4 mr-2" /> Assign Parcel
               </Button>
@@ -219,12 +221,16 @@ export default function LandParcels() {
                     <TableCell className="max-w-xs truncate">{r.description || '-'}</TableCell>
                     <TableCell><Badge className={reqBadge(r.status)}>{r.status}</Badge></TableCell>
                     <TableCell className="text-right space-x-1">
-                      <Button variant="ghost" size="icon" onClick={() => openEditRequest(r)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this parcel request?')) deleteRequestMutation.mutate(r.id); }}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {canEdit('land_parcels') && (
+                        <Button variant="ghost" size="icon" onClick={() => openEditRequest(r)}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {canDelete('land_parcels') && (
+                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this parcel request?')) deleteRequestMutation.mutate(r.id); }}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -271,18 +277,24 @@ export default function LandParcels() {
                     <TableCell className="capitalize">{p.soil_type}</TableCell>
                     <TableCell>{p.location || '-'}</TableCell>
                     <TableCell>
-                      <select
-                        value={p.status}
-                        onChange={(e) => { const ns = e.target.value; if (confirm(`Change status to "${ns}"?`)) updateStatusMutation.mutate({ id: p.id, status: ns }); }}
-                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                      >
-                        {['active', 'inactive', 'fallow', 'preparation', 'harvested'].map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
+                      {canEdit('land_parcels') ? (
+                        <select
+                          value={p.status}
+                          onChange={(e) => { const ns = e.target.value; if (confirm(`Change status to "${ns}"?`)) updateStatusMutation.mutate({ id: p.id, status: ns }); }}
+                          className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                        >
+                          {['active', 'inactive', 'fallow', 'preparation', 'harvested'].map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      ) : (
+                        <Badge className="bg-success/20 text-success">{p.status}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this land parcel?')) deleteMutation.mutate(p.id); }}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {canDelete('land_parcels') && (
+                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this land parcel?')) deleteMutation.mutate(p.id); }}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -327,18 +339,24 @@ export default function LandParcels() {
                     <TableCell className="capitalize">{p.soil_type}</TableCell>
                     <TableCell>{p.location || '-'}</TableCell>
                     <TableCell>
-                      <select
-                        value={p.status}
-                        onChange={(e) => { const ns = e.target.value; if (confirm(`Change status to "${ns}"?`)) updateStatusMutation.mutate({ id: p.id, status: ns }); }}
-                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                      >
-                        {['inactive', 'fallow', 'preparation', 'harvested', 'active'].map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
+                      {canEdit('land_parcels') ? (
+                        <select
+                          value={p.status}
+                          onChange={(e) => { const ns = e.target.value; if (confirm(`Change status to "${ns}"?`)) updateStatusMutation.mutate({ id: p.id, status: ns }); }}
+                          className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                        >
+                          {['inactive', 'fallow', 'preparation', 'harvested', 'active'].map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      ) : (
+                        <Badge className="bg-muted text-muted-foreground">{p.status}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" onClick={() => openEditParcel(p)}>
-                        <Edit className="h-4 w-4" />
-                      </Button>
+                      {canEdit('land_parcels') && (
+                        <Button variant="ghost" size="icon" onClick={() => openEditParcel(p)}>
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -410,6 +428,7 @@ export default function LandParcels() {
       </div>
 
       {/* Request Parcel Dialog */}
+      {canCreate('land_parcels') && (
       <Dialog open={isRequestOpen} onOpenChange={setIsRequestOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Request Land Parcel</DialogTitle></DialogHeader>
@@ -454,8 +473,10 @@ export default function LandParcels() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* Edit Request Dialog */}
+      {canEdit('land_parcels') && (
       <Dialog open={isEditRequestOpen} onOpenChange={setIsEditRequestOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Edit Parcel Request</DialogTitle></DialogHeader>
@@ -512,8 +533,10 @@ export default function LandParcels() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* Assign Parcel Dialog */}
+      {canEdit('land_parcels') && (
       <Dialog open={isAssignOpen} onOpenChange={setIsAssignOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Assign Land Parcel</DialogTitle></DialogHeader>
@@ -560,8 +583,10 @@ export default function LandParcels() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* Edit Inactive Parcel Dialog */}
+      {canEdit('land_parcels') && (
       <Dialog open={isEditParcelOpen} onOpenChange={setIsEditParcelOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Edit Land Parcel</DialogTitle></DialogHeader>
@@ -622,6 +647,7 @@ export default function LandParcels() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
     </DashboardLayout>
   );
 }

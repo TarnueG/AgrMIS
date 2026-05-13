@@ -2,7 +2,7 @@
 
 ## Current Phase: MVP Complete — Paused after Phase 5
 
-**Last updated:** 2026-04-18
+**Last updated:** 2026-05-13
 
 **Next session:** Resume at Phase 6 — Finance & Quality Control
 
@@ -149,6 +149,62 @@
 - [x] `src/components/layout/DashboardLayout.tsx` — profile avatar in top-right header (shows picture or initials); dynamic theme class; navigates to /settings on click
 - [x] `src/pages/Settings.tsx` — full User Profile page: avatar, username, HR-sourced job info, Edit Profile dialog, theme toggle (dark/light cards), Sign Out button
 - [x] `src/pages/Settings.tsx` AccessControl export — per-subsystem permission cards (14 subsystems × all roles, 4 permissions each); user role management table with Change Role dialog
+
+## Role Registry & API Architecture Fix Sprint — Complete ✓
+**Date:** 2026-05-13
+- [x] `backend/src/seeds/permissionSeed.ts` — renamed `accounting` → `accountant`; added `VALID_ROLE_NAMES` export (8 canonical roles); DB cleanup block reassigns orphaned users and deletes stale roles; fixed unique constraint key from `uq_subsystem_perm` → `farm_id_role_id_subsystem`
+- [x] `backend/src/lib/permissions.ts` — removed admin role aliases; exported `VALID_ROLE_NAMES`
+- [x] `backend/src/routes/auth.ts` — role validation at login blocks unrecognized roles; `username` added to token payload
+- [x] `backend/src/routes/hr.ts` — `normalizeEmpType()` maps `'employee'` → `'permanent'`; `normalizeSector()` maps `'crops'` → `'crop'`, `'administration'` → `'admin'`; `employeeCount` stats filter updated to include `'permanent'` and `'contract'`
+- [x] `backend/src/routes/production.ts` — added `GET /production/daily-logs` and `POST /production/daily-logs` endpoints (queries `daily_production_logs` table)
+- [x] `src/pages/Dashboard.tsx` — `accountant` key in `ROLE_DASHBOARD` map (was `accounting`)
+- [x] `src/hooks/usePermissions.ts` — removed admin role aliases
+- [x] API audit completed: all frontend-called endpoints verified; only `/production/daily-logs` was missing (now fixed)
+
+## Settings v2 & Audit Log Sprint — Complete ✓
+**Date:** 2026-05-11
+- [x] DB migration: new `audit_events` table (id, occurred_at, actor/target user, event_type, subsystem, description, ip, user_agent, metadata)
+- [x] `backend/src/lib/audit.ts` — `logAuditEvent()` helper + `clientInfo()` extractor; fire-and-forget (never breaks main request)
+- [x] `backend/src/routes/auth.ts` — audit logging on login success, login failure, logout
+- [x] `backend/src/routes/profile.ts` — audit logging on username change, profile picture upload
+- [x] `backend/src/routes/accessControl.ts` — audit logging on permission change, role change
+- [x] `backend/src/routes/auditLog.ts` — admin-only GET with eventType/subsystem/dateRange filters, pagination, CSV export
+- [x] `backend/src/index.ts` — audit log router registered at `/api/v1/audit-log`
+- [x] `src/pages/Settings.tsx` — full restructure to two-pane layout: left sidebar nav (General/Users/Security/Sign Out) + right content panel
+- [x] Settings panels: User Profile, Theme, List Users (searchable + detail card + "View Audit Log" link), Audit Log (filters, table, CSV export, pagination)
+- [x] Settings sidebar links to Access Control at `/access-control` (separate route, unchanged)
+
+## CRM Deactivation, User Sync, Settings & Permission Fix Sprint — Complete ✓
+**Date:** 2026-05-13
+- [x] DB migration: `users` +`is_active`, `deactivated_at`, `linked_customer_id`; `customers` +`is_active`, `deactivated_at`
+- [x] `backend/src/lib/userStatus.ts` — `deactivateUser()`, `reactivateUser()`, `findLinkedUserId()`; 30-second in-memory deactivated-user cache
+- [x] `backend/src/middleware/auth.ts` — `requireAuth` now async; deactivated users blocked immediately on every request
+- [x] `backend/src/lib/audit.ts` — new event types for deactivation/activation
+- [x] `backend/src/routes/accessControl.ts` — **fixed permission save bug** (wrong upsert key); cache invalidated after save; user deactivate/activate endpoints; eligibility filter enforces 7 job titles; `linked_customer_id` set on account creation
+- [x] `backend/src/routes/sales.ts` — customer deactivate/activate endpoints; linked user auto-synced; `is_active` in response
+- [x] `backend/src/routes/hr.ts` — terminate/unterminate/suspend/cancel-suspension each sync linked user account
+- [x] `src/components/layout/AppSidebar.tsx` — Settings moved above Sign Out as standalone item; Administration group removed
+- [x] `src/pages/Customers.tsx` — Deactivated card (4th); Deactivate toggle replaces Action column; deactivated excluded from active counts
+- [x] `src/pages/Settings.tsx` — Deactivate toggle in Users table (right of Role); self-deactivation blocked; confirm dialog on toggle
+
+## View-Only Permission Enforcement Sprint — Complete ✓
+**Date:** 2026-05-13
+- [x] `src/pages/Livestock.tsx` — all tables (pigs, cattle, birds, fish stock, mortality) gated; all 6 dialogs wrapped with canCreate/canEdit checks
+- [x] `src/pages/Machinery.tsx` — added import + hook; all 5 header buttons gated; status dropdown replaced with Badge for view-only; Cancel Maintenance gated; table delete gated; request table action buttons gated; all 6 dialogs wrapped
+- [x] `src/pages/Finance.tsx` — added import + hook; Make Payment buttons in Contractor and Personnel Wages panels gated with canEdit('finance')
+- [x] `src/pages/Procurement.tsx` — added import + hook; New PO gated; Add Supplier button + dialog gated; PO status dropdowns replaced with Badge for view-only in all 3 views; delete buttons gated; Accept/Cancel request buttons gated; supplier delete gated
+- [x] `src/pages/Marketing.tsx` — added import + hook; Set Price / Add to Cart header buttons gated; Edit price button gated; Remove from Cart button gated; Pay button gated; order status dropdown replaced with Badge for view-only; all 4 dialogs wrapped
+- [x] `src/pages/SalesOrderPoints.tsx` — added import + hook; Add to Cart header button gated; Remove from Cart gated; en_route status dropdown replaced with Badge for view-only; Add to Cart dialog wrapped
+- [x] `src/pages/LandParcels.tsx` — added import + hook; Request Parcel / Assign Parcel header buttons gated; requested table Edit/Delete gated; active parcel status dropdown + delete gated; inactive parcel status dropdown + Edit gated; all 4 dialogs wrapped
+- [x] `src/pages/Orders.tsx` — added import + hook; New Order dialog + trigger gated with canCreate; status dropdown replaced with Badge for view-only; delete button gated
+
+## Permission Enforcement + CRM Cleanup + Bidirectional Sync Sprint — Complete ✓
+**Date:** 2026-05-13
+- [x] CRM: removed "G Tarnue Gayflor" customer record (soft-deleted); removed Deactivated 4th card; removed deactivate toggle from CRM tables; CRM back to 3 cards (Total / Business / Individual)
+- [x] `backend/src/middleware/auth.ts` — added `requirePermission(subsystem, action)` middleware; admin role bypasses all checks; others checked against `subsystem_permissions` via `getPermissions` cache
+- [x] All 9 backend routers (sales, hr, inventory, production, livestock, procurement, marketing, assets, landParcels) — global router-level `router.use(...)` maps HTTP method → permission action; sales.ts path-based for crm vs sales_order_points
+- [x] `backend/src/lib/userStatus.ts` — `deactivateUser()` now syncs linked customer (`is_active=false`) AND linked employee (`status=inactive`, skips terminated); `reactivateUser()` restores linked customer and employee (only if status=inactive)
+- [x] All 12 frontend pages — `usePermissions` imported + hook called; all create/edit/delete buttons wrapped with `canCreate/canEdit/canDelete` guards; status dropdowns replaced with read-only Badge for view-only users; action table columns conditionally rendered
 
 ## Phase 6 — Not started
 **Goal:** Finance & Quality Control

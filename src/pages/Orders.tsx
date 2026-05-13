@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
+import { usePermissions } from '@/hooks/usePermissions';
 
 const statusColors: Record<string, string> = {
   pending: 'bg-warning/20 text-warning border-warning/30',
@@ -25,6 +26,7 @@ const statusColors: Record<string, string> = {
 export default function Orders() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const [search, setSearch] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -97,6 +99,7 @@ export default function Orders() {
             <h1 className="text-3xl font-bold">Sales & Orders</h1>
             <p className="text-muted-foreground">Manage orders and sales pipeline</p>
           </div>
+          {canCreate('sales_order_points') && (
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
               <Button className="gradient-primary text-black">
@@ -154,6 +157,7 @@ export default function Orders() {
               </form>
             </DialogContent>
           </Dialog>
+          )}
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -204,22 +208,28 @@ export default function Orders() {
                     </TableCell>
                     <TableCell>${Number(order.total_amount).toFixed(2)}</TableCell>
                     <TableCell>
-                      <select
-                        value={order.status}
-                        onChange={(e) => updateStatus.mutate({ id: order.id, status: e.target.value })}
-                        className={`h-8 rounded border border-input bg-background px-2 text-sm ${statusColors[order.status] ?? 'text-foreground'}`}
-                      >
-                        <option value="pending">Pending</option>
-                        <option value="in_production">In Production</option>
-                        <option value="quality_check">Quality Check</option>
-                        <option value="completed">Completed</option>
-                        <option value="rejected">Rejected</option>
-                      </select>
+                      {canEdit('sales_order_points') ? (
+                        <select
+                          value={order.status}
+                          onChange={(e) => updateStatus.mutate({ id: order.id, status: e.target.value })}
+                          className={`h-8 rounded border border-input bg-background px-2 text-sm ${statusColors[order.status] ?? 'text-foreground'}`}
+                        >
+                          <option value="pending">Pending</option>
+                          <option value="in_production">In Production</option>
+                          <option value="quality_check">Quality Check</option>
+                          <option value="completed">Completed</option>
+                          <option value="rejected">Rejected</option>
+                        </select>
+                      ) : (
+                        <Badge className={statusColors[order.status] ?? ''}>{order.status.replace('_', ' ')}</Badge>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this order?')) deleteMutation.mutate(order.id); }}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {canDelete('sales_order_points') && (
+                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this order?')) deleteMutation.mutate(order.id); }}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

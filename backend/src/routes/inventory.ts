@@ -1,12 +1,16 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 
 const router = Router();
 router.use(requireAuth);
 router.use(setFarmContext);
+router.use((req, res, next) => {
+  const action = req.method === 'GET' ? 'view' as const : req.method === 'POST' ? 'create' as const : req.method === 'DELETE' ? 'delete' as const : 'edit' as const;
+  return requirePermission('inventory', action)(req, res, next);
+});
 
 // ── Categories & Units ──────────────────────────────────────────
 

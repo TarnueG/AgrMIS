@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Users, CalendarDays, ClipboardCheck, UserCheck, UserX, Briefcase, HardHat, DollarSign, Search, Pencil, Ban } from 'lucide-react';
 import { format } from 'date-fns';
+import { usePermissions } from '@/hooks/usePermissions';
 
 type EmpView = 'contractor' | 'suspension' | 'active' | 'inactive' | 'employee' | 'daily' | 'salary' | 'attendance_rate' | 'daily_log' | null;
 
@@ -43,6 +44,7 @@ const BLANK_SUSPEND = { suspensionReason: '', suspensionExpiresAt: '' };
 export default function Employees() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { canCreate, canEdit, canDelete } = usePermissions();
 
   const [view, setView] = useState<EmpView>(null);
   const [personnelSearch, setPersonnelSearch] = useState('');
@@ -211,7 +213,7 @@ export default function Employees() {
     { key: 'employee' as EmpView, label: 'Employee', count: stats?.employeeCount ?? employeeType.length, Icon: Users, color: 'bg-primary/10 border-primary/20 text-primary' },
     { key: 'daily' as EmpView, label: 'Daily Workers', count: stats?.dailyCount ?? dailyWorkers.length, Icon: HardHat, color: 'bg-info/10 border-info/20 text-info' },
     { key: 'salary' as EmpView, label: 'Salary', count: salaryData.filter(s => s.action === 'qualified').length, Icon: DollarSign, color: 'bg-purple-500/10 border-purple-500/20 text-purple-400' },
-    { key: 'attendance_rate' as EmpView, label: 'Attendance Rate', count: `${stats?.attendanceRate ?? 0}%`, Icon: ClipboardCheck, color: 'bg-blue-500/10 border-blue-500/20 text-blue-400' },
+    { key: 'attendance_rate' as EmpView, label: 'Attendance Log', count: attendanceSummary.length, Icon: ClipboardCheck, color: 'bg-blue-500/10 border-blue-500/20 text-blue-400' },
     { key: 'daily_log' as EmpView, label: 'Daily Log', count: stats?.presentToday ?? 0, Icon: CalendarDays, color: 'bg-teal-500/10 border-teal-500/20 text-teal-400' },
   ];
 
@@ -273,9 +275,11 @@ export default function Employees() {
                 className="pl-9 w-52 text-white placeholder:text-white/50"
               />
             </div>
-            <Button className="gradient-primary text-black font-medium" onClick={handlePrimaryBtn} disabled={view === 'salary' && sendForPayment.isPending}>
-              <Plus className="h-4 w-4 mr-2" />{btnLabel}
-            </Button>
+            {(view === 'salary' ? canCreate('human_capital') : canCreate('human_capital')) && (
+              <Button className="gradient-primary text-black font-medium" onClick={handlePrimaryBtn} disabled={view === 'salary' && sendForPayment.isPending}>
+                <Plus className="h-4 w-4 mr-2" />{btnLabel}
+              </Button>
+            )}
           </div>
         </div>
 
@@ -329,11 +333,13 @@ export default function Employees() {
                       <TableCell>{c.end_date ? format(new Date(c.end_date), 'MMM d, yyyy') : '-'}</TableCell>
                       <TableCell>
                         {!c.payment_sent ? (
-                          <Button size="sm" className="gradient-primary text-black font-medium text-xs"
-                            onClick={() => { if (confirm('Mark contract as finished and send payment request to Finance?')) finishContract.mutate(c.id); }}
-                            disabled={finishContract.isPending}>
-                            Finish
-                          </Button>
+                          canEdit('human_capital') && (
+                            <Button size="sm" className="gradient-primary text-black font-medium text-xs"
+                              onClick={() => { if (confirm('Mark contract as finished and send payment request to Finance?')) finishContract.mutate(c.id); }}
+                              disabled={finishContract.isPending}>
+                              Finish
+                            </Button>
+                          )
                         ) : (
                           <Badge className="bg-success/20 text-success text-xs">Sent to Finance</Badge>
                         )}
@@ -448,18 +454,20 @@ export default function Employees() {
                   )}
                 </TableBody>
               </Table>
-              <div className="p-4 flex justify-center">
-                <Button
-                  className="gradient-primary text-black font-medium"
-                  disabled={submitDailyLog.isPending}
-                  onClick={() => {
-                    if (dailyLogSelected.size === 0) { toast({ title: 'Select at least one personnel', variant: 'destructive' }); return; }
-                    if (confirm(`Submit daily log for ${dailyLogSelected.size} personnel?`)) submitDailyLog.mutate(Array.from(dailyLogSelected));
-                  }}
-                >
-                  Submit Daily Log
-                </Button>
-              </div>
+              {canCreate('human_capital') && (
+                <div className="p-4 flex justify-center">
+                  <Button
+                    className="gradient-primary text-black font-medium"
+                    disabled={submitDailyLog.isPending}
+                    onClick={() => {
+                      if (dailyLogSelected.size === 0) { toast({ title: 'Select at least one personnel', variant: 'destructive' }); return; }
+                      if (confirm(`Submit daily log for ${dailyLogSelected.size} personnel?`)) submitDailyLog.mutate(Array.from(dailyLogSelected));
+                    }}
+                  >
+                    Submit Daily Log
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -468,7 +476,7 @@ export default function Employees() {
         {showAttendanceView && (
           <Card>
             <div className="p-4 border-b flex items-center justify-between">
-              <p className="font-medium text-sm">Attendance Summary</p>
+              <p className="font-medium text-sm">Attendance Log</p>
               <select value={attendTypeFilter} onChange={e => setAttendTypeFilter(e.target.value)} className="h-8 w-40 rounded border border-input bg-background px-2 text-sm text-foreground">
                 <option value="all">All Types</option>
                 <option value="employee">Employee</option>
@@ -541,8 +549,8 @@ export default function Employees() {
                       <TableHead>Status</TableHead>
                       {view === 'suspension' && <TableHead>Reason</TableHead>}
                       {view === 'suspension' && <TableHead>Expires</TableHead>}
-                      <TableHead>Edit</TableHead>
-                      <TableHead>Action</TableHead>
+                      {canEdit('human_capital') && <TableHead>Edit</TableHead>}
+                      {(canEdit('human_capital') || canDelete('human_capital')) && <TableHead>Action</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -566,37 +574,49 @@ export default function Employees() {
                           {view === 'suspension' && (
                             <TableCell className="text-xs">{emp.suspension_expires_at ? format(new Date(emp.suspension_expires_at), 'MMM d, yyyy') : '-'}</TableCell>
                           )}
-                          <TableCell>
-                            <Button variant="ghost" size="icon" disabled={immutable} onClick={() => setEditEmp(emp)}>
-                              <Pencil className="h-4 w-4 text-muted-foreground" />
-                            </Button>
-                          </TableCell>
-                          <TableCell>
-                            {immutable ? (
-                              <Badge className="bg-muted text-muted-foreground text-xs">Immutable</Badge>
-                            ) : view === 'suspension' ? (
-                              <Button size="sm" variant="outline" className="text-xs text-white border-input"
-                                onClick={() => { if (confirm('Cancel suspension and restore Active?')) cancelSuspension.mutate(emp.id); }}>
-                                Cancel Suspension
+                          {canEdit('human_capital') && (
+                            <TableCell>
+                              <Button variant="ghost" size="icon" disabled={immutable} onClick={() => setEditEmp(emp)}>
+                                <Pencil className="h-4 w-4 text-muted-foreground" />
                               </Button>
-                            ) : emp.status === 'inactive' ? (
-                              <Button size="sm" variant="outline" className="text-xs text-white border-input"
-                                onClick={() => { if (confirm('Restore this personnel to Active?')) unterminate.mutate(emp.id); }}>
-                                Un-terminate
-                              </Button>
-                            ) : (
-                              <div className="flex gap-1">
-                                <Button size="sm" variant="outline" className="text-xs text-white border-input"
-                                  onClick={() => setSuspendTarget(emp)}>
-                                  Suspend
-                                </Button>
-                                <Button size="sm" variant="destructive" className="text-xs"
-                                  onClick={() => { if (confirm('Terminate this personnel? Record becomes immutable after 48 hours.')) terminate.mutate(emp.id); }}>
-                                  Terminate
-                                </Button>
-                              </div>
-                            )}
-                          </TableCell>
+                            </TableCell>
+                          )}
+                          {(canEdit('human_capital') || canDelete('human_capital')) && (
+                            <TableCell>
+                              {immutable ? (
+                                <Badge className="bg-muted text-muted-foreground text-xs">Immutable</Badge>
+                              ) : view === 'suspension' ? (
+                                canEdit('human_capital') && (
+                                  <Button size="sm" variant="outline" className="text-xs text-white border-input"
+                                    onClick={() => { if (confirm('Cancel suspension and restore Active?')) cancelSuspension.mutate(emp.id); }}>
+                                    Cancel Suspension
+                                  </Button>
+                                )
+                              ) : emp.status === 'inactive' ? (
+                                canEdit('human_capital') && (
+                                  <Button size="sm" variant="outline" className="text-xs text-white border-input"
+                                    onClick={() => { if (confirm('Restore this personnel to Active?')) unterminate.mutate(emp.id); }}>
+                                    Un-terminate
+                                  </Button>
+                                )
+                              ) : (
+                                <div className="flex gap-1">
+                                  {canEdit('human_capital') && (
+                                    <Button size="sm" variant="outline" className="text-xs text-white border-input"
+                                      onClick={() => setSuspendTarget(emp)}>
+                                      Suspend
+                                    </Button>
+                                  )}
+                                  {canDelete('human_capital') && (
+                                    <Button size="sm" variant="destructive" className="text-xs"
+                                      onClick={() => { if (confirm('Terminate this personnel? Record becomes immutable after 48 hours.')) terminate.mutate(emp.id); }}>
+                                      Terminate
+                                    </Button>
+                                  )}
+                                </div>
+                              )}
+                            </TableCell>
+                          )}
                         </TableRow>
                       );
                     })}
@@ -615,7 +635,7 @@ export default function Employees() {
         )}
 
         {/* ── Add Personnel / Add Contract Dialog ── */}
-        <Dialog open={isAddOpen} onOpenChange={o => { setIsAddOpen(o); if (!o) { setEmpForm({ ...BLANK_EMP }); setContractForm({ ...BLANK_CONTRACT }); } }}>
+        {canCreate('human_capital') && <Dialog open={isAddOpen} onOpenChange={o => { setIsAddOpen(o); if (!o) { setEmpForm({ ...BLANK_EMP }); setContractForm({ ...BLANK_CONTRACT }); } }}>
           <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{view === 'contractor' ? 'Add Contract' : 'Add Personnel'}</DialogTitle>
@@ -737,10 +757,10 @@ export default function Employees() {
               </form>
             )}
           </DialogContent>
-        </Dialog>
+        </Dialog>}
 
         {/* ── Edit Personnel Dialog ── */}
-        <Dialog open={!!editEmp} onOpenChange={o => { if (!o) setEditEmp(null); }}>
+        {canEdit('human_capital') && <Dialog open={!!editEmp} onOpenChange={o => { if (!o) setEditEmp(null); }}>
           <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
             <DialogHeader><DialogTitle>Edit Personnel</DialogTitle></DialogHeader>
             {editEmp && (
@@ -808,10 +828,10 @@ export default function Employees() {
               </form>
             )}
           </DialogContent>
-        </Dialog>
+        </Dialog>}
 
         {/* ── Suspend Dialog ── */}
-        <Dialog open={!!suspendTarget} onOpenChange={o => { if (!o) { setSuspendTarget(null); setSuspendForm({ ...BLANK_SUSPEND }); } }}>
+        {canEdit('human_capital') && <Dialog open={!!suspendTarget} onOpenChange={o => { if (!o) { setSuspendTarget(null); setSuspendForm({ ...BLANK_SUSPEND }); } }}>
           <DialogContent>
             <DialogHeader><DialogTitle>Suspend — {suspendTarget?.full_name}</DialogTitle></DialogHeader>
             <form onSubmit={e => {
@@ -832,7 +852,7 @@ export default function Employees() {
               <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={suspendMutation.isPending}>Confirm Suspension</Button>
             </form>
           </DialogContent>
-        </Dialog>
+        </Dialog>}
       </div>
     </DashboardLayout>
   );

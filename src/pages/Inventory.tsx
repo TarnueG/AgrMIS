@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Plus, Trash2, Search, Edit2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
+import { usePermissions } from '@/hooks/usePermissions';
 
 type InvView =
   | 'cocoa_beans' | 'palm_oil' | 'dried_fish' | 'livestock'
@@ -68,6 +69,7 @@ function stockStatus(qty: number, threshold: number): string {
 export default function Inventory() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const [view, setView] = useState<InvView>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [editProcItem, setEditProcItem] = useState<any | null>(null);
@@ -286,12 +288,12 @@ export default function Inventory() {
               <TableCell>{r.manufacture_date ? format(new Date(r.manufacture_date), 'MMM d, yyyy') : '-'}</TableCell>
               <TableCell>{r.expiration_date ? format(new Date(r.expiration_date), 'MMM d, yyyy') : '-'}</TableCell>
               <TableCell className="flex gap-2">
-                {r.status === 'received' && !r.in_stock && (
+                {r.status === 'received' && !r.in_stock && canEdit('inventory') && (
                   <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => { setEditProcItem(r); setDatesForm({ manufacture_date: '', expiration_date: '' }); }}>
                     <Edit2 className="h-3 w-3 mr-1" />Edit
                   </Button>
                 )}
-                {r.status === 'pending' && (
+                {r.status === 'pending' && canDelete('inventory') && (
                   <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this request?')) deleteProcReq.mutate(r.id); }}>
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
@@ -432,7 +434,7 @@ export default function Inventory() {
             <h1 className="text-3xl font-bold">Inventory Management</h1>
             <p className="text-muted-foreground">Farm inputs, raw materials, and stock tracking</p>
           </div>
-          {showAddButton() && (
+          {showAddButton() && canCreate('inventory') && (
             <Button className="gradient-primary text-black font-medium" onClick={() => setIsOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
               {getButtonLabel()}
@@ -510,7 +512,7 @@ export default function Inventory() {
         )}
 
         {/* Add Item Dialog */}
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        {canCreate('inventory') && <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{getButtonLabel()}</DialogTitle>
@@ -556,10 +558,10 @@ export default function Inventory() {
               </Button>
             </form>
           </DialogContent>
-        </Dialog>
+        </Dialog>}
 
         {/* Edit Dates Dialog (procurement) */}
-        <Dialog open={!!editProcItem} onOpenChange={(o) => !o && setEditProcItem(null)}>
+        {canEdit('inventory') && <Dialog open={!!editProcItem} onOpenChange={(o) => !o && setEditProcItem(null)}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Add Dates — {editProcItem?.item_name}</DialogTitle>
@@ -579,7 +581,7 @@ export default function Inventory() {
               </Button>
             </form>
           </DialogContent>
-        </Dialog>
+        </Dialog>}
       </div>
     </DashboardLayout>
   );

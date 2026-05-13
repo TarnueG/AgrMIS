@@ -16,14 +16,20 @@ import livestockRouter from './routes/livestock';
 import marketingRouter from './routes/marketing';
 import profileRouter from './routes/profile';
 import accessControlRouter from './routes/accessControl';
+import auditLogRouter from './routes/auditLog';
+import { seedPermissions } from './seeds/permissionSeed';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',').map(s => s.trim());
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:8080',
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    cb(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 app.use(express.json());
@@ -45,9 +51,11 @@ app.use('/api/v1/livestock', livestockRouter);
 app.use('/api/v1/marketing', marketingRouter);
 app.use('/api/v1/profile', profileRouter);
 app.use('/api/v1/access-control', accessControlRouter);
+app.use('/api/v1/audit-log', auditLogRouter);
 
 app.get('/api/v1/health', (_req, res) => res.json({ status: 'ok' }));
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`AMIS backend running on http://localhost:${PORT}`);
+  await seedPermissions();
 });

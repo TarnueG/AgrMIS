@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Clock, Loader2, Navigation, PackageCheck, Search, ShoppingCart, Plus, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
+import { usePermissions } from '@/hooks/usePermissions';
 
 type SOPView = 'pending' | 'processing' | 'en_route' | 'purchase' | 'shopping_cart';
 
@@ -29,6 +30,7 @@ const BLANK_CART = { itemName: '', quantity: 0 };
 export default function SalesOrderPoints() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const [view, setView] = useState<SOPView>('pending');
   const [search, setSearch] = useState('');
   const [cartSearch, setCartSearch] = useState('');
@@ -121,9 +123,11 @@ export default function SalesOrderPoints() {
             <h1 className="text-3xl font-bold">Sales & Order Points</h1>
             <p className="text-muted-foreground">Track and manage order fulfillment</p>
           </div>
-          <Button className="gradient-primary text-black font-medium" onClick={() => { setCartForm({ ...BLANK_CART }); setCartOpen(true); }}>
-            <Plus className="h-4 w-4 mr-2" />Add to Cart
-          </Button>
+          {canCreate('sales_order_points') && (
+            <Button className="gradient-primary text-black font-medium" onClick={() => { setCartForm({ ...BLANK_CART }); setCartOpen(true); }}>
+              <Plus className="h-4 w-4 mr-2" />Add to Cart
+            </Button>
+          )}
         </div>
 
         {/* Cards */}
@@ -181,9 +185,11 @@ export default function SalesOrderPoints() {
                       <TableCell>${Number(item.unit_price).toFixed(2)}</TableCell>
                       <TableCell className="font-medium">${Number(item.total_amount).toFixed(2)}</TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remove from cart?')) removeFromCart.mutate(item.id); }}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                        {canDelete('sales_order_points') && (
+                          <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remove from cart?')) removeFromCart.mutate(item.id); }}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -239,7 +245,7 @@ export default function SalesOrderPoints() {
                       <TableCell>${Number(o.amount).toFixed(2)}</TableCell>
                       <TableCell>{o.date ? format(new Date(o.date), 'MMM d, yyyy') : '-'}</TableCell>
                       <TableCell>
-                        {view === 'en_route' ? (
+                        {view === 'en_route' && canEdit('sales_order_points') ? (
                           <select
                             value={o.status}
                             onChange={(e) => {
@@ -279,6 +285,7 @@ export default function SalesOrderPoints() {
         )}
 
         {/* Add to Cart Dialog */}
+        {canCreate('sales_order_points') && (
         <Dialog open={cartOpen} onOpenChange={(o) => { setCartOpen(o); if (!o) setCartForm({ ...BLANK_CART }); }}>
           <DialogContent>
             <DialogHeader>
@@ -332,6 +339,7 @@ export default function SalesOrderPoints() {
             </form>
           </DialogContent>
         </Dialog>
+        )}
       </div>
     </DashboardLayout>
   );

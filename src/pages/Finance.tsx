@@ -10,12 +10,14 @@ import { useToast } from '@/hooks/use-toast';
 import { TrendingUp, TrendingDown, DollarSign, Package, Wrench, Users } from 'lucide-react';
 import { format } from 'date-fns';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { usePermissions } from '@/hooks/usePermissions';
 
 type FinView = 'income' | 'expenses' | 'profit' | 'purchase_requests' | 'contractor' | 'wages' | null;
 
 export default function Finance() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { canEdit } = usePermissions();
   const [finView, setFinView] = useState<FinView>(null);
 
   const { data: marketingOrders = [] } = useQuery<any[]>({
@@ -364,13 +366,13 @@ export default function Finance() {
                       <TableCell>
                         {c.payment_status === 'paid' ? (
                           <Badge className="bg-success/20 text-success text-xs">Paid</Badge>
-                        ) : (
+                        ) : canEdit('finance') ? (
                           <Button size="sm" className="gradient-primary text-black font-medium text-xs"
                             disabled={payContractor.isPending}
                             onClick={() => { if (confirm(`Make payment of $${Number(c.amount).toFixed(2)} to ${c.contractor_name}?`)) payContractor.mutate(c.id); }}>
                             Make Payment
                           </Button>
-                        )}
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -422,13 +424,13 @@ export default function Finance() {
                       <TableCell>
                         {w.payment_status === 'paid' || w.immutable ? (
                           <Badge className="bg-success/20 text-success text-xs">Paid</Badge>
-                        ) : (
+                        ) : canEdit('finance') ? (
                           <Button size="sm" className="gradient-primary text-black font-medium text-xs"
                             disabled={payWage.isPending}
                             onClick={() => { if (confirm(`Make payment of $${Number(w.amount).toFixed(2)} to ${w.full_name}?`)) payWage.mutate(w.id); }}>
                             Make Payment
                           </Button>
-                        )}
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))}

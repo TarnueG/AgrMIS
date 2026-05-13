@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, Trash2, Heart, AlertTriangle, Leaf, Package } from 'lucide-react';
 import { format } from 'date-fns';
+import { usePermissions } from '@/hooks/usePermissions';
 
 type LivestockView = 'pigs' | 'cattle' | 'birds' | 'fish' | 'mortality' | 'health';
 
@@ -38,6 +39,7 @@ const BLANK_MORTALITY = { livestock_type: 'pig', breed_or_type: '', record_id: '
 export default function Livestock() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const [selectedView, setSelectedView] = useState<LivestockView>('pigs');
   const [search, setSearch] = useState('');
 
@@ -178,32 +180,36 @@ export default function Livestock() {
             <p className="text-muted-foreground">Manage farm animals, fish ponds, and mortality records</p>
           </div>
           <div className="flex gap-2">
-            {selectedView === 'pigs' && (
+            {selectedView === 'pigs' && canCreate('livestock') && (
               <Button className="gradient-primary text-black font-medium" onClick={() => { setEditItem(null); setPigForm({ ...BLANK_PIG }); setIsPigOpen(true); }}>
                 <Plus className="h-4 w-4 mr-2" />Add Pigs
               </Button>
             )}
-            {selectedView === 'cattle' && (
+            {selectedView === 'cattle' && canCreate('livestock') && (
               <Button className="gradient-primary text-black font-medium" onClick={() => { setEditItem(null); setCattleForm({ ...BLANK_CATTLE }); setIsCattleOpen(true); }}>
                 <Plus className="h-4 w-4 mr-2" />Add Cattle
               </Button>
             )}
-            {selectedView === 'birds' && (
+            {selectedView === 'birds' && canCreate('livestock') && (
               <Button className="gradient-primary text-black font-medium" onClick={() => { setEditItem(null); setBirdForm({ ...BLANK_BIRD }); setIsBirdOpen(true); }}>
                 <Plus className="h-4 w-4 mr-2" />Add Birds
               </Button>
             )}
             {selectedView === 'fish' && (
               <>
-                <Button className="gradient-primary text-black font-medium" onClick={() => { setPondForm({ ...BLANK_POND }); setIsPondOpen(true); }}>
-                  <Plus className="h-4 w-4 mr-2" />Add Fishpond
-                </Button>
-                <Button variant="outline" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => { setEditItem(null); setFishForm({ ...BLANK_FISH }); setIsFishOpen(true); }}>
-                  <Plus className="h-4 w-4 mr-2" />Add Fish
-                </Button>
+                {canCreate('livestock') && (
+                  <Button className="gradient-primary text-black font-medium" onClick={() => { setPondForm({ ...BLANK_POND }); setIsPondOpen(true); }}>
+                    <Plus className="h-4 w-4 mr-2" />Add Fishpond
+                  </Button>
+                )}
+                {canCreate('livestock') && (
+                  <Button variant="outline" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => { setEditItem(null); setFishForm({ ...BLANK_FISH }); setIsFishOpen(true); }}>
+                    <Plus className="h-4 w-4 mr-2" />Add Fish
+                  </Button>
+                )}
               </>
             )}
-            {selectedView === 'mortality' && (
+            {selectedView === 'mortality' && canCreate('livestock') && (
               <Button className="gradient-primary text-black font-medium" onClick={() => { setEditItem(null); setMortalityForm({ ...BLANK_MORTALITY }); setIsMortalityOpen(true); }}>
                 <Plus className="h-4 w-4 mr-2" />Add Dead Livestock
               </Button>
@@ -282,8 +288,8 @@ export default function Livestock() {
                     <TableCell>{p.pen_number || '-'}</TableCell>
                     <TableCell>{p.date_recorded ? format(new Date(p.date_recorded), 'MMM d, yyyy') : '-'}</TableCell>
                     <TableCell className="text-right flex gap-1 justify-end">
-                      <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(p.created_at)} onClick={() => openEditPig(p)}>Edit</Button>
-                      <Button variant="ghost" size="icon" disabled={!isWithin24h(p.created_at)} onClick={() => { if (confirm('Delete this pig record?')) pigDelete.mutate(p.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(p.created_at)} onClick={() => openEditPig(p)}>Edit</Button>}
+                      {canDelete('livestock') && <Button variant="ghost" size="icon" disabled={!isWithin24h(p.created_at)} onClick={() => { if (confirm('Delete this pig record?')) pigDelete.mutate(p.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -316,8 +322,8 @@ export default function Livestock() {
                     <TableCell>{c.location || '-'}</TableCell>
                     <TableCell>{c.date_recorded ? format(new Date(c.date_recorded), 'MMM d, yyyy') : '-'}</TableCell>
                     <TableCell className="text-right flex gap-1 justify-end">
-                      <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(c.created_at)} onClick={() => openEditCattle(c)}>Edit</Button>
-                      <Button variant="ghost" size="icon" disabled={!isWithin24h(c.created_at)} onClick={() => { if (confirm('Delete this cattle record?')) cattleDelete.mutate(c.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(c.created_at)} onClick={() => openEditCattle(c)}>Edit</Button>}
+                      {canDelete('livestock') && <Button variant="ghost" size="icon" disabled={!isWithin24h(c.created_at)} onClick={() => { if (confirm('Delete this cattle record?')) cattleDelete.mutate(c.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -346,7 +352,7 @@ export default function Livestock() {
                     <TableCell>{b.number_of_male}</TableCell>
                     <TableCell>{b.date_recorded ? format(new Date(b.date_recorded), 'MMM d, yyyy') : '-'}</TableCell>
                     <TableCell className="text-right">
-                      <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(b.created_at)} onClick={() => openEditBird(b)}>Edit</Button>
+                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(b.created_at)} onClick={() => openEditBird(b)}>Edit</Button>}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -401,8 +407,8 @@ export default function Livestock() {
                     <TableCell>{f.number_of_fish}</TableCell>
                     <TableCell>{f.date_recorded ? format(new Date(f.date_recorded), 'MMM d, yyyy') : '-'}</TableCell>
                     <TableCell className="text-right flex gap-1 justify-end">
-                      <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => openEditFish(f)}>Edit</Button>
-                      {isWithin24h(f.created_at) && (
+                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => openEditFish(f)}>Edit</Button>}
+                      {isWithin24h(f.created_at) && canDelete('livestock') && (
                         <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this fish record?')) fishDelete.mutate(f.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                       )}
                     </TableCell>
@@ -434,8 +440,8 @@ export default function Livestock() {
                     <TableCell><Badge className="bg-destructive/20 text-destructive">{m.status}</Badge></TableCell>
                     <TableCell>{m.date_recorded ? format(new Date(m.date_recorded), 'MMM d, yyyy') : '-'}</TableCell>
                     <TableCell className="text-right flex gap-1 justify-end">
-                      <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(m.created_at)} onClick={() => openEditMortality(m)}>Update</Button>
-                      <Button variant="ghost" size="icon" onClick={() => { if (confirm('Cancel this mortality record?')) mortalityCancel.mutate(m.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(m.created_at)} onClick={() => openEditMortality(m)}>Update</Button>}
+                      {canDelete('livestock') && <Button variant="ghost" size="icon" onClick={() => { if (confirm('Cancel this mortality record?')) mortalityCancel.mutate(m.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -457,6 +463,7 @@ export default function Livestock() {
       </div>
 
       {/* PIG DIALOG */}
+      {(editItem ? canEdit('livestock') : canCreate('livestock')) && (
       <Dialog open={isPigOpen} onOpenChange={(o) => { setIsPigOpen(o); if (!o) setEditItem(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editItem ? 'Edit Pig Record' : 'Add Pig'}</DialogTitle></DialogHeader>
@@ -487,8 +494,10 @@ export default function Livestock() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* CATTLE DIALOG */}
+      {(editItem ? canEdit('livestock') : canCreate('livestock')) && (
       <Dialog open={isCattleOpen} onOpenChange={(o) => { setIsCattleOpen(o); if (!o) setEditItem(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editItem ? 'Edit Cattle Record' : 'Add Cattle'}</DialogTitle></DialogHeader>
@@ -515,8 +524,10 @@ export default function Livestock() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* BIRD DIALOG */}
+      {(editItem ? canEdit('livestock') : canCreate('livestock')) && (
       <Dialog open={isBirdOpen} onOpenChange={(o) => { setIsBirdOpen(o); if (!o) setEditItem(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editItem ? 'Edit Bird Record' : 'Add Birds'}</DialogTitle></DialogHeader>
@@ -539,8 +550,10 @@ export default function Livestock() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* ADD FISHPOND DIALOG */}
+      {canCreate('livestock') && (
       <Dialog open={isPondOpen} onOpenChange={setIsPondOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Fishpond</DialogTitle></DialogHeader>
@@ -564,8 +577,10 @@ export default function Livestock() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* ADD/EDIT FISH DIALOG */}
+      {(editItem ? canEdit('livestock') : canCreate('livestock')) && (
       <Dialog open={isFishOpen} onOpenChange={(o) => { setIsFishOpen(o); if (!o) setEditItem(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editItem ? 'Edit Fish Record' : 'Add Fish'}</DialogTitle></DialogHeader>
@@ -588,8 +603,10 @@ export default function Livestock() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* MORTALITY DIALOG */}
+      {(editItem ? canEdit('livestock') : canCreate('livestock')) && (
       <Dialog open={isMortalityOpen} onOpenChange={(o) => { setIsMortalityOpen(o); if (!o) setEditItem(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editItem ? 'Update Mortality Record' : 'Add Dead Livestock'}</DialogTitle></DialogHeader>
@@ -654,6 +671,7 @@ export default function Livestock() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
     </DashboardLayout>
   );
 }

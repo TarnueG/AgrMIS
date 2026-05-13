@@ -5,7 +5,7 @@ import { AuthUser, LoginResponse, RefreshResponse } from '@/types/auth';
 interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signIn: (identifier: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
   signOut: () => void;
 }
@@ -38,9 +38,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const signIn = async (email: string, password: string): Promise<{ error: Error | null }> => {
+  const signIn = async (identifier: string, password: string): Promise<{ error: Error | null }> => {
     try {
-      const data = await api.post<LoginResponse>('/auth/login', { email, password });
+      const data = await api.post<LoginResponse>('/auth/login', { identifier, password });
       setAccessToken(data.accessToken);
       localStorage.setItem('amis_refresh_token', data.refreshToken);
       setUser(data.user);
@@ -53,7 +53,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUp = async (email: string, password: string, fullName: string): Promise<{ error: Error | null }> => {
     try {
       await api.post('/auth/register', { email, password, fullName });
-      // Auto sign-in after registration
       return signIn(email, password);
     } catch (e) {
       return { error: e instanceof Error ? e : new Error('Registration failed') };

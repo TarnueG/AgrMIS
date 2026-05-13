@@ -8,20 +8,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { Leaf, Loader2 } from 'lucide-react';
-import { z } from 'zod';
-
-const emailSchema = z.string().email('Please enter a valid email address');
-const passwordSchema = z.string().min(6, 'Password must be at least 6 characters');
-const nameSchema = z.string().min(2, 'Name must be at least 2 characters');
 
 export default function Auth() {
-  const { signIn, signUp, user, loading } = useAuth();
+  const { signIn, user, loading } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
-  
+
   const [isLoading, setIsLoading] = useState(false);
-  const [loginData, setLoginData] = useState({ email: '', password: '' });
-  const [signupData, setSignupData] = useState({ email: '', password: '', fullName: '' });
+  const [personnelData, setPersonnelData] = useState({ identifier: '', password: '' });
+  const [customerData, setCustomerData] = useState({ identifier: '', password: '' });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   if (loading) {
@@ -36,59 +31,26 @@ export default function Auth() {
     return <Navigate to="/dashboard" replace />;
   }
 
-  const validateLogin = () => {
+  const validate = (data: { identifier: string; password: string }, prefix: string) => {
     const newErrors: Record<string, string> = {};
-    
-    const emailResult = emailSchema.safeParse(loginData.email);
-    if (!emailResult.success) {
-      newErrors.loginEmail = emailResult.error.errors[0].message;
-    }
-    
-    const passwordResult = passwordSchema.safeParse(loginData.password);
-    if (!passwordResult.success) {
-      newErrors.loginPassword = passwordResult.error.errors[0].message;
-    }
-    
+    if (!data.identifier.trim()) newErrors[`${prefix}Identifier`] = 'Username or email is required';
+    if (data.password.length < 1) newErrors[`${prefix}Password`] = 'Password is required';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const validateSignup = () => {
-    const newErrors: Record<string, string> = {};
-    
-    const nameResult = nameSchema.safeParse(signupData.fullName);
-    if (!nameResult.success) {
-      newErrors.signupName = nameResult.error.errors[0].message;
-    }
-    
-    const emailResult = emailSchema.safeParse(signupData.email);
-    if (!emailResult.success) {
-      newErrors.signupEmail = emailResult.error.errors[0].message;
-    }
-    
-    const passwordResult = passwordSchema.safeParse(signupData.password);
-    if (!passwordResult.success) {
-      newErrors.signupPassword = passwordResult.error.errors[0].message;
-    }
-    
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent, data: { identifier: string; password: string }, prefix: string) => {
     e.preventDefault();
-    if (!validateLogin()) return;
-    
+    if (!validate(data, prefix)) return;
+
     setIsLoading(true);
-    const { error } = await signIn(loginData.email, loginData.password);
+    const { error } = await signIn(data.identifier, data.password);
     setIsLoading(false);
 
     if (error) {
       toast({
         title: 'Login Failed',
-        description: error.message === 'Invalid login credentials' 
-          ? 'Invalid email or password. Please try again.'
-          : error.message,
+        description: 'Invalid username/email or password. Please try again.',
         variant: 'destructive',
       });
     } else {
@@ -96,35 +58,49 @@ export default function Auth() {
     }
   };
 
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!validateSignup()) return;
-    
-    setIsLoading(true);
-    const { error } = await signUp(signupData.email, signupData.password, signupData.fullName);
-    setIsLoading(false);
-
-    if (error) {
-      toast({
-        title: 'Signup Failed',
-        description: error.message.includes('already registered')
-          ? 'This email is already registered. Please login instead.'
-          : error.message,
-        variant: 'destructive',
-      });
-    } else {
-      toast({
-        title: 'Account Created',
-        description: 'Welcome to AgriMIS! Redirecting to dashboard...',
-      });
-      navigate('/dashboard');
-    }
-  };
+  const loginForm = (
+    data: { identifier: string; password: string },
+    setData: React.Dispatch<React.SetStateAction<{ identifier: string; password: string }>>,
+    prefix: string
+  ) => (
+    <form onSubmit={(e) => handleLogin(e, data, prefix)} className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor={`${prefix}-identifier`}>Username or Email</Label>
+        <Input
+          id={`${prefix}-identifier`}
+          type="text"
+          placeholder="username or you@example.com"
+          value={data.identifier}
+          onChange={(e) => setData({ ...data, identifier: e.target.value })}
+        />
+        {errors[`${prefix}Identifier`] && (
+          <p className="text-sm text-destructive">{errors[`${prefix}Identifier`]}</p>
+        )}
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={`${prefix}-password`}>Password</Label>
+        <Input
+          id={`${prefix}-password`}
+          type="password"
+          placeholder="••••••••"
+          value={data.password}
+          onChange={(e) => setData({ ...data, password: e.target.value })}
+        />
+        {errors[`${prefix}Password`] && (
+          <p className="text-sm text-destructive">{errors[`${prefix}Password`]}</p>
+        )}
+      </div>
+      <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={isLoading}>
+        {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+        Sign In
+      </Button>
+    </form>
+  );
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background dark p-4">
       <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-accent/5" />
-      
+
       <Card className="w-full max-w-md relative z-10 glass">
         <CardHeader className="text-center space-y-4">
           <div className="flex justify-center">
@@ -138,93 +114,18 @@ export default function Auth() {
           </div>
         </CardHeader>
         <CardContent>
-          <Tabs defaultValue="login" className="w-full">
+          <Tabs defaultValue="personnel" className="w-full">
             <TabsList className="grid w-full grid-cols-2 mb-6">
-              <TabsTrigger value="login">Login</TabsTrigger>
-              <TabsTrigger value="signup">Sign Up</TabsTrigger>
+              <TabsTrigger value="personnel">Personnel</TabsTrigger>
+              <TabsTrigger value="customer">Customer</TabsTrigger>
             </TabsList>
-            
-            <TabsContent value="login">
-              <form onSubmit={handleLogin} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="login-email">Email</Label>
-                  <Input
-                    id="login-email"
-                    type="email"
-                    placeholder="you@example.com"
-                    value={loginData.email}
-                    onChange={(e) => setLoginData({ ...loginData, email: e.target.value })}
-                  />
-                  {errors.loginEmail && (
-                    <p className="text-sm text-destructive">{errors.loginEmail}</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="login-password">Password</Label>
-                  <Input
-                    id="login-password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={loginData.password}
-                    onChange={(e) => setLoginData({ ...loginData, password: e.target.value })}
-                  />
-                  {errors.loginPassword && (
-                    <p className="text-sm text-destructive">{errors.loginPassword}</p>
-                  )}
-                </div>
-                <Button type="submit" className="w-full gradient-primary" disabled={isLoading}>
-                  {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Login
-                </Button>
-              </form>
+
+            <TabsContent value="personnel">
+              {loginForm(personnelData, setPersonnelData, 'personnel')}
             </TabsContent>
-            
-            <TabsContent value="signup">
-              <form onSubmit={handleSignup} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="signup-name">Full Name</Label>
-                  <Input
-                    id="signup-name"
-                    type="text"
-                    placeholder="John Doe"
-                    value={signupData.fullName}
-                    onChange={(e) => setSignupData({ ...signupData, fullName: e.target.value })}
-                  />
-                  {errors.signupName && (
-                    <p className="text-sm text-destructive">{errors.signupName}</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="signup-email">Email</Label>
-                  <Input
-                    id="signup-email"
-                    type="email"
-                    placeholder="you@example.com"
-                    value={signupData.email}
-                    onChange={(e) => setSignupData({ ...signupData, email: e.target.value })}
-                  />
-                  {errors.signupEmail && (
-                    <p className="text-sm text-destructive">{errors.signupEmail}</p>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="signup-password">Password</Label>
-                  <Input
-                    id="signup-password"
-                    type="password"
-                    placeholder="••••••••"
-                    value={signupData.password}
-                    onChange={(e) => setSignupData({ ...signupData, password: e.target.value })}
-                  />
-                  {errors.signupPassword && (
-                    <p className="text-sm text-destructive">{errors.signupPassword}</p>
-                  )}
-                </div>
-                <Button type="submit" className="w-full gradient-primary" disabled={isLoading}>
-                  {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Create Account
-                </Button>
-              </form>
+
+            <TabsContent value="customer">
+              {loginForm(customerData, setCustomerData, 'customer')}
             </TabsContent>
           </Tabs>
         </CardContent>

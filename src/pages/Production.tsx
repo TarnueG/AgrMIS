@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
+import { usePermissions } from '@/hooks/usePermissions';
 
 type ProdView = 'all' | 'pending' | 'in_process' | 'quality_check' | 'passed' | 'rework' | 'requested' | 'declined';
 
@@ -40,6 +41,7 @@ const BATCH_VIEWS: ProdView[] = ['all', 'pending', 'in_process', 'quality_check'
 export default function Production() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const [prodView, setProdView] = useState<ProdView>('all');
   const [search, setSearch] = useState('');
   const [batchDialogReqId, setBatchDialogReqId] = useState<string | null>(null);
@@ -218,7 +220,7 @@ export default function Production() {
                       <TableCell>
                         {prodView === 'passed' ? (
                           <Badge className="bg-success/20 text-success">Passed</Badge>
-                        ) : (
+                        ) : canEdit('production') ? (
                           <select
                             value={b.status}
                             onChange={(e) => updateBatchStatus.mutate({ id: b.id, status: e.target.value })}
@@ -230,6 +232,8 @@ export default function Production() {
                             <option value="passed">Passed</option>
                             <option value="rework">Rework</option>
                           </select>
+                        ) : (
+                          <Badge className={BATCH_STATUS_COLORS[b.status] ?? 'bg-muted'}>{b.status}</Badge>
                         )}
                       </TableCell>
                       <TableCell>{b.created_at ? format(new Date(b.created_at), 'MMM d, yyyy') : '-'}</TableCell>
@@ -293,14 +297,14 @@ export default function Production() {
                           <div className="flex items-center gap-2 flex-wrap">
                             {r.status === 'pending' && (
                               <>
-                                <Button size="sm" className="gradient-primary text-black text-xs font-medium" onClick={() => acceptRequest.mutate(r.id)}>Accept</Button>
-                                <Button size="sm" variant="outline" className="border border-input bg-background text-white text-xs" onClick={() => { if (confirm('Cancel this request? It will move to Declined Orders.')) cancelRequest.mutate(r.id); }}>Cancel</Button>
+                                {canEdit('production') && <Button size="sm" className="gradient-primary text-black text-xs font-medium" onClick={() => acceptRequest.mutate(r.id)}>Accept</Button>}
+                                {canEdit('production') && <Button size="sm" variant="outline" className="border border-input bg-background text-white text-xs" onClick={() => { if (confirm('Cancel this request? It will move to Declined Orders.')) cancelRequest.mutate(r.id); }}>Cancel</Button>}
                               </>
                             )}
-                            {r.status === 'accepted' && !batchExists && !qtyEdited && (
+                            {r.status === 'accepted' && !batchExists && !qtyEdited && canEdit('production') && (
                               <Button size="sm" variant="outline" className="border border-input bg-background text-white text-xs" onClick={() => { setEditQtyReqId(r.id); setEditQtyValue(Number(r.quantity)); }}>Edit Qty</Button>
                             )}
-                            {r.status === 'accepted' && !batchExists && (
+                            {r.status === 'accepted' && !batchExists && canCreate('production') && (
                               <Button size="sm" className="gradient-primary text-black text-xs font-medium" onClick={() => { setBatchDialogReqId(r.id); setBatchForm({ quantity: Number(r.quantity), status: 'pending' }); }}>Create Batch</Button>
                             )}
                             {r.status === 'accepted' && batchExists && (
@@ -352,7 +356,7 @@ export default function Production() {
                         <TableCell>
                           {immutable ? (
                             <span className="text-xs text-muted-foreground">Expired</span>
-                          ) : (
+                          ) : canEdit('production') ? (
                             <Button
                               size="sm"
                               variant="outline"
@@ -364,7 +368,7 @@ export default function Production() {
                             >
                               Retrieve
                             </Button>
-                          )}
+                          ) : null}
                         </TableCell>
                       </TableRow>
                     );
@@ -381,7 +385,7 @@ export default function Production() {
         )}
 
         {/* Create Batch Dialog */}
-        <Dialog open={!!batchDialogReqId} onOpenChange={(o) => !o && setBatchDialogReqId(null)}>
+        {canCreate('production') && <Dialog open={!!batchDialogReqId} onOpenChange={(o) => !o && setBatchDialogReqId(null)}>
           <DialogContent>
             <DialogHeader><DialogTitle>Create Batch</DialogTitle></DialogHeader>
             <form
@@ -419,7 +423,7 @@ export default function Production() {
               </Button>
             </form>
           </DialogContent>
-        </Dialog>
+        </Dialog>}
       </div>
     </DashboardLayout>
   );

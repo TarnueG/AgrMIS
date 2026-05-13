@@ -1,12 +1,20 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
-import { requireAuth } from '../middleware/auth';
+import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
+import { isAdminRole } from '../lib/permissions';
+import { logAuditEvent, clientInfo } from '../lib/audit';
+import { deactivateUser, reactivateUser, findLinkedUserId } from '../lib/userStatus';
 
 const router = Router();
 router.use(requireAuth);
 router.use(setFarmContext);
+router.use((req, res, next) => {
+  const subsystem = req.path.startsWith('/orders') ? 'sales_order_points' : 'crm';
+  const action = req.method === 'GET' ? 'view' as const : req.method === 'POST' ? 'create' as const : req.method === 'DELETE' ? 'delete' as const : 'edit' as const;
+  return requirePermission(subsystem, action)(req, res, next);
+});
 
 // UI ↔ DB status translation
 const UI_TO_DB: Record<string, string> = {
@@ -71,9 +79,14 @@ router.get('/customers', async (req, res) => {
           ],
         }),
       },
-      orderBy: { name: 'asc' },
+      orderBy: { created_at: 'asc' },
     });
-    res.json(customers);
+    const result = customers.map((c: any, i: number) => ({
+      ...c,
+      is_active: c.is_active ?? true,
+      display_id: `CUST-${String(i + 1).padStart(3, '0')}`,
+    }));
+    res.json(result);
   } catch {
     res.status(500).json({ error: 'Failed to fetch customers', code: 'DB_ERROR' });
   }
@@ -125,6 +138,23 @@ router.patch('/customers/:id', async (req, res) => {
   }
 });
 
+// GET /api/v1/sales/customers/:id/orders
+router.get('/customers/:id/orders', async (req, res) => {
+  try {
+    const orders = await prisma.sales_orders.findMany({
+      where: {
+        customer_id: req.params.id,
+        farm_id: req.user!.farmId ?? undefined,
+      },
+      include: { customers: { select: { name: true } } },
+      orderBy: { created_at: 'desc' },
+    });
+    res.json(orders.map(mapOrder));
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch customer orders', code: 'DB_ERROR' });
+  }
+});
+
 router.delete('/customers/:id', async (req, res) => {
   try {
     await prisma.customers.update({
@@ -134,6 +164,38 @@ router.delete('/customers/:id', async (req, res) => {
     res.status(204).end();
   } catch {
     res.status(500).json({ error: 'Failed to delete customer', code: 'DB_ERROR' });
+  }
+});
+
+router.patch('/customers/:id/deactivate', async (req, res) => {
+  try {
+    await prisma.customers.update({
+      where: { id: req.params.id },
+      data: { is_active: false, deactivated_at: new Date(), updated_at: new Date() },
+    });
+    const linkedUserId = await findLinkedUserId('customer', req.params.id);
+    if (linkedUserId) await deactivateUser(linkedUserId);
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({ actorUserId: req.user!.userId, eventType: 'customer_deactivated', subsystem: 'crm', description: `Customer ${req.params.id} deactivated`, ipAddress: ip, userAgent });
+    res.json({ message: 'Customer deactivated' });
+  } catch {
+    res.status(500).json({ error: 'Failed to deactivate customer', code: 'DB_ERROR' });
+  }
+});
+
+router.patch('/customers/:id/activate', async (req, res) => {
+  try {
+    await prisma.customers.update({
+      where: { id: req.params.id },
+      data: { is_active: true, deactivated_at: null, updated_at: new Date() },
+    });
+    const linkedUserId = await findLinkedUserId('customer', req.params.id);
+    if (linkedUserId) await reactivateUser(linkedUserId);
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({ actorUserId: req.user!.userId, eventType: 'customer_activated', subsystem: 'crm', description: `Customer ${req.params.id} activated`, ipAddress: ip, userAgent });
+    res.json({ message: 'Customer activated' });
+  } catch {
+    res.status(500).json({ error: 'Failed to activate customer', code: 'DB_ERROR' });
   }
 });
 
@@ -149,11 +211,24 @@ const orderSchema = z.object({
 router.get('/orders', async (req, res) => {
   const { status, search } = req.query as Record<string, string>;
   const dbStatus = status && UI_TO_DB[status] ? UI_TO_DB[status] : undefined;
+  const roleName = req.user!.roleName;
+
+  // ABAC: customers only see orders linked to their own customer record
+  let customerIdFilter: string | undefined;
+  if (roleName === 'customer') {
+    const linked = await prisma.customers.findFirst({
+      where: { email: { equals: req.user!.email, mode: 'insensitive' }, deleted_at: null },
+      select: { id: true },
+    });
+    customerIdFilter = linked?.id ?? '__none__';
+  }
+
   try {
     const orders = await prisma.sales_orders.findMany({
       where: {
         farm_id: req.user!.farmId ?? undefined,
         ...(dbStatus && { status: dbStatus }),
+        ...(customerIdFilter && { customer_id: customerIdFilter }),
       },
       include: { customers: { select: { name: true } } },
       orderBy: { created_at: 'desc' },

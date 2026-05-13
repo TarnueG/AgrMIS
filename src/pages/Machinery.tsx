@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Tractor, Search, Trash2, Wrench, AlertTriangle, CheckCircle, XCircle, PackageCheck } from 'lucide-react';
 import { format } from 'date-fns';
+import { usePermissions } from '@/hooks/usePermissions';
 
 type View = 'total' | 'operational' | 'active' | 'maintenance' | 'lost' | 'retired' | 'sold' | 'requests';
 
@@ -40,6 +41,7 @@ function requestStatusBadge(status: string) {
 export default function Machinery() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { canCreate, canEdit, canDelete } = usePermissions();
   const [search, setSearch] = useState('');
   const [selectedView, setSelectedView] = useState<View>('total');
 
@@ -238,27 +240,27 @@ export default function Machinery() {
             <p className="text-muted-foreground">Manage farm equipment and vehicles</p>
           </div>
           <div className="flex gap-2">
-            {selectedView === 'operational' && (
+            {selectedView === 'operational' && canEdit('machinery') && (
               <Button variant="outline" className="text-white" onClick={() => setIsAssignOpen(true)}>
                 <Tractor className="h-4 w-4 mr-2" />Assign Machinery
               </Button>
             )}
-            {(selectedView === 'active' || selectedView === 'maintenance') && (
+            {(selectedView === 'active' || selectedView === 'maintenance') && canCreate('machinery') && (
               <Button className="gradient-primary text-black" onClick={() => setIsMaintenanceOpen(true)}>
                 <Wrench className="h-4 w-4 mr-2" />Add for Maintenance
               </Button>
             )}
-            {selectedView === 'lost' && (
+            {selectedView === 'lost' && canCreate('machinery') && (
               <Button variant="destructive" onClick={() => setIsLostOpen(true)}>
                 <AlertTriangle className="h-4 w-4 mr-2" />Add Loss Equipment
               </Button>
             )}
-            {selectedView === 'retired' && (
+            {selectedView === 'retired' && canCreate('machinery') && (
               <Button variant="outline" className="text-white" onClick={() => setIsRetireOpen(true)}>
                 <XCircle className="h-4 w-4 mr-2" />Add Retire
               </Button>
             )}
-            {!['operational', 'active', 'maintenance', 'lost', 'retired'].includes(selectedView) && (
+            {!['operational', 'active', 'maintenance', 'lost', 'retired'].includes(selectedView) && canCreate('machinery') && (
               <Button className="gradient-primary text-black" onClick={() => setIsRequestOpen(true)}>
                 <Plus className="h-4 w-4 mr-2" />Pending Request
               </Button>
@@ -316,20 +318,24 @@ export default function Machinery() {
                       <TableCell className="capitalize">{m.type}</TableCell>
                       <TableCell>{m.model || '-'}</TableCell>
                       <TableCell>
-                        <select
-                          value={m.status}
-                          onChange={(e) => updateStatusMutation.mutate({ id: m.id, status: e.target.value })}
-                          disabled={updateStatusMutation.isPending}
-                          className={`h-8 rounded border border-input bg-background px-2 text-sm ${statusColor[m.status] ?? 'text-foreground'}`}
-                        >
-                          <option value="pending">Pending</option>
-                          <option value="active">Active</option>
-                          <option value="operational">Operational</option>
-                          <option value="under_maintenance">In Maintenance</option>
-                          <option value="lost">Lost</option>
-                          <option value="retired">Retired</option>
-                          <option value="sold">Sold</option>
-                        </select>
+                        {canEdit('machinery') ? (
+                          <select
+                            value={m.status}
+                            onChange={(e) => updateStatusMutation.mutate({ id: m.id, status: e.target.value })}
+                            disabled={updateStatusMutation.isPending}
+                            className={`h-8 rounded border border-input bg-background px-2 text-sm ${statusColor[m.status] ?? 'text-foreground'}`}
+                          >
+                            <option value="pending">Pending</option>
+                            <option value="active">Active</option>
+                            <option value="operational">Operational</option>
+                            <option value="under_maintenance">In Maintenance</option>
+                            <option value="lost">Lost</option>
+                            <option value="retired">Retired</option>
+                            <option value="sold">Sold</option>
+                          </select>
+                        ) : (
+                          <Badge className={statusColor[m.status] ?? 'bg-muted text-muted-foreground'}>{m.status.replace('_', ' ')}</Badge>
+                        )}
                       </TableCell>
                       <TableCell>{m.license || '-'}</TableCell>
                       {selectedView === 'maintenance' && (
@@ -339,7 +345,7 @@ export default function Machinery() {
                       )}
                       <TableCell>{m.created_at ? format(new Date(m.created_at), 'MMM d, yyyy') : '-'}</TableCell>
                       <TableCell className="text-right flex gap-1 justify-end">
-                        {selectedView === 'maintenance' && (
+                        {selectedView === 'maintenance' && canEdit('machinery') && (
                           <Button
                             variant="outline"
                             size="sm"
@@ -350,9 +356,11 @@ export default function Machinery() {
                             Cancel Maintenance
                           </Button>
                         )}
-                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this equipment?')) deleteMutation.mutate(m.id); }}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                        {canDelete('machinery') && (
+                          <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this equipment?')) deleteMutation.mutate(m.id); }}>
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   );
@@ -391,17 +399,17 @@ export default function Machinery() {
                       <TableCell><Badge className={requestStatusBadge(r.status)}>{r.status}</Badge></TableCell>
                       <TableCell>{r.created_at ? format(new Date(r.created_at), 'MMM d, yyyy') : '-'}</TableCell>
                       <TableCell className="text-right flex gap-1 justify-end items-center">
-                        {r.status === 'approved' && (
+                        {r.status === 'approved' && canEdit('machinery') && (
                           <Button size="sm" variant="outline" className="text-white" onClick={() => { if (confirm('Mark this request as delivered?')) markDeliveredMutation.mutate(r.id); }} disabled={markDeliveredMutation.isPending}>
                             Mark Delivered
                           </Button>
                         )}
-                        {isDelivered && !alreadyAdded && (
+                        {isDelivered && !alreadyAdded && canCreate('machinery') && (
                           <Button size="sm" className="gradient-primary text-black" onClick={() => setIsAddInventoryOpen(r.id)}>
                             <Plus className="h-3 w-3 mr-1" />Add Equipment
                           </Button>
                         )}
-                        {r.status === 'pending' && (
+                        {r.status === 'pending' && canDelete('machinery') && (
                           <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this request?')) deleteRequestMutation.mutate(r.id); }}>
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
@@ -420,6 +428,7 @@ export default function Machinery() {
       </div>
 
       {/* Assign Machinery Dialog */}
+      {canEdit('machinery') && (
       <Dialog open={isAssignOpen} onOpenChange={setIsAssignOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Assign Machinery</DialogTitle></DialogHeader>
@@ -444,8 +453,10 @@ export default function Machinery() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* Pending Request Dialog */}
+      {canCreate('machinery') && (
       <Dialog open={isRequestOpen} onOpenChange={setIsRequestOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Pending Request</DialogTitle></DialogHeader>
@@ -479,8 +490,10 @@ export default function Machinery() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* Add for Maintenance Dialog */}
+      {canCreate('machinery') && (
       <Dialog open={isMaintenanceOpen} onOpenChange={setIsMaintenanceOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add for Maintenance</DialogTitle></DialogHeader>
@@ -529,8 +542,10 @@ export default function Machinery() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* Add Loss Equipment Dialog */}
+      {canCreate('machinery') && (
       <Dialog open={isLostOpen} onOpenChange={setIsLostOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Report Lost Equipment</DialogTitle></DialogHeader>
@@ -551,8 +566,10 @@ export default function Machinery() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* Add Retire Dialog */}
+      {canCreate('machinery') && (
       <Dialog open={isRetireOpen} onOpenChange={setIsRetireOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Retire Equipment</DialogTitle></DialogHeader>
@@ -573,8 +590,10 @@ export default function Machinery() {
           </form>
         </DialogContent>
       </Dialog>
+      )}
 
       {/* Add Equipment (from delivered request) Dialog */}
+      {canCreate('machinery') && (
       <Dialog open={!!isAddInventoryOpen} onOpenChange={() => { setIsAddInventoryOpen(null); setInventoryLicense(''); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Equipment to Inventory</DialogTitle></DialogHeader>
@@ -605,6 +624,7 @@ export default function Machinery() {
           })()}
         </DialogContent>
       </Dialog>
+      )}
     </DashboardLayout>
   );
 }
