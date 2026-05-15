@@ -2,6 +2,27 @@
 
 ---
 
+## 2026-05-15 — Card-Level Access Control, Admin Session Fix, Dead Code Removal
+
+### Problem 1: Admin UI leakage (session cache race condition)
+- `src/hooks/useAuth.tsx` — `queryClient.clear()` on `signIn` (before API call) and `signOut` (after state clear); prevents previous user's cache from leaking into new session
+- `src/components/layout/DashboardLayout.tsx` + `AppSidebar.tsx` — profile query key scoped to `user?.id`
+- `src/components/layout/AppSidebar.tsx` — `itemVisible` guard inverted: `!permsLoading && canView(subsystem)` (was `permsLoading || canView`); removes admin nav flash for non-admin users
+- `src/pages/Dashboard.tsx` — explicit if/else branches for loading/admin/role/fallback; no longer falls through to AdminDashboard for non-admin users
+
+### Problem 2: Card-level access control (11 subsystems, 66 total cards)
+- New `card_permissions` DB table; unique on `(farm_id, role_id, card_id)`; 172 grants migrated from existing `subsystem_permissions` (view=true → all cards for that subsystem)
+- Backend: `getCardPermissions()` in `permissions.ts`; `GET /auth/card-permissions`; admin-only `GET/PUT /access-control/cards`
+- Frontend: `canViewCard(cardId)` in `usePermissions`; all 11 stat-card pages filter their card arrays by `canViewCard`
+- Settings AccessControl panel: new "Card-Level Visibility" section — hierarchical checkbox tree (subsystem master checkbox with indeterminate state; cascading select/deselect; Save Card Access button); only visible when a role is selected in the filter
+
+### Problem 3: Dead code removal
+- `useAuth.tsx` — `signUp` removed (exported but never called from any page)
+- `Settings.tsx` — `useNavigate` import removed (imported but never called)
+- `backend/src/seeds/cleanup_customers.ts` + `migrate_deactivation.ts` — one-shot scripts deleted after confirmed ran successfully
+
+---
+
 ## 2026-05-13 — Permission Enforcement + CRM Cleanup + Bidirectional Sync
 
 ### DB Cleanup

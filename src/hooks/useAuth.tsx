@@ -1,4 +1,5 @@
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import api, { setAccessToken, clearTokens } from '@/lib/api';
 import { AuthUser, LoginResponse, RefreshResponse } from '@/types/auth';
 
@@ -6,7 +7,6 @@ interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
   signIn: (identifier: string, password: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, password: string, fullName: string) => Promise<{ error: Error | null }>;
   signOut: () => void;
 }
 
@@ -15,6 +15,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
 
   // On mount: attempt silent token refresh if a refresh token is stored
   useEffect(() => {
@@ -40,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = async (identifier: string, password: string): Promise<{ error: Error | null }> => {
     try {
+      queryClient.clear();
       const data = await api.post<LoginResponse>('/auth/login', { identifier, password });
       setAccessToken(data.accessToken);
       localStorage.setItem('amis_refresh_token', data.refreshToken);
@@ -50,24 +52,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signUp = async (email: string, password: string, fullName: string): Promise<{ error: Error | null }> => {
-    try {
-      await api.post('/auth/register', { email, password, fullName });
-      return signIn(email, password);
-    } catch (e) {
-      return { error: e instanceof Error ? e : new Error('Registration failed') };
-    }
-  };
-
   const signOut = () => {
     const refreshToken = localStorage.getItem('amis_refresh_token');
     api.post('/auth/logout', { refreshToken }).catch(() => {});
     clearTokens();
     setUser(null);
+    queryClient.clear();
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, loading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

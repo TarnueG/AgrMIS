@@ -17,7 +17,7 @@ type FinView = 'income' | 'expenses' | 'profit' | 'purchase_requests' | 'contrac
 export default function Finance() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { canEdit } = usePermissions();
+  const { canEdit, canViewCard } = usePermissions();
   const [finView, setFinView] = useState<FinView>(null);
 
   const { data: marketingOrders = [] } = useQuery<any[]>({
@@ -128,7 +128,7 @@ export default function Finance() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          {CARDS.map(({ key, label, value, Icon, color }) => (
+          {CARDS.filter(({ key }) => canViewCard(`finance.${key}`)).map(({ key, label, value, Icon, color }) => (
             <Card key={key} className={`border ${color} ${cardClass(key)}`} onClick={() => setFinView(prev => prev === key ? null : key)}>
               <CardContent className="p-6">
                 <div className="flex items-center gap-4">

@@ -1,4 +1,5 @@
 import prisma from './prisma';
+import { ALL_CARD_IDS } from './cardRegistry';
 
 const ADMIN_ROLES = new Set(['admin']);
 
@@ -67,8 +68,36 @@ export async function getPermissions(
 
 export function invalidateCache(roleId: string, farmId: string | null) {
   cache.delete(`${roleId}:${farmId ?? 'null'}`);
+  cardCache.delete(`${roleId}:${farmId ?? 'null'}`);
 }
 
 export function clearPermissionCache() {
   cache.clear();
+  cardCache.clear();
+}
+
+// ── Card-level permissions ────────────────────────────────────────────────────
+
+const cardCache = new Map<string, { ids: Set<string>; ts: number }>();
+
+export async function getCardPermissions(
+  roleId: string,
+  roleName: string,
+  farmId: string | null
+): Promise<Set<string>> {
+  if (isAdminRole(roleName)) return new Set(ALL_CARD_IDS);
+
+  const key = `${roleId}:${farmId ?? 'null'}`;
+  const cached = cardCache.get(key);
+  if (cached && Date.now() - cached.ts < TTL) return cached.ids;
+
+  const rows: Array<{ card_id: string }> = await prisma.$queryRaw`
+    SELECT card_id FROM card_permissions
+    WHERE role_id = ${roleId}::uuid
+      AND farm_id = ${farmId}::uuid
+  `;
+
+  const ids = new Set(rows.map(r => r.card_id));
+  cardCache.set(key, { ids, ts: Date.now() });
+  return ids;
 }

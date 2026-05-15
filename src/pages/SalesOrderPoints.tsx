@@ -30,7 +30,7 @@ const BLANK_CART = { itemName: '', quantity: 0 };
 export default function SalesOrderPoints() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
   const [view, setView] = useState<SOPView>('pending');
   const [search, setSearch] = useState('');
   const [cartSearch, setCartSearch] = useState('');
@@ -132,7 +132,7 @@ export default function SalesOrderPoints() {
 
         {/* Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          {CARDS.map(({ key, label, count, Icon, color }) => (
+          {CARDS.filter(({ key }) => canViewCard(`sales_order_points.${key}`)).map(({ key, label, count, Icon, color }) => (
             <Card
               key={key}
               className={`border cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${color} ${view === key ? 'ring-2 ring-primary shadow-lg scale-105' : ''}`}

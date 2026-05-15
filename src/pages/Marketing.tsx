@@ -31,7 +31,7 @@ const BLANK_PAYMENT = { name: '', cardNumber: '', cvv: '', expiry: '', totalAmou
 export default function Marketing() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
   const [view, setView] = useState<MarketingView>('cart');
   const [priceOpen, setPriceOpen] = useState(false);
   const [editPrice, setEditPrice] = useState<any>(null);
@@ -182,7 +182,7 @@ export default function Marketing() {
 
         {/* Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          {CARDS.map(({ key, label, count, Icon, color }) => (
+          {CARDS.filter(({ key }) => canViewCard(`marketing.${key}`)).map(({ key, label, count, Icon, color }) => (
             <Card
               key={key}
               className={`border cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${color} ${view === key ? 'ring-2 ring-primary shadow-lg scale-105' : ''}`}

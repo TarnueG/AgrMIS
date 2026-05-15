@@ -127,7 +127,7 @@ export function AppSidebar() {
   });
 
   const { data: profile } = useQuery({
-    queryKey: ['user-profile'],
+    queryKey: ['user-profile', user?.id],
     queryFn: () => api.get<any>('/profile'),
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
@@ -164,8 +164,7 @@ export function AppSidebar() {
 
   const isActive = (path: string) => location.pathname === path;
 
-  // Don't filter while permissions are loading — avoid flicker
-  const itemVisible = (subsystem: string) => permsLoading || canView(subsystem);
+  const itemVisible = (subsystem: string) => !permsLoading && canView(subsystem);
 
   const visibleItems = menuItems
     .map(item => {

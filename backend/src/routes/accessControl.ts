@@ -7,6 +7,7 @@ import { requireAuth, requireRole } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 import { logAuditEvent, clientInfo } from '../lib/audit';
 import { invalidateCache } from '../lib/permissions';
+import { CARD_REGISTRY, allCardIds } from '../lib/cardRegistry';
 import { deactivateUser, reactivateUser, findLinkedUserId } from '../lib/userStatus';
 
 const router = Router();
@@ -348,6 +349,69 @@ router.post('/create-account', isAdmin, async (req, res) => {
     role: user.role.name,
     generatedPassword: rawPassword,
   });
+});
+
+// ── Card permissions ──────────────────────────────────────────────────────────
+
+// GET /api/v1/access-control/cards?roleId=<uuid>
+router.get('/cards', isAdmin, async (req, res) => {
+  const { roleId } = req.query as { roleId?: string };
+  const farmId = req.user!.farmId;
+  if (!roleId) return res.status(400).json({ error: 'roleId required', code: 'VALIDATION_ERROR' });
+  try {
+    const rows: Array<{ card_id: string }> = await prisma.$queryRaw`
+      SELECT card_id FROM card_permissions
+      WHERE role_id = ${roleId}::uuid AND farm_id = ${farmId}::uuid
+    `;
+    const granted = new Set(rows.map(r => r.card_id));
+    return res.json({ registry: CARD_REGISTRY, granted: Array.from(granted) });
+  } catch {
+    return res.status(500).json({ error: 'Failed to fetch card permissions', code: 'DB_ERROR' });
+  }
+});
+
+// PUT /api/v1/access-control/cards
+router.put('/cards', isAdmin, async (req, res) => {
+  const schema = z.object({
+    roleId: z.string().uuid(),
+    cardIds: z.array(z.string()),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+
+  const farmId = req.user!.farmId;
+  if (!farmId) return res.status(400).json({ error: 'Farm context required', code: 'NO_FARM' });
+
+  const { roleId, cardIds } = parsed.data;
+  try {
+    // Delete all existing grants for this role+farm, then re-insert the new set
+    await prisma.$executeRaw`
+      DELETE FROM card_permissions WHERE role_id = ${roleId}::uuid AND farm_id = ${farmId}::uuid
+    `;
+    for (const cardId of cardIds) {
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO card_permissions (farm_id, role_id, card_id)
+         VALUES ($1::uuid, $2::uuid, $3)
+         ON CONFLICT ON CONSTRAINT farm_role_card DO NOTHING`,
+        farmId, roleId, cardId
+      );
+    }
+    invalidateCache(roleId, farmId);
+    const role = await prisma.roles.findUnique({ where: { id: roleId }, select: { name: true } });
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({
+      actorUserId: req.user!.userId,
+      eventType: 'permission_changed',
+      subsystem: 'settings',
+      description: `Card permissions updated for role "${role?.name ?? roleId}": ${cardIds.length} card(s) granted`,
+      metadata: { roleId, cardIds },
+      ipAddress: ip,
+      userAgent,
+    });
+    return res.json({ message: 'Card permissions updated' });
+  } catch {
+    return res.status(500).json({ error: 'Failed to update card permissions', code: 'DB_ERROR' });
+  }
 });
 
 export default router;

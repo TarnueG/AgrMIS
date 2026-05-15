@@ -424,16 +424,20 @@ const ROLE_DASHBOARD: Record<string, React.ComponentType> = {
 export default function Dashboard() {
   const { role, isAdmin, isLoading } = usePermissions();
 
-  const RoleDash = !isLoading && !isAdmin ? ROLE_DASHBOARD[role.toLowerCase().replace(/ /g, '_')] : null;
+  const RoleDash = !isLoading && !isAdmin
+    ? (ROLE_DASHBOARD[role.toLowerCase().replace(/ /g, '_')] ?? null)
+    : null;
 
   return (
     <DashboardLayout>
       {isLoading ? (
         <div className="flex items-center justify-center h-64 text-muted-foreground">Loading…</div>
-      ) : isAdmin || !RoleDash ? (
+      ) : isAdmin ? (
         <AdminDashboard />
-      ) : (
+      ) : RoleDash ? (
         <RoleDash />
+      ) : (
+        <div className="flex items-center justify-center h-64 text-muted-foreground">Loading…</div>
       )}
     </DashboardLayout>
   );

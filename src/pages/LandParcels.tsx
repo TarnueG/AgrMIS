@@ -20,7 +20,7 @@ const soilTypes = ['loamy', 'clay', 'sandy', 'silty', 'peaty'];
 export default function LandParcels() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
   const [selectedView, setSelectedView] = useState<ParcelView>('requested');
   const [search, setSearch] = useState('');
   const [totalFilter, setTotalFilter] = useState('');
@@ -177,7 +177,7 @@ export default function LandParcels() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {CARDS.map(({ key, label, count, Icon, color }) => (
+          {CARDS.filter(({ key }) => canViewCard(`land_parcels.${key}`)).map(({ key, label, count, Icon, color }) => (
             <Card
               key={key}
               onClick={() => setSelectedView(key)}

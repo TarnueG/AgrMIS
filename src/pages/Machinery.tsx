@@ -41,7 +41,7 @@ function requestStatusBadge(status: string) {
 export default function Machinery() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
   const [search, setSearch] = useState('');
   const [selectedView, setSelectedView] = useState<View>('total');
 
@@ -270,7 +270,7 @@ export default function Machinery() {
 
         {/* Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {CARDS.map(({ key, label, count, color, icon: Icon }) => (
+          {CARDS.filter(({ key }) => canViewCard(`machinery.${key}`)).map(({ key, label, count, color, icon: Icon }) => (
             <Card
               key={key}
               onClick={() => setSelectedView(key)}

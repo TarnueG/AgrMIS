@@ -19,7 +19,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const navigate = useNavigate();
 
   const { data: profile } = useQuery({
-    queryKey: ['user-profile'],
+    queryKey: ['user-profile', user?.id],
     queryFn: () => api.get<any>('/profile'),
     enabled: !!user,
     staleTime: 5 * 60 * 1000,

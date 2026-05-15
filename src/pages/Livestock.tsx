@@ -39,7 +39,7 @@ const BLANK_MORTALITY = { livestock_type: 'pig', breed_or_type: '', record_id: '
 export default function Livestock() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
   const [selectedView, setSelectedView] = useState<LivestockView>('pigs');
   const [search, setSearch] = useState('');
 
@@ -219,7 +219,7 @@ export default function Livestock() {
 
         {/* Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          {CARDS.map(({ key, label, count, color, icon: Icon }) => (
+          {CARDS.filter(({ key }) => canViewCard(`livestock.${key}`)).map(({ key, label, count, color, icon: Icon }) => (
             <Card key={key} onClick={() => setSelectedView(key)}
               className={`cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${color} ${selectedView === key ? 'ring-2 ring-primary shadow-lg scale-105' : ''}`}>
               <CardContent className="p-4 flex items-center gap-3">

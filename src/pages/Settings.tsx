@@ -1,7 +1,7 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
 import api, { getAccessToken } from '@/lib/api';
+import { CARD_REGISTRY, CardDef } from '@/lib/cardRegistry';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -995,6 +995,155 @@ function ChangePasswordPanel() {
   );
 }
 
+// ─── Card Access Components ───────────────────────────────────────────────────
+
+function SubsystemCheckbox({ subsystem, cards, granted, onToggle }: {
+  subsystem: string;
+  cards: CardDef[];
+  granted: Set<string>;
+  onToggle: (subsystem: string, cards: CardDef[], check: boolean) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const cardIds = cards.map(c => `${subsystem}.${c.key}`);
+  const checkedCount = cardIds.filter(id => granted.has(id)).length;
+  const allChecked = checkedCount === cardIds.length;
+  const someChecked = checkedCount > 0 && !allChecked;
+
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = someChecked;
+  }, [someChecked]);
+
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={allChecked}
+      onChange={() => onToggle(subsystem, cards, !allChecked)}
+      className="h-4 w-4 rounded border-border accent-primary cursor-pointer shrink-0"
+    />
+  );
+}
+
+function CardAccessSection({ roleId, roleName }: { roleId: string; roleName: string }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [localGranted, setLocalGranted] = useState<Set<string> | null>(null);
+  const [dirty, setDirty] = useState(false);
+
+  const { data: cardData, isLoading } = useQuery({
+    queryKey: ['access-control-cards', roleId],
+    queryFn: () => api.get<any>(`/access-control/cards?roleId=${roleId}`),
+  });
+
+  useEffect(() => {
+    if (cardData) {
+      setLocalGranted(new Set(cardData.granted as string[]));
+      setDirty(false);
+    }
+  }, [cardData]);
+
+  const saveCards = useMutation({
+    mutationFn: (cardIds: string[]) => api.put('/access-control/cards', { roleId, cardIds }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['access-control-cards', roleId] });
+      queryClient.invalidateQueries({ queryKey: ['user-card-permissions'] });
+      toast({ title: 'Card permissions saved' });
+      setDirty(false);
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const toggleCard = (cardId: string) => {
+    setLocalGranted(prev => {
+      if (!prev) return prev;
+      const next = new Set(prev);
+      if (next.has(cardId)) next.delete(cardId); else next.add(cardId);
+      return next;
+    });
+    setDirty(true);
+  };
+
+  const toggleSubsystem = (subsystem: string, cards: CardDef[], shouldCheck: boolean) => {
+    setLocalGranted(prev => {
+      if (!prev) return prev;
+      const next = new Set(prev);
+      for (const card of cards) {
+        const id = `${subsystem}.${card.key}`;
+        if (shouldCheck) next.add(id); else next.delete(id);
+      }
+      return next;
+    });
+    setDirty(true);
+  };
+
+  if (isLoading || !localGranted) {
+    return <div className="text-center text-muted-foreground py-8 text-sm">Loading card permissions…</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-semibold">Card Visibility</h3>
+          <p className="text-sm text-muted-foreground">
+            Controls which stat cards <span className="text-foreground capitalize">{roleName.replace(/_/g, ' ')}</span> can see within each module
+          </p>
+        </div>
+        <Button
+          onClick={() => saveCards.mutate(Array.from(localGranted))}
+          disabled={!dirty || saveCards.isPending}
+          className="gradient-primary text-black font-medium"
+        >
+          {saveCards.isPending ? 'Saving…' : 'Save Card Access'}
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        {Object.entries(CARD_REGISTRY).map(([subsystem, cards]) => {
+          const cardIds = cards.map(c => `${subsystem}.${c.key}`);
+          const checkedCount = cardIds.filter(id => localGranted.has(id)).length;
+          return (
+            <Card key={subsystem} className="border border-border">
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-2">
+                  <SubsystemCheckbox
+                    subsystem={subsystem}
+                    cards={cards}
+                    granted={localGranted}
+                    onToggle={toggleSubsystem}
+                  />
+                  <CardTitle className="text-sm">{SUBSYSTEM_LABELS[subsystem] ?? subsystem}</CardTitle>
+                  <span className="ml-auto text-xs text-muted-foreground">{checkedCount}/{cards.length}</span>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0 space-y-1.5">
+                {cards.map(card => {
+                  const cardId = `${subsystem}.${card.key}`;
+                  return (
+                    <label key={cardId} className="flex items-center gap-2 cursor-pointer group pl-1">
+                      <input
+                        type="checkbox"
+                        checked={localGranted.has(cardId)}
+                        onChange={() => toggleCard(cardId)}
+                        className="h-3.5 w-3.5 rounded border-border accent-primary cursor-pointer shrink-0"
+                      />
+                      <span className="text-xs text-muted-foreground group-hover:text-foreground transition-colors">
+                        {card.label}
+                      </span>
+                    </label>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Access Control Content ───────────────────────────────────────────────────
+
 function AccessControlContent() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -1136,6 +1285,20 @@ function AccessControlContent() {
             </CardContent>
           </Card>
         ))}
+      </div>
+
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-4">Card-Level Visibility</p>
+        {roleFilter ? (
+          <CardAccessSection
+            roleId={roleFilter}
+            roleName={roles.find((r: any) => r.id === roleFilter)?.name ?? ''}
+          />
+        ) : (
+          <div className="flex items-center justify-center py-8 text-sm text-muted-foreground border border-dashed border-border rounded-lg">
+            Select a role above to manage card-level visibility
+          </div>
+        )}
       </div>
 
       <Card>

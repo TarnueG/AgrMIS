@@ -39,7 +39,7 @@ type DashView = null | 'total' | 'pending' | 'received' | 'requested' | 'decline
 export default function Procurement() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
 
   const [poSearch, setPoSearch] = useState('');
   const [supplierSearch, setSupplierSearch] = useState('');
@@ -262,6 +262,7 @@ export default function Procurement() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {canViewCard('procurement.total') && (
           <Card className={`bg-primary/10 border-primary/20 ${cardClass('total')}`} onClick={() => setDashView(dashView === 'total' ? null : 'total')}>
             <CardContent className="p-5 flex items-center gap-3">
               <div className="p-2 rounded-xl bg-primary/20"><Package className="h-5 w-5 text-primary" /></div>
@@ -271,6 +272,8 @@ export default function Procurement() {
               </div>
             </CardContent>
           </Card>
+          )}
+          {canViewCard('procurement.pending') && (
           <Card className={`bg-warning/10 border-warning/20 ${cardClass('pending')}`} onClick={() => setDashView(dashView === 'pending' ? null : 'pending')}>
             <CardContent className="p-5 flex items-center gap-3">
               <div className="p-2 rounded-xl bg-warning/20"><Truck className="h-5 w-5 text-warning" /></div>
@@ -280,6 +283,8 @@ export default function Procurement() {
               </div>
             </CardContent>
           </Card>
+          )}
+          {canViewCard('procurement.received') && (
           <Card className={`bg-success/10 border-success/20 ${cardClass('received')}`} onClick={() => setDashView(dashView === 'received' ? null : 'received')}>
             <CardContent className="p-5 flex items-center gap-3">
               <div className="p-2 rounded-xl bg-success/20"><Package className="h-5 w-5 text-success" /></div>
@@ -289,6 +294,8 @@ export default function Procurement() {
               </div>
             </CardContent>
           </Card>
+          )}
+          {canViewCard('procurement.requested') && (
           <Card className={`bg-blue-500/10 border-blue-500/20 ${cardClass('requested')}`} onClick={() => { setDashView(dashView === 'requested' ? null : 'requested'); setDeptFilter(null); }}>
             <CardContent className="p-5 flex items-center gap-3">
               <div className="p-2 rounded-xl bg-blue-500/20"><Inbox className="h-5 w-5 text-blue-500" /></div>
@@ -298,6 +305,8 @@ export default function Procurement() {
               </div>
             </CardContent>
           </Card>
+          )}
+          {canViewCard('procurement.declined') && (
           <Card className={`bg-destructive/10 border-destructive/20 ${cardClass('declined')}`} onClick={() => { setDashView(dashView === 'declined' ? null : 'declined'); setDeptFilter(null); }}>
             <CardContent className="p-5 flex items-center gap-3">
               <div className="p-2 rounded-xl bg-destructive/20"><XCircle className="h-5 w-5 text-destructive" /></div>
@@ -307,6 +316,7 @@ export default function Procurement() {
               </div>
             </CardContent>
           </Card>
+          )}
         </div>
 
         {/* Department Requests Panel */}

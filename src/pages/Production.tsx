@@ -41,7 +41,7 @@ const BATCH_VIEWS: ProdView[] = ['all', 'pending', 'in_process', 'quality_check'
 export default function Production() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
   const [prodView, setProdView] = useState<ProdView>('all');
   const [search, setSearch] = useState('');
   const [batchDialogReqId, setBatchDialogReqId] = useState<string | null>(null);
@@ -171,7 +171,7 @@ export default function Production() {
 
         {/* Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {CARDS.map(({ key, label, count, color }) => (
+          {CARDS.filter(({ key }) => canViewCard(`production.${key}`)).map(({ key, label, count, color }) => (
             <Card
               key={key}
               className={`border ${color} ${cardClass(key)}`}

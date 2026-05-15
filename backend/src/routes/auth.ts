@@ -7,7 +7,7 @@ import prisma from '../lib/prisma';
 import { requireAuth, AuthUser } from '../middleware/auth';
 import { logAuditEvent, clientInfo } from '../lib/audit';
 import { hashPassword, verifyPassword } from '../lib/crypto';
-import { getPermissions, VALID_ROLE_NAMES } from '../lib/permissions';
+import { getPermissions, getCardPermissions, VALID_ROLE_NAMES } from '../lib/permissions';
 
 const router = Router();
 
@@ -195,6 +195,17 @@ router.get('/permissions', requireAuth, async (req, res) => {
     return res.json({ role: roleName, permissions });
   } catch {
     return res.status(500).json({ error: 'Failed to fetch permissions', code: 'DB_ERROR' });
+  }
+});
+
+// GET /api/v1/auth/card-permissions
+router.get('/card-permissions', requireAuth, async (req, res) => {
+  const { roleId, roleName, farmId } = req.user!;
+  try {
+    const ids = await getCardPermissions(roleId, roleName, farmId);
+    return res.json({ cardIds: Array.from(ids) });
+  } catch {
+    return res.status(500).json({ error: 'Failed to fetch card permissions', code: 'DB_ERROR' });
   }
 });
 

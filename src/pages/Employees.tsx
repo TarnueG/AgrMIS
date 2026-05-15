@@ -44,7 +44,7 @@ const BLANK_SUSPEND = { suspensionReason: '', suspensionExpiresAt: '' };
 export default function Employees() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
 
   const [view, setView] = useState<EmpView>(null);
   const [personnelSearch, setPersonnelSearch] = useState('');
@@ -285,7 +285,7 @@ export default function Employees() {
 
         {/* 9 Cards */}
         <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3">
-          {CARDS.map(({ key, label, count, Icon, color }) => (
+          {CARDS.filter(({ key }) => canViewCard(`human_capital.${key}`)).map(({ key, label, count, Icon, color }) => (
             <Card key={key} className={`border ${color} ${cardClass(key)}`} onClick={() => setView(view === key ? null : key)}>
               <CardContent className="p-4">
                 <div className="flex flex-col items-center gap-2 text-center">

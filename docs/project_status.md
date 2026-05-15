@@ -206,6 +206,26 @@
 - [x] `backend/src/lib/userStatus.ts` — `deactivateUser()` now syncs linked customer (`is_active=false`) AND linked employee (`status=inactive`, skips terminated); `reactivateUser()` restores linked customer and employee (only if status=inactive)
 - [x] All 12 frontend pages — `usePermissions` imported + hook called; all create/edit/delete buttons wrapped with `canCreate/canEdit/canDelete` guards; status dropdowns replaced with read-only Badge for view-only users; action table columns conditionally rendered
 
+## Session Sprint — Card-Level Access Control + Dead Code Removal — Complete ✓
+**Date:** 2026-05-15
+
+- [x] Problem 1 (Admin UI leakage): `queryClient.clear()` on login/logout; user-scoped query keys; sidebar `permsLoading` guard inverted; Dashboard explicit if/else branches
+- [x] Problem 2 — Card-level access control (P2-1 to P2-6):
+  - `src/lib/cardRegistry.ts` + `backend/src/lib/cardRegistry.ts` — 11-subsystem card registry
+  - `backend/src/seeds/migrate_card_permissions.ts` — `card_permissions` table created; 172 grants migrated
+  - `backend/src/lib/permissions.ts` — `getCardPermissions()` + card cache + cache invalidation
+  - `backend/src/routes/auth.ts` — `GET /auth/card-permissions` endpoint
+  - `backend/src/routes/accessControl.ts` — `GET /access-control/cards` + `PUT /access-control/cards`
+  - `src/hooks/usePermissions.ts` — `canViewCard(cardId)` added; second query for card permissions
+  - All 11 page files (Inventory, Employees, Livestock, Machinery, LandParcels, Marketing, SalesOrderPoints, Finance, Procurement, Production, Customers) — `canViewCard` gating on all stat cards
+  - `src/pages/Settings.tsx` — hierarchical card checkbox tree in AccessControl panel; subsystem master checkbox with indeterminate state; cascading select/deselect; Save Card Access button
+- [x] Problem 3 — Dead code removal:
+  - `src/hooks/useAuth.tsx` — `signUp` function + interface member + context value removed
+  - `src/pages/Settings.tsx` — unused `useNavigate` import removed
+  - `backend/src/seeds/cleanup_customers.ts` + `migrate_deactivation.ts` — one-shot scripts deleted
+
+---
+
 ## Phase 6 — Not started
 **Goal:** Finance & Quality Control
 

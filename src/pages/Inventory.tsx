@@ -69,7 +69,7 @@ function stockStatus(qty: number, threshold: number): string {
 export default function Inventory() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
+  const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
   const [view, setView] = useState<InvView>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [editProcItem, setEditProcItem] = useState<any | null>(null);
@@ -446,7 +446,7 @@ export default function Inventory() {
         <div>
           <p className="text-xs text-muted-foreground uppercase font-semibold mb-2">Raw Materials</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {RAW_MATERIAL_CARDS.map(c => (
+            {RAW_MATERIAL_CARDS.filter(c => canViewCard(`inventory.${c.view}`)).map(c => (
               <Card key={c.view} className={`${c.color} border ${cardClass(c.view)}`} onClick={() => handleCardClick(c.view)}>
                 <CardContent className="p-4">
                   <p className="text-xs font-medium">{c.label}</p>
@@ -461,7 +461,7 @@ export default function Inventory() {
         <div>
           <p className="text-xs text-muted-foreground uppercase font-semibold mb-2">Chemicals & Feeds</p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {CHEM_FEED_CARDS.map(c => (
+            {CHEM_FEED_CARDS.filter(c => canViewCard(`inventory.${c.view}`)).map(c => (
               <Card key={c.view} className={`${c.color} border ${cardClass(c.view)}`} onClick={() => handleCardClick(c.view)}>
                 <CardContent className="p-4">
                   <p className="text-xs font-medium">{c.label}</p>
@@ -476,7 +476,7 @@ export default function Inventory() {
         <div>
           <p className="text-xs text-muted-foreground uppercase font-semibold mb-2">Stock Status</p>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {STATUS_CARDS.map(c => (
+            {STATUS_CARDS.filter(c => canViewCard(`inventory.${c.view}`)).map(c => (
               <Card key={c.view} className={`${c.color} border ${cardClass(c.view)}`} onClick={() => handleCardClick(c.view)}>
                 <CardContent className="p-4">
                   <p className="text-xs font-medium">{c.label}</p>
