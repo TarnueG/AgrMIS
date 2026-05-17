@@ -1,702 +1,556 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import api from '@/lib/api';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { CalendarClock, CheckCircle2, PackagePlus, Plus, Search, Truck, UserPlus } from 'lucide-react';
+
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Truck, Search, Trash2, Package, Inbox, XCircle } from 'lucide-react';
-import { format } from 'date-fns';
-import { usePermissions } from '@/hooks/usePermissions';
+import { supabase } from '@/integrations/supabase/client';
 
-const PO_STATUSES_MAP = [
-  { value: 'draft', label: 'Pending' },
-  { value: 'submitted', label: 'Submitted' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'received', label: 'Received' },
-  { value: 'cancelled', label: 'Cancelled' },
-];
-
-const poStatusColor: Record<string, string> = {
-  draft: 'bg-warning/20 text-warning',
-  submitted: 'bg-blue-500/20 text-blue-500',
-  approved: 'bg-primary/20 text-primary',
-  received: 'bg-success/20 text-success',
-  partially_received: 'bg-warning/20 text-warning',
-  cancelled: 'bg-destructive/20 text-destructive',
+type InventoryItem = {
+  id: string;
+  item_name: string;
+  category: string;
+  quantity: number | null;
+  unit: string | null;
+  unit_cost: number | null;
+  supplier_id: string | null;
 };
 
-const getPoLabel = (value: string) => PO_STATUSES_MAP.find(s => s.value === value)?.label ?? value.replace('_', ' ');
+type Supplier = {
+  id: string;
+  name: string;
+};
 
-type DashView = null | 'total' | 'pending' | 'received' | 'requested' | 'declined';
+type ProcurementRow = {
+  id: string;
+  item_name: string;
+  supplier: string | null;
+  supplier_id: string | null;
+  inventory_id: string | null;
+  quantity: number | null;
+  unit_price: number | null;
+  total_cost: number | null;
+  status: string | null;
+  expected_date: string | null;
+  received_at: string | null;
+  notes: string | null;
+  created_at: string | null;
+};
+
+type ProcurementFormData = {
+  item_name: string;
+  inventory_id: string;
+  category: string;
+  supplier_id: string;
+  supplier: string;
+  quantity: number;
+  unit_price: number;
+  expected_date: string;
+  notes: string;
+};
+
+type SupplierFormData = {
+  name: string;
+  contact_person: string;
+  phone: string;
+  email: string;
+  address: string;
+  notes: string;
+};
+
+const procurementStatuses = ['pending', 'approved', 'ordered', 'received'];
+
+function labelize(value: string | null | undefined) {
+  if (!value) return 'Unassigned';
+  return value
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatDate(value: string | null) {
+  if (!value) return '-';
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(value));
+}
+
+function getStatusBadge(status: string | null) {
+  const styles: Record<string, string> = {
+    pending: 'bg-warning/20 text-warning border-warning/20',
+    approved: 'bg-info/20 text-info border-info/20',
+    ordered: 'bg-primary/20 text-primary border-primary/20',
+    received: 'bg-success/20 text-success border-success/20',
+  };
+
+  return <Badge className={styles[status || 'pending'] || 'bg-muted text-muted-foreground'}>{labelize(status || 'pending')}</Badge>;
+}
 
 export default function Procurement() {
   const { toast } = useToast();
-  const qc = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
-
-  const [poSearch, setPoSearch] = useState('');
-  const [supplierSearch, setSupplierSearch] = useState('');
-  const [isAddPoOpen, setIsAddPoOpen] = useState(false);
-  const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
-  const [dashView, setDashView] = useState<DashView>(null);
-  const [deptFilter, setDeptFilter] = useState<string | null>(null);
-
-  const [poForm, setPoForm] = useState({ supplierId: '', totalAmount: 0, expectedDelivery: '', notes: '', status: 'draft', commodity: '', quantity: 0 });
-  const [supplierForm, setSupplierForm] = useState({ name: '', supplierType: '', phone: '', email: '', address: '', paymentMethod: '', accountNumber: '', commodity: '' });
-
-  const { data: purchaseOrders = [] } = useQuery<any[]>({
-    queryKey: ['purchase-orders'],
-    queryFn: () => api.get('/procurement/purchase-orders'),
+  const queryClient = useQueryClient();
+  const [search, setSearch] = useState('');
+  const [isProcurementOpen, setIsProcurementOpen] = useState(false);
+  const [isSupplierOpen, setIsSupplierOpen] = useState(false);
+  const [formData, setFormData] = useState<ProcurementFormData>({
+    item_name: '',
+    inventory_id: 'none',
+    category: 'supplies',
+    supplier_id: 'none',
+    supplier: '',
+    quantity: 0,
+    unit_price: 0,
+    expected_date: '',
+    notes: '',
+  });
+  const [supplierForm, setSupplierForm] = useState<SupplierFormData>({
+    name: '',
+    contact_person: '',
+    phone: '',
+    email: '',
+    address: '',
+    notes: '',
   });
 
-  const { data: suppliers = [] } = useQuery<any[]>({
-    queryKey: ['suppliers'],
-    queryFn: () => api.get('/procurement/suppliers'),
-  });
-
-  const { data: deptRequests = [] } = useQuery<any[]>({
-    queryKey: ['department-requests'],
-    queryFn: () => api.get('/procurement/department-requests'),
-  });
-
-  const addPO = useMutation({
-    mutationFn: (data: typeof poForm) => api.post('/procurement/purchase-orders', {
-      supplierId: data.supplierId, totalAmount: data.totalAmount,
-      expectedDelivery: data.expectedDelivery || undefined,
-      notes: data.notes || undefined,
-      status: data.status,
-      commodity: data.commodity || undefined,
-      quantity: data.quantity > 0 ? data.quantity : undefined,
-    }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
-      toast({ title: 'Purchase order created' });
-      setIsAddPoOpen(false);
-      setPoForm({ supplierId: '', totalAmount: 0, expectedDelivery: '', notes: '', status: 'draft', commodity: '', quantity: 0 });
+  const { data: procurement } = useQuery({
+    queryKey: ['procurement'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('procurement').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      return data as ProcurementRow[];
     },
-    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
-  const updatePOStatus = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: string }) =>
-      api.patch(`/procurement/purchase-orders/${id}`, { status }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['purchase-orders'] }); toast({ title: 'Status updated' }); },
+  const { data: inventory } = useQuery({
+    queryKey: ['inventory-for-procurement'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('inventory').select('id, item_name, category, quantity, unit, unit_cost, supplier_id').order('item_name');
+      if (error) throw error;
+      return data as InventoryItem[];
+    },
   });
 
-  const deletePO = useMutation({
-    mutationFn: (id: string) => api.delete(`/procurement/purchase-orders/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['purchase-orders'] }); toast({ title: 'Purchase order cancelled' }); },
+  const { data: suppliers } = useQuery({
+    queryKey: ['inventory-suppliers'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('suppliers').select('id, name').order('name');
+      if (error) throw error;
+      return data as Supplier[];
+    },
   });
 
-  const addSupplier = useMutation({
-    mutationFn: (data: typeof supplierForm) => api.post('/procurement/suppliers', {
-      name: data.name, supplierType: data.supplierType || undefined,
-      phone: data.phone || undefined,
-      email: data.email || undefined, address: data.address || undefined,
-      paymentMethod: (data.paymentMethod as 'bank' | 'mobile_money') || undefined,
-      accountNumber: data.accountNumber || undefined,
-      commodity: data.commodity || undefined,
-    }),
+  const supplierMap = useMemo(() => new Map((suppliers || []).map((supplier) => [supplier.id, supplier.name])), [suppliers]);
+
+  const addSupplierMutation = useMutation({
+    mutationFn: async (data: SupplierFormData) => {
+      const { error } = await supabase.from('suppliers').insert([
+        {
+          name: data.name,
+          contact_person: data.contact_person || null,
+          phone: data.phone || null,
+          email: data.email || null,
+          address: data.address || null,
+          notes: data.notes || null,
+        },
+      ]);
+      if (error) throw error;
+    },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['suppliers'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory-suppliers'] });
       toast({ title: 'Supplier added' });
-      setIsAddSupplierOpen(false);
-      setSupplierForm({ name: '', supplierType: '', phone: '', email: '', address: '', paymentMethod: '', accountNumber: '', commodity: '' });
+      setIsSupplierOpen(false);
+      setSupplierForm({ name: '', contact_person: '', phone: '', email: '', address: '', notes: '' });
     },
-    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (error) => {
+      toast({ title: 'Error adding supplier', description: error.message, variant: 'destructive' });
+    },
   });
 
-  const deleteSupplier = useMutation({
-    mutationFn: (id: string) => api.delete(`/procurement/suppliers/${id}`),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['suppliers'] }); toast({ title: 'Supplier removed' }); },
-  });
+  const addProcurementMutation = useMutation({
+    mutationFn: async (data: ProcurementFormData) => {
+      const selectedInventory = inventory?.find((item) => item.id === data.inventory_id);
+      const selectedSupplierName = data.supplier_id === 'none' ? data.supplier : supplierMap.get(data.supplier_id) || data.supplier;
+      const itemName = selectedInventory?.item_name || data.item_name;
+      const totalCost = data.quantity * data.unit_price;
 
-  const acceptRequest = useMutation({
-    mutationFn: ({ id, itemType }: { id: string; itemType: string }) =>
-      api.patch(`/procurement/department-requests/${id}/accept`, { itemType }),
+      const { error } = await supabase.from('procurement').insert([
+        {
+          item_name: itemName,
+          inventory_id: data.inventory_id === 'none' ? null : data.inventory_id,
+          supplier_id: data.supplier_id === 'none' ? null : data.supplier_id,
+          supplier: selectedSupplierName || null,
+          quantity: data.quantity,
+          unit_price: data.unit_price,
+          total_cost: totalCost,
+          status: 'ordered',
+          expected_date: data.expected_date || null,
+          notes: data.notes || null,
+        },
+      ]);
+      if (error) throw error;
+    },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['department-requests'] });
-      qc.invalidateQueries({ queryKey: ['equipment-requests'] });
-      qc.invalidateQueries({ queryKey: ['parcel-requests'] });
-      qc.invalidateQueries({ queryKey: ['land-parcels'] });
-      toast({ title: 'Request accepted' });
-      setIsAddPoOpen(true);
+      queryClient.invalidateQueries({ queryKey: ['procurement'] });
+      toast({ title: 'Procurement order added' });
+      setIsProcurementOpen(false);
+      setFormData({
+        item_name: '',
+        inventory_id: 'none',
+        category: 'supplies',
+        supplier_id: 'none',
+        supplier: '',
+        quantity: 0,
+        unit_price: 0,
+        expected_date: '',
+        notes: '',
+      });
     },
-    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (error) => {
+      toast({ title: 'Error adding procurement order', description: error.message, variant: 'destructive' });
+    },
   });
 
-  const declineRequest = useMutation({
-    mutationFn: ({ id, itemType }: { id: string; itemType: string }) =>
-      api.patch(`/procurement/department-requests/${id}/decline`, { itemType }),
+  const receiveProcurementMutation = useMutation({
+    mutationFn: async (row: ProcurementRow) => {
+      if (row.status === 'received') throw new Error('This procurement record has already been received.');
+      const receiptQuantity = Number(row.quantity || 0);
+      if (receiptQuantity <= 0) throw new Error('Receipt quantity must be greater than zero.');
+
+      let inventoryItem = inventory?.find((item) => item.id === row.inventory_id);
+
+      if (!inventoryItem) {
+        inventoryItem = inventory?.find((item) => item.item_name.toLowerCase() === row.item_name.toLowerCase());
+      }
+
+      if (!inventoryItem) {
+        const { data: createdInventory, error: createError } = await supabase
+          .from('inventory')
+          .insert([
+            {
+              item_name: row.item_name,
+              category: 'supplies',
+              quantity: 0,
+              unit_cost: Number(row.unit_price || 0),
+              supplier_id: row.supplier_id,
+              notes: 'Created automatically from procurement receipt.',
+            },
+          ])
+          .select('id, item_name, category, quantity, unit, unit_cost, supplier_id')
+          .single();
+        if (createError) throw createError;
+        inventoryItem = createdInventory as InventoryItem;
+      }
+
+      const nextQuantity = Number(inventoryItem.quantity || 0) + receiptQuantity;
+      const { error: inventoryError } = await supabase
+        .from('inventory')
+        .update({
+          quantity: nextQuantity,
+          unit_cost: Number(row.unit_price || inventoryItem.unit_cost || 0),
+          supplier_id: row.supplier_id || inventoryItem.supplier_id,
+        })
+        .eq('id', inventoryItem.id);
+      if (inventoryError) throw inventoryError;
+
+      const receivedAt = new Date().toISOString();
+      const { error: movementError } = await supabase.from('inventory_movements').insert([
+        {
+          inventory_id: inventoryItem.id,
+          movement_type: 'received',
+          quantity: receiptQuantity,
+          unit_cost: Number(row.unit_price || 0),
+          source_module: 'procurement',
+          reference_id: row.id,
+          movement_date: receivedAt,
+          notes: `Procurement receipt for ${row.item_name}`,
+        },
+      ]);
+      if (movementError) throw movementError;
+
+      const { error: procurementError } = await supabase
+        .from('procurement')
+        .update({
+          status: 'received',
+          received_at: receivedAt,
+          inventory_id: inventoryItem.id,
+        })
+        .eq('id', row.id);
+      if (procurementError) throw procurementError;
+    },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['department-requests'] });
-      qc.invalidateQueries({ queryKey: ['equipment-requests'] });
-      qc.invalidateQueries({ queryKey: ['parcel-requests'] });
-      toast({ title: 'Request declined' });
+      queryClient.invalidateQueries({ queryKey: ['procurement'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory-for-procurement'] });
+      queryClient.invalidateQueries({ queryKey: ['inventory-movements-dashboard'] });
+      toast({ title: 'Procurement receipt posted to inventory' });
     },
-    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (error) => {
+      toast({ title: 'Error receiving procurement', description: error.message, variant: 'destructive' });
+    },
   });
 
-  const pendingRequests = deptRequests.filter((r: any) => r.status === 'pending');
-  const declinedRequests = deptRequests.filter((r: any) => r.status === 'disapproved');
+  const filteredProcurement = (procurement || []).filter((row) => {
+    const supplierName = row.supplier_id ? supplierMap.get(row.supplier_id) : row.supplier;
+    return (
+      row.item_name.toLowerCase().includes(search.toLowerCase()) ||
+      (supplierName || '').toLowerCase().includes(search.toLowerCase()) ||
+      (row.status || '').toLowerCase().includes(search.toLowerCase())
+    );
+  });
 
-  const pendingPOs = purchaseOrders.filter(p => p.status === 'draft' || p.status === 'submitted');
-  const receivedPOs = purchaseOrders.filter(p => p.status === 'received');
-  const pending = pendingPOs.length;
-  const received = receivedPOs.length;
-
-  const filteredPOs = purchaseOrders.filter(p =>
-    p.po_number?.toLowerCase().includes(poSearch.toLowerCase()) ||
-    p.suppliers?.name?.toLowerCase().includes(poSearch.toLowerCase())
-  );
-
-  const filteredReceivedPOs = receivedPOs.filter(p =>
-    p.po_number?.toLowerCase().includes(poSearch.toLowerCase()) ||
-    p.suppliers?.name?.toLowerCase().includes(poSearch.toLowerCase())
-  );
-
-  const filteredSuppliers = suppliers.filter(s =>
-    s.name.toLowerCase().includes(supplierSearch.toLowerCase())
-  );
-
-  const departments = [...new Set(deptRequests.map((r: any) => r.department))];
-
-  function getRequestListForView(view: DashView) {
-    let list = view === 'declined' ? declinedRequests : pendingRequests;
-    if (deptFilter) list = list.filter((r: any) => r.department === deptFilter);
-    return list;
-  }
-
-  const cardClass = (view: DashView) =>
-    `cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${dashView === view ? 'ring-2 ring-primary shadow-lg scale-105' : ''}`;
-
-  const showTabs = dashView === null || dashView === 'total';
-
-  const newPODialog = canCreate('procurement') ? (
-    <Dialog open={isAddPoOpen} onOpenChange={setIsAddPoOpen}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>Create Purchase Order</DialogTitle></DialogHeader>
-        <form onSubmit={(e) => { e.preventDefault(); addPO.mutate(poForm); }} className="space-y-4">
-          <div className="space-y-2">
-            <Label>Supplier</Label>
-            <select
-              value={poForm.supplierId}
-              onChange={(e) => setPoForm({ ...poForm, supplierId: e.target.value })}
-              className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-            >
-              <option value="">Select supplier...</option>
-              {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Total Amount ($)</Label>
-              <Input type="number" step="0.01" value={poForm.totalAmount} onChange={(e) => setPoForm({ ...poForm, totalAmount: Number(e.target.value) })} />
-            </div>
-            <div className="space-y-2">
-              <Label>Expected Delivery</Label>
-              <Input type="date" value={poForm.expectedDelivery} onChange={(e) => setPoForm({ ...poForm, expectedDelivery: e.target.value })} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Commodity</Label>
-              <select
-                value={poForm.commodity}
-                onChange={(e) => setPoForm({ ...poForm, commodity: e.target.value })}
-                className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-              >
-                <option value="">Select commodity...</option>
-                <option value="Pesticide and Chemicals">Pesticide and Chemicals</option>
-                <option value="Fertilizer">Fertilizer</option>
-                <option value="Livestock Feed">Livestock Feed</option>
-                <option value="Aquaculture Feeds">Aquaculture Feeds</option>
-                <option value="Vehicle">Vehicle</option>
-                <option value="Machines">Machines</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <Label>Quantity</Label>
-              <Input type="number" min="0" step="0.01" value={poForm.quantity} onChange={(e) => setPoForm({ ...poForm, quantity: Number(e.target.value) })} />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label>Status</Label>
-            <select
-              value={poForm.status}
-              onChange={(e) => setPoForm({ ...poForm, status: e.target.value })}
-              className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-            >
-              {PO_STATUSES_MAP.map(s => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="space-y-2">
-            <Label>Notes</Label>
-            <Input value={poForm.notes} onChange={(e) => setPoForm({ ...poForm, notes: e.target.value })} />
-          </div>
-          <Button type="submit" className="w-full gradient-primary" disabled={addPO.isPending || !poForm.supplierId}>
-            Create Purchase Order
-          </Button>
-        </form>
-      </DialogContent>
-    </Dialog>
-  ) : null;
+  const pendingCount = (procurement || []).filter((row) => row.status !== 'received').length;
+  const receivedCount = (procurement || []).filter((row) => row.status === 'received').length;
+  const pendingValue = (procurement || [])
+    .filter((row) => row.status !== 'received')
+    .reduce((sum, row) => sum + Number(row.total_cost || 0), 0);
 
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h1 className="text-3xl font-bold">Procurement</h1>
-            <p className="text-muted-foreground">Supply chain and demand forecast</p>
+            <p className="text-muted-foreground">Purchase orders, supplier receipts, and inventory posting.</p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Dialog open={isSupplierOpen} onOpenChange={setIsSupplierOpen}>
+              <DialogTrigger asChild>
+                <Button variant="outline">
+                  <UserPlus className="mr-2 h-4 w-4" />
+                  Add Supplier
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Add Supplier</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={(e) => { e.preventDefault(); addSupplierMutation.mutate(supplierForm); }} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Supplier Name</Label>
+                    <Input value={supplierForm.name} onChange={(e) => setSupplierForm({ ...supplierForm, name: e.target.value })} required />
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Contact Person</Label>
+                      <Input value={supplierForm.contact_person} onChange={(e) => setSupplierForm({ ...supplierForm, contact_person: e.target.value })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Phone</Label>
+                      <Input value={supplierForm.phone} onChange={(e) => setSupplierForm({ ...supplierForm, phone: e.target.value })} />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input type="email" value={supplierForm.email} onChange={(e) => setSupplierForm({ ...supplierForm, email: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Address</Label>
+                    <Input value={supplierForm.address} onChange={(e) => setSupplierForm({ ...supplierForm, address: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Notes</Label>
+                    <Textarea value={supplierForm.notes} onChange={(e) => setSupplierForm({ ...supplierForm, notes: e.target.value })} />
+                  </div>
+                  <Button type="submit" className="w-full gradient-primary" disabled={addSupplierMutation.isPending}>Add Supplier</Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={isProcurementOpen} onOpenChange={setIsProcurementOpen}>
+              <DialogTrigger asChild>
+                <Button className="gradient-primary">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Purchase
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Add Procurement Order</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={(e) => { e.preventDefault(); addProcurementMutation.mutate(formData); }} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Link Inventory Item</Label>
+                    <Select
+                      value={formData.inventory_id}
+                      onValueChange={(v) => {
+                        const selected = inventory?.find((item) => item.id === v);
+                        setFormData({ ...formData, inventory_id: v, item_name: selected?.item_name || formData.item_name });
+                      }}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Create or match by item name</SelectItem>
+                        {inventory?.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>{item.item_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Item Name</Label>
+                    <Input
+                      value={formData.item_name}
+                      onChange={(e) => setFormData({ ...formData, item_name: e.target.value })}
+                      disabled={formData.inventory_id !== 'none'}
+                      required
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Supplier</Label>
+                      <Select value={formData.supplier_id} onValueChange={(v) => setFormData({ ...formData, supplier_id: v })}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Use supplier name below</SelectItem>
+                          {suppliers?.map((supplier) => (
+                            <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Supplier Name</Label>
+                      <Input
+                        value={formData.supplier}
+                        onChange={(e) => setFormData({ ...formData, supplier: e.target.value })}
+                        disabled={formData.supplier_id !== 'none'}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Quantity</Label>
+                      <Input type="number" min="1" value={formData.quantity} onChange={(e) => setFormData({ ...formData, quantity: Number(e.target.value) })} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Unit Price</Label>
+                      <Input type="number" min="0" step="0.01" value={formData.unit_price} onChange={(e) => setFormData({ ...formData, unit_price: Number(e.target.value) })} />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Expected Date</Label>
+                    <Input type="date" value={formData.expected_date} onChange={(e) => setFormData({ ...formData, expected_date: e.target.value })} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Notes</Label>
+                    <Textarea value={formData.notes} onChange={(e) => setFormData({ ...formData, notes: e.target.value })} />
+                  </div>
+                  <Button type="submit" className="w-full gradient-primary" disabled={addProcurementMutation.isPending}>Add Purchase</Button>
+                </form>
+              </DialogContent>
+            </Dialog>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <Card className={`bg-primary/10 border-primary/20 ${cardClass('total')}`} onClick={() => setDashView(dashView === 'total' ? null : 'total')}>
-            <CardContent className="p-5 flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-primary/20"><Package className="h-5 w-5 text-primary" /></div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Card className="bg-warning/10 border-warning/20">
+            <CardContent className="flex items-center justify-between p-5">
               <div>
-                <p className="text-xs text-muted-foreground">Total POs</p>
-                <p className="text-xl font-bold">{purchaseOrders.length}</p>
+                <p className="text-sm text-muted-foreground">Pending Receipts</p>
+                <p className="text-3xl font-bold">{pendingCount}</p>
               </div>
+              <CalendarClock className="h-6 w-6 text-warning" />
             </CardContent>
           </Card>
-          <Card className={`bg-warning/10 border-warning/20 ${cardClass('pending')}`} onClick={() => setDashView(dashView === 'pending' ? null : 'pending')}>
-            <CardContent className="p-5 flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-warning/20"><Truck className="h-5 w-5 text-warning" /></div>
+          <Card className="bg-success/10 border-success/20">
+            <CardContent className="flex items-center justify-between p-5">
               <div>
-                <p className="text-xs text-muted-foreground">Pending Orders</p>
-                <p className="text-xl font-bold">{pending}</p>
+                <p className="text-sm text-muted-foreground">Received Orders</p>
+                <p className="text-3xl font-bold">{receivedCount}</p>
               </div>
+              <CheckCircle2 className="h-6 w-6 text-success" />
             </CardContent>
           </Card>
-          <Card className={`bg-success/10 border-success/20 ${cardClass('received')}`} onClick={() => setDashView(dashView === 'received' ? null : 'received')}>
-            <CardContent className="p-5 flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-success/20"><Package className="h-5 w-5 text-success" /></div>
+          <Card className="bg-primary/10 border-primary/20">
+            <CardContent className="flex items-center justify-between p-5">
               <div>
-                <p className="text-xs text-muted-foreground">Received Orders</p>
-                <p className="text-xl font-bold">{received}</p>
+                <p className="text-sm text-muted-foreground">Open Procurement Value</p>
+                <p className="text-3xl font-bold">{formatCurrency(pendingValue)}</p>
               </div>
-            </CardContent>
-          </Card>
-          <Card className={`bg-blue-500/10 border-blue-500/20 ${cardClass('requested')}`} onClick={() => { setDashView(dashView === 'requested' ? null : 'requested'); setDeptFilter(null); }}>
-            <CardContent className="p-5 flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-blue-500/20"><Inbox className="h-5 w-5 text-blue-500" /></div>
-              <div>
-                <p className="text-xs text-muted-foreground">Requested Orders</p>
-                <p className="text-xl font-bold">{pendingRequests.length}</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card className={`bg-destructive/10 border-destructive/20 ${cardClass('declined')}`} onClick={() => { setDashView(dashView === 'declined' ? null : 'declined'); setDeptFilter(null); }}>
-            <CardContent className="p-5 flex items-center gap-3">
-              <div className="p-2 rounded-xl bg-destructive/20"><XCircle className="h-5 w-5 text-destructive" /></div>
-              <div>
-                <p className="text-xs text-muted-foreground">Declined Orders</p>
-                <p className="text-xl font-bold">{declinedRequests.length}</p>
-              </div>
+              <Truck className="h-6 w-6 text-primary" />
             </CardContent>
           </Card>
         </div>
 
-        {/* Department Requests Panel */}
-        {(dashView === 'requested' || dashView === 'declined') && (
-          <Card>
-            <div className="p-4 border-b flex items-center justify-between">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-medium text-muted-foreground">Filter by department:</span>
-                <Button size="sm" variant={deptFilter === null ? 'default' : 'outline'} onClick={() => setDeptFilter(null)}>All</Button>
-                {departments.map(d => (
-                  <Button key={d as string} size="sm" variant={deptFilter === d ? 'default' : 'outline'} onClick={() => setDeptFilter(d as string)}>
-                    {d as string}
-                  </Button>
-                ))}
-              </div>
+        <Card>
+          <CardHeader className="space-y-4">
+            <div>
+              <CardTitle>Procurement Receipts</CardTitle>
+              <p className="text-sm text-muted-foreground">Receiving a purchase posts quantity into inventory and creates a movement ledger row.</p>
             </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Department</TableHead>
-                  <TableHead>Requested Item</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  {dashView === 'requested' && (canEdit('procurement') || canDelete('procurement')) && <TableHead>Action</TableHead>}
-                  {canDelete('procurement') && <TableHead className="text-right">Delete</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {getRequestListForView(dashView).map((r: any) => (
-                  <TableRow key={r.id}>
-                    <TableCell>
-                      <button
-                        className="text-primary underline hover:no-underline text-sm font-medium"
-                        onClick={() => setDeptFilter(deptFilter === r.department ? null : r.department)}
-                      >
-                        {r.department}
-                      </button>
-                    </TableCell>
-                    <TableCell className="font-medium">{r.name}</TableCell>
-                    <TableCell className="capitalize">{r.item_type}</TableCell>
-                    <TableCell>{r.created_at ? format(new Date(r.created_at), 'MMM d, yyyy') : '-'}</TableCell>
-                    <TableCell>
-                      <Badge className={r.status === 'pending' ? 'bg-warning/20 text-warning' : r.status === 'approved' ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}>
-                        {r.status}
-                      </Badge>
-                    </TableCell>
-                    {dashView === 'requested' && (canEdit('procurement') || canDelete('procurement')) && (
-                      <TableCell>
-                        <div className="flex gap-2">
-                          {canEdit('procurement') && (
-                            <Button
-                              size="sm"
-                              className="gradient-primary text-black"
-                              onClick={() => { if (confirm('Accept this request?')) acceptRequest.mutate({ id: r.id, itemType: r.item_type }); }}
-                              disabled={acceptRequest.isPending}
-                            >
-                              Accept
-                            </Button>
-                          )}
-                          {canDelete('procurement') && (
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => { if (confirm('Decline this request?')) declineRequest.mutate({ id: r.id, itemType: r.item_type }); }}
-                              disabled={declineRequest.isPending}
-                            >
-                              Cancel
-                            </Button>
-                          )}
-                        </div>
-                      </TableCell>
-                    )}
-                    <TableCell className="text-right">
-                      {canDelete('procurement') && (
-                        <Button variant="ghost" size="icon" disabled={r.status !== 'pending'}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {!getRequestListForView(dashView).length && (
-                  <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No requests found</TableCell></TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </Card>
-        )}
-
-        {/* Pending Orders View */}
-        {dashView === 'pending' && (
-          <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>PO Number</TableHead>
-                  <TableHead>Supplier Name</TableHead>
-                  <TableHead>Commodity</TableHead>
-                  <TableHead>Order Date</TableHead>
-                  <TableHead>Expected Delivery</TableHead>
-                  <TableHead>Quantity</TableHead>
-                  <TableHead>Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {pendingPOs.map((po) => (
-                  <TableRow key={po.id}>
-                    <TableCell className="font-medium">{po.po_number}</TableCell>
-                    <TableCell>{po.suppliers?.name || '-'}</TableCell>
-                    <TableCell>{po.commodity || '-'}</TableCell>
-                    <TableCell>{format(new Date(po.order_date ?? po.created_at), 'MMM d, yyyy')}</TableCell>
-                    <TableCell>{po.expected_delivery ? format(new Date(po.expected_delivery), 'MMM d, yyyy') : '-'}</TableCell>
-                    <TableCell>{po.quantity != null ? Number(po.quantity).toFixed(2) : '-'}</TableCell>
-                    <TableCell>${Number(po.total_amount).toFixed(2)}</TableCell>
-                    <TableCell>
-                      {canEdit('procurement') ? (
-                        <select
-                          value={po.status}
-                          onChange={(e) => updatePOStatus.mutate({ id: po.id, status: e.target.value })}
-                          className={`h-8 rounded border border-input bg-background px-2 text-sm ${poStatusColor[po.status] ?? ''}`}
-                        >
-                          {PO_STATUSES_MAP.map(s => (
-                            <option key={s.value} value={s.value}>{s.label}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <Badge className={poStatusColor[po.status] ?? ''}>{getPoLabel(po.status)}</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {canDelete('procurement') && (
-                        <Button variant="ghost" size="icon" onClick={() => deletePO.mutate(po.id)}>
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {!pendingPOs.length && (
-                  <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No pending orders found</TableCell></TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </Card>
-        )}
-
-        {/* Received Orders View */}
-        {dashView === 'received' && (
-          <div className="space-y-4">
-            <div className="relative max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search received orders..."
-                value={poSearch}
-                onChange={(e) => setPoSearch(e.target.value)}
-                onBlur={() => setPoSearch('')}
-                className="pl-9 text-white placeholder:text-white/50"
-              />
+            <div className="relative max-w-md">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input placeholder="Search item, supplier, or status..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
             </div>
-            <Card>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>PO Number</TableHead>
-                    <TableHead>Supplier Name</TableHead>
-                    <TableHead>Commodity</TableHead>
-                    <TableHead>Order Date</TableHead>
-                    <TableHead>Expected Delivery</TableHead>
-                    <TableHead>Quantity</TableHead>
-                    <TableHead>Amount</TableHead>
+                    <TableHead>Item</TableHead>
+                    <TableHead>Supplier</TableHead>
+                    <TableHead className="text-right">Quantity</TableHead>
+                    <TableHead className="text-right">Unit Price</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead>Expected</TableHead>
+                    <TableHead>Received</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredReceivedPOs.map((po) => (
-                    <TableRow key={po.id}>
-                      <TableCell className="font-medium text-white">{po.po_number}</TableCell>
-                      <TableCell className="text-white">{po.suppliers?.name || '-'}</TableCell>
-                      <TableCell className="text-white">{po.commodity || '-'}</TableCell>
-                      <TableCell className="text-white">{format(new Date(po.order_date ?? po.created_at), 'MMM d, yyyy')}</TableCell>
-                      <TableCell className="text-white">{po.expected_delivery ? format(new Date(po.expected_delivery), 'MMM d, yyyy') : '-'}</TableCell>
-                      <TableCell className="text-white">{po.quantity != null ? Number(po.quantity).toFixed(2) : '-'}</TableCell>
-                      <TableCell className="text-white">${Number(po.total_amount).toFixed(2)}</TableCell>
-                      <TableCell>
-                        <Badge className={poStatusColor[po.status]}>{getPoLabel(po.status)}</Badge>
-                      </TableCell>
+                  {filteredProcurement.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="font-medium">{row.item_name}</TableCell>
+                      <TableCell>{row.supplier_id ? supplierMap.get(row.supplier_id) || row.supplier || '-' : row.supplier || '-'}</TableCell>
+                      <TableCell className="text-right">{Number(row.quantity || 0).toLocaleString()}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(Number(row.unit_price || 0))}</TableCell>
+                      <TableCell className="text-right">{formatCurrency(Number(row.total_cost || 0))}</TableCell>
+                      <TableCell>{formatDate(row.expected_date)}</TableCell>
+                      <TableCell>{formatDate(row.received_at)}</TableCell>
+                      <TableCell>{getStatusBadge(row.status)}</TableCell>
                       <TableCell className="text-right">
-                        {canDelete('procurement') && (
-                          <Button variant="ghost" size="icon" onClick={() => deletePO.mutate(po.id)}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={row.status === 'received' || receiveProcurementMutation.isPending}
+                          onClick={() => receiveProcurementMutation.mutate(row)}
+                        >
+                          <PackagePlus className="mr-2 h-4 w-4" />
+                          Receive
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))}
-                  {!filteredReceivedPOs.length && (
-                    <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No received orders found</TableCell></TableRow>
+                  {!filteredProcurement.length && (
+                    <TableRow>
+                      <TableCell colSpan={9} className="py-8 text-center text-muted-foreground">
+                        No procurement records found.
+                      </TableCell>
+                    </TableRow>
                   )}
                 </TableBody>
               </Table>
-            </Card>
-          </div>
-        )}
-
-        {/* Normal Tabs View — shown for Total or no card selected */}
-        {showTabs && (
-          <Tabs defaultValue="orders">
-            <TabsList className="grid w-full grid-cols-2 max-w-xs">
-              <TabsTrigger value="orders">Purchase Orders</TabsTrigger>
-              <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="orders" className="space-y-4 mt-4">
-              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-                <div className="relative flex-1 max-w-sm">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="Search orders..." value={poSearch} onChange={(e) => setPoSearch(e.target.value)} onBlur={() => setPoSearch('')} className="pl-9 text-white placeholder:text-white/50" />
-                </div>
-                {canCreate('procurement') && <Button className="gradient-primary text-black" onClick={() => setIsAddPoOpen(true)}><Plus className="h-4 w-4 mr-2" />New PO</Button>}
-              </div>
-
-              <Card>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>PO Number</TableHead>
-                      <TableHead>Supplier</TableHead>
-                      <TableHead>Commodity</TableHead>
-                      <TableHead>Order Date</TableHead>
-                      <TableHead>Expected Delivery</TableHead>
-                      <TableHead>Quantity</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredPOs.map((po) => (
-                      <TableRow key={po.id}>
-                        <TableCell className="font-medium">{po.po_number}</TableCell>
-                        <TableCell>{po.suppliers?.name || '-'}</TableCell>
-                        <TableCell>{po.commodity || '-'}</TableCell>
-                        <TableCell>{format(new Date(po.order_date ?? po.created_at), 'MMM d, yyyy')}</TableCell>
-                        <TableCell>{po.expected_delivery ? format(new Date(po.expected_delivery), 'MMM d, yyyy') : '-'}</TableCell>
-                        <TableCell>{po.quantity != null ? Number(po.quantity).toFixed(2) : '-'}</TableCell>
-                        <TableCell>${Number(po.total_amount).toFixed(2)}</TableCell>
-                        <TableCell>
-                          {canEdit('procurement') ? (
-                            <select
-                              value={po.status}
-                              onChange={(e) => updatePOStatus.mutate({ id: po.id, status: e.target.value })}
-                              className={`h-8 rounded border border-input bg-background px-2 text-sm ${poStatusColor[po.status] ?? ''}`}
-                            >
-                              {PO_STATUSES_MAP.map(s => (
-                                <option key={s.value} value={s.value}>{s.label}</option>
-                              ))}
-                            </select>
-                          ) : (
-                            <Badge className={poStatusColor[po.status] ?? ''}>{getPoLabel(po.status)}</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {canDelete('procurement') && (
-                            <Button variant="ghost" size="icon" onClick={() => deletePO.mutate(po.id)}>
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!filteredPOs.length && (
-                      <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No purchase orders found</TableCell></TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="suppliers" className="space-y-4 mt-4">
-              <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-                <div className="relative flex-1 max-w-sm">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="Search suppliers..." value={supplierSearch} onChange={(e) => setSupplierSearch(e.target.value)} onBlur={() => setSupplierSearch('')} className="pl-9 text-white placeholder:text-white/50" />
-                </div>
-                {canCreate('procurement') && (
-                <Dialog open={isAddSupplierOpen} onOpenChange={setIsAddSupplierOpen}>
-                  <Button className="gradient-primary text-black" onClick={() => setIsAddSupplierOpen(true)}><Plus className="h-4 w-4 mr-2" />Add Supplier</Button>
-                  <DialogContent>
-                    <DialogHeader><DialogTitle>Add Supplier</DialogTitle></DialogHeader>
-                    <form onSubmit={(e) => { e.preventDefault(); addSupplier.mutate(supplierForm); }} className="space-y-4">
-                      <div className="space-y-2">
-                        <Label>Supplier Full Name</Label>
-                        <Input value={supplierForm.name} onChange={(e) => setSupplierForm({ ...supplierForm, name: e.target.value })} required />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Phone</Label>
-                        <Input value={supplierForm.phone} onChange={(e) => setSupplierForm({ ...supplierForm, phone: e.target.value })} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Email</Label>
-                        <Input type="email" value={supplierForm.email} onChange={(e) => setSupplierForm({ ...supplierForm, email: e.target.value })} />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label>Payment Method</Label>
-                          <select
-                            value={supplierForm.paymentMethod}
-                            onChange={(e) => setSupplierForm({ ...supplierForm, paymentMethod: e.target.value })}
-                            className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                          >
-                            <option value="">Select method...</option>
-                            <option value="bank">Bank</option>
-                            <option value="mobile_money">Mobile Money</option>
-                          </select>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Account Number</Label>
-                          <Input value={supplierForm.accountNumber} onChange={(e) => setSupplierForm({ ...supplierForm, accountNumber: e.target.value })} />
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Commodity</Label>
-                        <select
-                          value={supplierForm.commodity}
-                          onChange={(e) => setSupplierForm({ ...supplierForm, commodity: e.target.value })}
-                          className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                        >
-                          <option value="">Select commodity...</option>
-                          <option value="Pesticide and Chemicals">Pesticide and Chemicals</option>
-                          <option value="Fertilizer">Fertilizer</option>
-                          <option value="Livestock Feed">Livestock Feed</option>
-                          <option value="Aquaculture Feeds">Aquaculture Feeds</option>
-                          <option value="Vehicle">Vehicle</option>
-                          <option value="Machines">Machines</option>
-                        </select>
-                      </div>
-                      <Button type="submit" className="w-full gradient-primary" disabled={addSupplier.isPending}>Add Supplier</Button>
-                    </form>
-                  </DialogContent>
-                </Dialog>
-                )}
-              </div>
-
-              <Card>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Phone</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Payment Method</TableHead>
-                      <TableHead>Account Number</TableHead>
-                      <TableHead>Commodity</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredSuppliers.map((s) => (
-                      <TableRow key={s.id}>
-                        <TableCell className="font-medium">{s.name}</TableCell>
-                        <TableCell>{s.phone || '-'}</TableCell>
-                        <TableCell>{s.email || '-'}</TableCell>
-                        <TableCell className="capitalize">{s.payment_method?.replace('_', ' ') || '-'}</TableCell>
-                        <TableCell>{s.account_number || '-'}</TableCell>
-                        <TableCell>{s.commodity || '-'}</TableCell>
-                        <TableCell className="text-right">
-                          {canDelete('procurement') && (
-                            <Button variant="ghost" size="icon" onClick={() => deleteSupplier.mutate(s.id)}>
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                    {!filteredSuppliers.length && (
-                      <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No suppliers found</TableCell></TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
-
-      {newPODialog}
     </DashboardLayout>
   );
 }

@@ -1,6 +1,8 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import path from 'path';
 import authRouter from './routes/auth';
 import inventoryRouter from './routes/inventory';
@@ -18,8 +20,6 @@ import profileRouter from './routes/profile';
 import accessControlRouter from './routes/accessControl';
 import auditLogRouter from './routes/auditLog';
 import { seedPermissions } from './seeds/permissionSeed';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -57,5 +57,9 @@ app.get('/api/v1/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.listen(PORT, async () => {
   console.log(`AMIS backend running on http://localhost:${PORT}`);
-  await seedPermissions();
+  try {
+    await seedPermissions();
+  } catch (error) {
+    console.error('Failed to seed permissions on startup:', error);
+  }
 });

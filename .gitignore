@@ -11,6 +11,14 @@ node_modules
 dist
 dist-ssr
 *.local
+supabase/.temp/
+
+# Env files
+.env
+.env.local
+.env.development
+.env.production
+.env.*.local
 
 # Editor directories and files
 .vscode/*

@@ -1,7 +1,8 @@
-import { Router } from 'express';
+import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { requireAuth, AuthUser } from '../middleware/auth';
@@ -29,6 +30,24 @@ const changePasswordSchema = z.object({
 
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function isDbUnavailable(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientInitializationError;
+}
+
+function sendDbError(res: Response, error: unknown) {
+  if (isDbUnavailable(error)) {
+    return res.status(503).json({
+      error: 'Database is temporarily unavailable. Please try again in a moment.',
+      code: 'DB_UNAVAILABLE',
+    });
+  }
+
+  return res.status(500).json({
+    error: 'Database operation failed',
+    code: 'DB_ERROR',
+  });
 }
 
 function signAccessToken(payload: Omit<AuthUser, never>): string {
@@ -72,7 +91,6 @@ async function getFarmId(userId: string): Promise<string | null> {
 
 async function checkPassword(password: string, stored: string): Promise<boolean> {
   if (stored.startsWith('pbkdf2:')) return verifyPassword(password, stored);
-  // Legacy bcrypt
   return bcrypt.compare(password, stored);
 }
 
@@ -83,71 +101,92 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Invalid input', code: 'VALIDATION_ERROR' });
   }
 
-  const { identifier, password } = result.data;
+  try {
+    const { identifier, password } = result.data;
 
-  const user = await prisma.users.findFirst({
-    where: {
-      deleted_at: null,
-      OR: [
-        { email: { equals: identifier, mode: 'insensitive' } },
-        { username: { equals: identifier, mode: 'insensitive' } },
-      ],
-    },
-    include: { role: true },
-  });
+    const user = await prisma.users.findFirst({
+      where: {
+        deleted_at: null,
+        OR: [
+          { email: { equals: identifier, mode: 'insensitive' } },
+          { username: { equals: identifier, mode: 'insensitive' } },
+        ],
+      },
+      include: { role: true },
+    });
 
-  const valid = user ? await checkPassword(password, user.password_hash) : false;
+    const valid = user ? await checkPassword(password, user.password_hash) : false;
 
-  if (!user || !valid) {
+    if (!user || !valid) {
+      const { ip, userAgent } = clientInfo(req);
+      logAuditEvent({
+        eventType: 'login_failed',
+        description: `Failed login attempt for ${identifier}`,
+        ipAddress: ip,
+        userAgent,
+      });
+      return res.status(401).json({ error: 'Invalid username/email or password', code: 'INVALID_CREDENTIALS' });
+    }
+
+    if (!VALID_ROLE_NAMES.has(user.role.name)) {
+      const { ip, userAgent } = clientInfo(req);
+      logAuditEvent({
+        eventType: 'login_failed',
+        description: `Login rejected - unknown role '${user.role.name}' for ${identifier}`,
+        ipAddress: ip,
+        userAgent,
+      });
+      return res.status(403).json({ error: 'Account role is not recognized. Contact your administrator.', code: 'INVALID_ROLE' });
+    }
+
+    const farmId = await getFarmId(user.id);
+
+    const tokenPayload: AuthUser = {
+      userId: user.id,
+      username: user.username ?? '',
+      fullName: user.full_name,
+      email: user.email,
+      roleId: user.role_id,
+      roleName: user.role.name,
+      farmId,
+    };
+
+    const accessToken = signAccessToken(tokenPayload);
+    const refreshToken = signRefreshToken(user.id);
+
+    await prisma.sessions.create({
+      data: {
+        user_id: user.id,
+        token_hash: hashToken(refreshToken),
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        ip_address: req.ip ?? null,
+        user_agent: req.headers['user-agent'] ?? null,
+      },
+    });
+
+    await prisma.users.update({
+      where: { id: user.id },
+      data: { last_login: new Date() },
+    });
+
     const { ip, userAgent } = clientInfo(req);
-    logAuditEvent({ eventType: 'login_failed', description: `Failed login attempt for ${identifier}`, ipAddress: ip, userAgent });
-    return res.status(401).json({ error: 'Invalid username/email or password', code: 'INVALID_CREDENTIALS' });
+    logAuditEvent({
+      actorUserId: user.id,
+      eventType: 'login_success',
+      description: `${user.full_name} logged in`,
+      ipAddress: ip,
+      userAgent,
+    });
+
+    return res.json({
+      accessToken,
+      refreshToken,
+      user: { id: user.id, fullName: user.full_name, email: user.email, role: user.role.name, farmId },
+    });
+  } catch (error) {
+    console.error('Login failed:', error);
+    return sendDbError(res, error);
   }
-
-  if (!VALID_ROLE_NAMES.has(user.role.name)) {
-    const { ip, userAgent } = clientInfo(req);
-    logAuditEvent({ eventType: 'login_failed', description: `Login rejected — unknown role '${user.role.name}' for ${identifier}`, ipAddress: ip, userAgent });
-    return res.status(403).json({ error: 'Account role is not recognized. Contact your administrator.', code: 'INVALID_ROLE' });
-  }
-
-  const farmId = await getFarmId(user.id);
-
-  const tokenPayload: AuthUser = {
-    userId: user.id,
-    username: user.username ?? '',
-    fullName: user.full_name,
-    email: user.email,
-    roleId: user.role_id,
-    roleName: user.role.name,
-    farmId,
-  };
-
-  const accessToken = signAccessToken(tokenPayload);
-  const refreshToken = signRefreshToken(user.id);
-
-  await prisma.sessions.create({
-    data: {
-      user_id: user.id,
-      token_hash: hashToken(refreshToken),
-      expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      ip_address: req.ip ?? null,
-      user_agent: req.headers['user-agent'] ?? null,
-    },
-  });
-
-  await prisma.users.update({
-    where: { id: user.id },
-    data: { last_login: new Date() },
-  });
-
-  const { ip, userAgent } = clientInfo(req);
-  logAuditEvent({ actorUserId: user.id, eventType: 'login_success', description: `${user.full_name} logged in`, ipAddress: ip, userAgent });
-
-  return res.json({
-    accessToken,
-    refreshToken,
-    user: { id: user.id, fullName: user.full_name, email: user.email, role: user.role.name, farmId },
-  });
 });
 
 // POST /api/v1/auth/refresh
@@ -186,20 +225,37 @@ router.post('/refresh', async (req, res) => {
       accessToken: signAccessToken(tokenPayload),
       user: { id: session.user.id, fullName: session.user.full_name, email: session.user.email, role: session.user.role.name, farmId },
     });
-  } catch {
-    return res.status(401).json({ error: 'Invalid refresh token', code: 'INVALID_TOKEN' });
+  } catch (error) {
+    if (error instanceof jwt.JsonWebTokenError) {
+      return res.status(401).json({ error: 'Invalid refresh token', code: 'INVALID_TOKEN' });
+    }
+
+    console.error('Refresh failed:', error);
+    return sendDbError(res, error);
   }
 });
 
 // POST /api/v1/auth/logout
 router.post('/logout', requireAuth, async (req, res) => {
-  const { refreshToken } = req.body;
-  if (refreshToken) {
-    await prisma.sessions.deleteMany({ where: { token_hash: hashToken(refreshToken) } });
+  try {
+    const { refreshToken } = req.body;
+    if (refreshToken) {
+      await prisma.sessions.deleteMany({ where: { token_hash: hashToken(refreshToken) } });
+    }
+
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({
+      actorUserId: req.user!.userId,
+      eventType: 'logout',
+      description: `${req.user!.fullName} logged out`,
+      ipAddress: ip,
+      userAgent,
+    });
+    return res.json({ message: 'Logged out' });
+  } catch (error) {
+    console.error('Logout failed:', error);
+    return sendDbError(res, error);
   }
-  const { ip, userAgent } = clientInfo(req);
-  logAuditEvent({ actorUserId: req.user!.userId, eventType: 'logout', description: `${req.user!.fullName} logged out`, ipAddress: ip, userAgent });
-  return res.json({ message: 'Logged out' });
 });
 
 // GET /api/v1/auth/permissions
@@ -208,8 +264,9 @@ router.get('/permissions', requireAuth, async (req, res) => {
   try {
     const permissions = await getPermissions(roleId, roleName, farmId);
     return res.json({ role: roleName, permissions });
-  } catch {
-    return res.status(500).json({ error: 'Failed to fetch permissions', code: 'DB_ERROR' });
+  } catch (error) {
+    console.error('Permission lookup failed:', error);
+    return sendDbError(res, error);
   }
 });
 
@@ -243,11 +300,19 @@ router.post('/change-password', requireAuth, async (req, res) => {
     });
 
     const { ip, userAgent } = clientInfo(req);
-    logAuditEvent({ actorUserId: req.user!.userId, eventType: 'settings_changed', subsystem: 'settings', description: 'Password changed', ipAddress: ip, userAgent });
+    logAuditEvent({
+      actorUserId: req.user!.userId,
+      eventType: 'settings_changed',
+      subsystem: 'settings',
+      description: 'Password changed',
+      ipAddress: ip,
+      userAgent,
+    });
 
     return res.json({ message: 'Password updated' });
-  } catch {
-    return res.status(500).json({ error: 'Failed to update password', code: 'DB_ERROR' });
+  } catch (error) {
+    console.error('Change password failed:', error);
+    return sendDbError(res, error);
   }
 });
 
@@ -258,33 +323,38 @@ router.post('/register', async (req, res) => {
     return res.status(400).json({ error: result.error.errors[0].message, code: 'VALIDATION_ERROR' });
   }
 
-  const { email, password, fullName } = result.data;
+  try {
+    const { email, password, fullName } = result.data;
 
-  const existing = await prisma.users.findFirst({
-    where: { email: { equals: email, mode: 'insensitive' } },
-  });
-  if (existing) {
-    return res.status(409).json({ error: 'Email already registered', code: 'EMAIL_TAKEN' });
+    const existing = await prisma.users.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+    });
+    if (existing) {
+      return res.status(409).json({ error: 'Email already registered', code: 'EMAIL_TAKEN' });
+    }
+
+    const customerRole = await prisma.roles.findFirst({ where: { name: 'customer' } });
+    if (!customerRole) {
+      return res.status(500).json({ error: 'Roles not seeded', code: 'SETUP_REQUIRED' });
+    }
+
+    const user = await prisma.users.create({
+      data: {
+        role_id: customerRole.id,
+        full_name: fullName,
+        email,
+        password_hash: hashPassword(password),
+      },
+      include: { role: true },
+    });
+
+    return res.status(201).json({
+      user: { id: user.id, fullName: user.full_name, email: user.email, role: user.role.name, farmId: null },
+    });
+  } catch (error) {
+    console.error('Register failed:', error);
+    return sendDbError(res, error);
   }
-
-  const customerRole = await prisma.roles.findFirst({ where: { name: 'customer' } });
-  if (!customerRole) {
-    return res.status(500).json({ error: 'Roles not seeded', code: 'SETUP_REQUIRED' });
-  }
-
-  const user = await prisma.users.create({
-    data: {
-      role_id: customerRole.id,
-      full_name: fullName,
-      email,
-      password_hash: hashPassword(password),
-    },
-    include: { role: true },
-  });
-
-  return res.status(201).json({
-    user: { id: user.id, fullName: user.full_name, email: user.email, role: user.role.name, farmId: null },
-  });
 });
 
 export default router;
