@@ -10,7 +10,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import {
   Wheat, Tractor, Package, DollarSign, Users,
   TrendingUp, Leaf, UserCog, ShoppingCart, ClipboardList,
-  BarChart3, Wrench,
+  BarChart3, Wrench, UserCheck, UserMinus, AlertTriangle,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -205,20 +205,25 @@ function MiniDashboard({ title, subtitle, children }: { title: string; subtitle:
 
 function FieldSupervisorDashboard() {
   const navigate = useNavigate();
-  const { data: employees } = useQuery({ queryKey: ['emp-mini'], queryFn: () => api.get<any[]>('/hr/employees').catch(() => []) });
-  const { data: tasks } = useQuery({ queryKey: ['tasks-mini'], queryFn: () => api.get<any[]>('/hr/tasks').catch(() => []) });
+  const { data: hrStats } = useQuery({ queryKey: ['hr-stats-mini'], queryFn: () => api.get<any>('/hr/stats').catch(() => ({})) });
   const { data: prodLogs } = useQuery({ queryKey: ['prodlog-mini'], queryFn: () => api.get<any[]>('/production/daily-logs').catch(() => []) });
   return (
     <MiniDashboard title="Field Supervisor" subtitle="Daily operations and team overview.">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div onClick={() => navigate('/employees')} className="cursor-pointer">
-          <StatCard title="Team Members" value={(employees as any[])?.length || 0} icon={Users} variant="primary" />
-        </div>
-        <div onClick={() => navigate('/employees')} className="cursor-pointer">
-          <StatCard title="Pending Tasks" value={(tasks as any[])?.filter((t: any) => t.status === 'pending').length || 0} icon={ClipboardList} variant="warning" />
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <div onClick={() => navigate('/production')} className="cursor-pointer">
-          <StatCard title="Daily Logs" value={(prodLogs as any[])?.length || 0} icon={BarChart3} variant="accent" />
+          <StatCard title="Daily Log" value={(prodLogs as any[])?.length || 0} icon={ClipboardList} variant="primary" />
+        </div>
+        <div onClick={() => navigate('/employees')} className="cursor-pointer">
+          <StatCard title="Suspension" value={(hrStats as any)?.suspendedCount || 0} icon={AlertTriangle} variant="warning" />
+        </div>
+        <div onClick={() => navigate('/employees')} className="cursor-pointer">
+          <StatCard title="Active" value={(hrStats as any)?.activeCount || 0} icon={UserCheck} variant="success" />
+        </div>
+        <div onClick={() => navigate('/employees')} className="cursor-pointer">
+          <StatCard title="Inactive" value={(hrStats as any)?.inactiveCount || 0} icon={UserMinus} variant="default" />
+        </div>
+        <div onClick={() => navigate('/employees')} className="cursor-pointer">
+          <StatCard title="Attendance Log" value={`${(hrStats as any)?.attendanceRate || 0}%`} icon={BarChart3} variant="accent" />
         </div>
       </div>
     </MiniDashboard>
@@ -283,21 +288,27 @@ function ProductionManagerDashboard() {
 
 function AccountingDashboard() {
   const navigate = useNavigate();
-  const { data: orders } = useQuery({ queryKey: ['mkt-orders-mini'], queryFn: () => api.get<any[]>('/marketing/orders').catch(() => []) });
-  const { data: wages } = useQuery({ queryKey: ['wages-mini'], queryFn: () => api.get<any[]>('/hr/wages').catch(() => []) });
-  const revenue = (orders as any[])?.filter((o: any) => ['completed','delivered'].includes(o.status)).reduce((s: number, o: any) => s + Number(o.amount || 0), 0) || 0;
-  const expenses = (wages as any[])?.filter((w: any) => w.payment_status === 'paid').reduce((s: number, w: any) => s + Number(w.amount || 0), 0) || 0;
-  const pending = (orders as any[])?.filter((o: any) => o.payment_status === 'pending').length || 0;
+  const { data: summary } = useQuery({
+    queryKey: ['finance-summary-mini'],
+    queryFn: () => api.get<any>('/finance/summary').catch(() => ({ totalRevenue: 0, totalExpenses: 0, netProfit: 0, pendingPayments: 0 })),
+  });
+  const revenue = summary?.totalRevenue ?? 0;
+  const expenses = summary?.totalExpenses ?? 0;
+  const netProfit = summary?.netProfit ?? 0;
+  const pending = summary?.pendingPayments ?? 0;
   return (
     <MiniDashboard title="Finance" subtitle="Revenue, expenses, and payment overview.">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div onClick={() => navigate('/finance')} className="cursor-pointer">
           <StatCard title="Total Revenue" value={`$${revenue.toLocaleString()}`} icon={DollarSign} variant="success" trend={{ value: 8.2, isPositive: true }} />
         </div>
         <div onClick={() => navigate('/finance')} className="cursor-pointer">
           <StatCard title="Total Expenses" value={`$${expenses.toLocaleString()}`} icon={DollarSign} variant="warning" />
         </div>
-        <div onClick={() => navigate('/orders')} className="cursor-pointer">
+        <div onClick={() => navigate('/finance')} className="cursor-pointer">
+          <StatCard title="Net Profit" value={`$${netProfit.toLocaleString()}`} icon={TrendingUp} variant={netProfit >= 0 ? 'success' : 'warning'} />
+        </div>
+        <div onClick={() => navigate('/finance')} className="cursor-pointer">
           <StatCard title="Pending Payments" value={pending} icon={ClipboardList} variant="accent" />
         </div>
       </div>

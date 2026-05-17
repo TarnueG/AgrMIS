@@ -52,7 +52,13 @@ async function getFarmId(userId: string): Promise<string | null> {
     where: { user_id: userId, deleted_at: null },
     select: { farm_id: true },
   });
-  return employee?.farm_id ?? null;
+  if (employee?.farm_id) return employee.farm_id;
+  // Fallback: users with no employee record still need a farm context for permission lookups
+  const farm = await prisma.farm_profiles.findFirst({
+    where: { deleted_at: null },
+    select: { id: true },
+  });
+  return farm?.id ?? null;
 }
 
 async function checkPassword(password: string, stored: string): Promise<boolean> {

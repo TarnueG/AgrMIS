@@ -17,6 +17,7 @@ import marketingRouter from './routes/marketing';
 import profileRouter from './routes/profile';
 import accessControlRouter from './routes/accessControl';
 import auditLogRouter from './routes/auditLog';
+import financeRouter from './routes/finance';
 import { seedPermissions } from './seeds/permissionSeed';
 
 dotenv.config();
@@ -52,6 +53,7 @@ app.use('/api/v1/marketing', marketingRouter);
 app.use('/api/v1/profile', profileRouter);
 app.use('/api/v1/access-control', accessControlRouter);
 app.use('/api/v1/audit-log', auditLogRouter);
+app.use('/api/v1/finance', financeRouter);
 
 app.get('/api/v1/health', (_req, res) => res.json({ status: 'ok' }));
 
