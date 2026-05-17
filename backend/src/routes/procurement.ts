@@ -34,6 +34,7 @@ function mapPO(po: any) {
 
 const supplierSchema = z.object({
   name: z.string().min(1),
+  contactPerson: z.string().optional(),
   supplierType: z.string().optional(),
   phone: z.string().optional(),
   email: z.string().email().optional().or(z.literal('')),
@@ -76,6 +77,7 @@ router.post('/suppliers', async (req, res) => {
       data: {
         farm_id: req.user!.farmId,
         name: d.name,
+        contact_person: d.contactPerson ?? null,
         supplier_type: d.supplierType,
         phone: d.phone,
         email: d.email || undefined,
@@ -107,6 +109,8 @@ router.delete('/suppliers/:id', async (req, res) => {
 
 const showcaseProcurementSchema = z.object({
   item_name: z.string().min(1),
+  category: z.string().optional().nullable(),
+  unit: z.string().optional().nullable(),
   inventory_id: z.string().uuid().optional().nullable(),
   supplier_id: z.string().uuid().optional().nullable(),
   supplier: z.string().optional().nullable(),
@@ -114,6 +118,20 @@ const showcaseProcurementSchema = z.object({
   unit_price: z.number().min(0),
   expected_date: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
+});
+
+const showcaseProcurementUpdateSchema = z.object({
+  item_name: z.string().min(1).optional(),
+  category: z.string().optional().nullable(),
+  unit: z.string().optional().nullable(),
+  supplier_id: z.string().uuid().optional().nullable(),
+  supplier: z.string().optional().nullable(),
+  quantity: z.number().positive().optional(),
+  unit_price: z.number().min(0).optional(),
+  expected_date: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+  rejection_reason: z.string().optional().nullable(),
+  status: z.enum(['pending', 'approved', 'rejected', 'ordered', 'partially_received', 'received']).optional(),
 });
 
 router.get('/showcase', async (_req, res) => {
@@ -138,14 +156,18 @@ router.post('/showcase', async (req, res) => {
   const d = parsed.data;
   try {
     const totalCost = d.quantity * d.unit_price;
+    const requestNumber = `PR-${Date.now()}`;
     const rows = await prisma.$queryRawUnsafe<any[]>(
       `INSERT INTO public.procurement (
-         item_name, inventory_id, supplier_id, supplier, quantity, unit_price, total_cost,
-         status, expected_date, notes
+         request_number, item_name, category, unit, inventory_id, supplier_id, supplier, quantity, unit_price, total_cost,
+         status, expected_date, notes, received_quantity
        )
-       VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, 'ordered', $8, $9)
+       VALUES ($1, $2, $3, $4, $5::uuid, $6::uuid, $7, $8, $9, $10, 'pending', $11, $12, 0)
        RETURNING *`,
+      requestNumber,
       d.item_name,
+      d.category ?? 'supplies',
+      d.unit ?? null,
       d.inventory_id ?? null,
       d.supplier_id ?? null,
       d.supplier ?? null,
@@ -158,6 +180,77 @@ router.post('/showcase', async (req, res) => {
     res.status(201).json(rows[0]);
   } catch {
     res.status(500).json({ error: 'Failed to create showcase procurement record', code: 'DB_ERROR' });
+  }
+});
+
+router.patch('/showcase/:id', async (req, res) => {
+  const parsed = showcaseProcurementUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  }
+
+  const d = parsed.data;
+  try {
+    const existingRows = await prisma.$queryRawUnsafe<any[]>(
+      `SELECT * FROM public.procurement WHERE id = $1::uuid LIMIT 1`,
+      req.params.id,
+    );
+    if (!existingRows.length) {
+      return res.status(404).json({ error: 'Procurement record not found', code: 'NOT_FOUND' });
+    }
+
+    const existing = existingRows[0];
+    const nextQuantity = d.quantity ?? Number(existing.quantity || 0);
+    const nextUnitPrice = d.unit_price ?? Number(existing.unit_price || 0);
+    const nextStatus = d.status ?? existing.status;
+    const poNumber =
+      (nextStatus === 'approved' || nextStatus === 'ordered' || nextStatus === 'partially_received' || nextStatus === 'received')
+        ? (existing.po_number || `PO-${Date.now()}`)
+        : existing.po_number;
+    const approvedAt =
+      (nextStatus === 'approved' || nextStatus === 'ordered' || nextStatus === 'partially_received' || nextStatus === 'received')
+        ? (existing.approved_at || new Date())
+        : existing.approved_at;
+
+    const updatedRows = await prisma.$queryRawUnsafe<any[]>(
+      `UPDATE public.procurement
+       SET item_name = COALESCE($2, item_name),
+           category = COALESCE($3, category),
+           unit = COALESCE($4, unit),
+           supplier_id = COALESCE($5::uuid, supplier_id),
+           supplier = COALESCE($6, supplier),
+           quantity = $7,
+           unit_price = $8,
+           total_cost = $9,
+           expected_date = $10,
+           notes = COALESCE($11, notes),
+           rejection_reason = $12,
+           status = $13,
+           po_number = $14,
+           approved_at = $15,
+           updated_at = NOW()
+       WHERE id = $1::uuid
+       RETURNING *`,
+      req.params.id,
+      d.item_name ?? null,
+      d.category ?? null,
+      d.unit ?? null,
+      d.supplier_id ?? null,
+      d.supplier ?? null,
+      nextQuantity,
+      nextUnitPrice,
+      nextQuantity * nextUnitPrice,
+      d.expected_date !== undefined ? (d.expected_date ? new Date(d.expected_date) : null) : existing.expected_date,
+      d.notes ?? null,
+      d.rejection_reason ?? existing.rejection_reason ?? null,
+      nextStatus,
+      poNumber ?? null,
+      approvedAt ?? null,
+    );
+
+    res.json(updatedRows[0]);
+  } catch {
+    res.status(500).json({ error: 'Failed to update procurement record', code: 'DB_ERROR' });
   }
 });
 
@@ -174,13 +267,22 @@ router.post('/showcase/:id/receive', async (req, res) => {
       }
 
       const row = rows[0];
+      if (row.status === 'rejected') {
+        throw Object.assign(new Error('Rejected procurement cannot be received'), { code: 'INVALID_STATUS' });
+      }
       if (row.status === 'received') {
         throw Object.assign(new Error('Procurement already received'), { code: 'ALREADY_RECEIVED' });
       }
 
-      const receiptQuantity = Number(row.quantity || 0);
+      const requestedQuantity = Number(row.quantity || 0);
+      const alreadyReceived = Number(row.received_quantity || 0);
+      const requestedReceiptQuantity = Number(req.body?.received_quantity ?? 0);
+      const receiptQuantity = requestedReceiptQuantity > 0 ? requestedReceiptQuantity : requestedQuantity - alreadyReceived;
       if (receiptQuantity <= 0) {
         throw Object.assign(new Error('Receipt quantity must be greater than zero'), { code: 'INVALID_QTY' });
+      }
+      if (alreadyReceived + receiptQuantity > requestedQuantity) {
+        throw Object.assign(new Error('Receipt quantity exceeds outstanding quantity'), { code: 'INVALID_QTY' });
       }
 
       let inventoryRows = row.inventory_id
@@ -211,6 +313,8 @@ router.post('/showcase/:id/receive', async (req, res) => {
       }
 
       const nextQuantity = Number(inventoryItem.quantity || 0) + receiptQuantity;
+      const nextReceivedQuantity = alreadyReceived + receiptQuantity;
+      const nextStatus = nextReceivedQuantity >= requestedQuantity ? 'received' : 'partially_received';
 
       await tx.$executeRawUnsafe(
         `UPDATE public.inventory
@@ -242,13 +346,19 @@ router.post('/showcase/:id/receive', async (req, res) => {
 
       const updatedRows = await tx.$queryRawUnsafe<any[]>(
         `UPDATE public.procurement
-         SET status = 'received',
-             received_at = $2,
-             inventory_id = $3::uuid,
+         SET status = $2,
+             received_quantity = $3,
+             po_number = COALESCE(po_number, $4),
+             approved_at = COALESCE(approved_at, NOW()),
+             received_at = $5,
+             inventory_id = $6::uuid,
              updated_at = NOW()
          WHERE id = $1::uuid
          RETURNING *`,
         row.id,
+        nextStatus,
+        nextReceivedQuantity,
+        row.po_number ?? `PO-${Date.now()}`,
         receivedAt,
         inventoryItem.id,
       );
@@ -264,8 +374,11 @@ router.post('/showcase/:id/receive', async (req, res) => {
     if (error?.code === 'ALREADY_RECEIVED') {
       return res.status(400).json({ error: 'This procurement record has already been received.', code: 'ALREADY_RECEIVED' });
     }
+    if (error?.code === 'INVALID_STATUS') {
+      return res.status(400).json({ error: 'This procurement record cannot be received in its current status.', code: 'INVALID_STATUS' });
+    }
     if (error?.code === 'INVALID_QTY') {
-      return res.status(400).json({ error: 'Receipt quantity must be greater than zero.', code: 'INVALID_QTY' });
+      return res.status(400).json({ error: 'Receipt quantity is invalid for this procurement record.', code: 'INVALID_QTY' });
     }
     res.status(500).json({ error: 'Failed to receive showcase procurement', code: 'DB_ERROR' });
   }
