@@ -105,6 +105,172 @@ router.delete('/suppliers/:id', async (req, res) => {
   }
 });
 
+const showcaseProcurementSchema = z.object({
+  item_name: z.string().min(1),
+  inventory_id: z.string().uuid().optional().nullable(),
+  supplier_id: z.string().uuid().optional().nullable(),
+  supplier: z.string().optional().nullable(),
+  quantity: z.number().positive(),
+  unit_price: z.number().min(0),
+  expected_date: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
+router.get('/showcase', async (_req, res) => {
+  try {
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT *
+      FROM public.procurement
+      ORDER BY created_at DESC
+    `;
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch showcase procurement', code: 'DB_ERROR' });
+  }
+});
+
+router.post('/showcase', async (req, res) => {
+  const parsed = showcaseProcurementSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  }
+
+  const d = parsed.data;
+  try {
+    const totalCost = d.quantity * d.unit_price;
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `INSERT INTO public.procurement (
+         item_name, inventory_id, supplier_id, supplier, quantity, unit_price, total_cost,
+         status, expected_date, notes
+       )
+       VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, 'ordered', $8, $9)
+       RETURNING *`,
+      d.item_name,
+      d.inventory_id ?? null,
+      d.supplier_id ?? null,
+      d.supplier ?? null,
+      d.quantity,
+      d.unit_price,
+      totalCost,
+      d.expected_date ? new Date(d.expected_date) : null,
+      d.notes ?? null,
+    );
+    res.status(201).json(rows[0]);
+  } catch {
+    res.status(500).json({ error: 'Failed to create showcase procurement record', code: 'DB_ERROR' });
+  }
+});
+
+router.post('/showcase/:id/receive', async (req, res) => {
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRawUnsafe<any[]>(
+        `SELECT * FROM public.procurement WHERE id = $1::uuid LIMIT 1`,
+        req.params.id,
+      );
+
+      if (!rows.length) {
+        throw Object.assign(new Error('Procurement record not found'), { code: 'NOT_FOUND' });
+      }
+
+      const row = rows[0];
+      if (row.status === 'received') {
+        throw Object.assign(new Error('Procurement already received'), { code: 'ALREADY_RECEIVED' });
+      }
+
+      const receiptQuantity = Number(row.quantity || 0);
+      if (receiptQuantity <= 0) {
+        throw Object.assign(new Error('Receipt quantity must be greater than zero'), { code: 'INVALID_QTY' });
+      }
+
+      let inventoryRows = row.inventory_id
+        ? await tx.$queryRawUnsafe<any[]>(`SELECT * FROM public.inventory WHERE id = $1::uuid LIMIT 1`, row.inventory_id)
+        : [];
+
+      if (!inventoryRows.length) {
+        inventoryRows = await tx.$queryRawUnsafe<any[]>(
+          `SELECT * FROM public.inventory WHERE LOWER(item_name) = LOWER($1) LIMIT 1`,
+          row.item_name,
+        );
+      }
+
+      let inventoryItem = inventoryRows[0];
+
+      if (!inventoryItem) {
+        const created = await tx.$queryRawUnsafe<any[]>(
+          `INSERT INTO public.inventory (
+             item_name, category, quantity, unit_cost, supplier_id, notes
+           )
+           VALUES ($1, 'supplies', 0, $2, $3::uuid, 'Created automatically from procurement receipt.')
+           RETURNING *`,
+          row.item_name,
+          Number(row.unit_price || 0),
+          row.supplier_id ?? null,
+        );
+        inventoryItem = created[0];
+      }
+
+      const nextQuantity = Number(inventoryItem.quantity || 0) + receiptQuantity;
+
+      await tx.$executeRawUnsafe(
+        `UPDATE public.inventory
+         SET quantity = $2,
+             unit_cost = $3,
+             supplier_id = COALESCE($4::uuid, supplier_id),
+             updated_at = NOW()
+         WHERE id = $1::uuid`,
+        inventoryItem.id,
+        nextQuantity,
+        Number(row.unit_price || inventoryItem.unit_cost || 0),
+        row.supplier_id ?? null,
+      );
+
+      const receivedAt = new Date();
+
+      await tx.$executeRawUnsafe(
+        `INSERT INTO public.inventory_movements (
+           inventory_id, movement_type, quantity, unit_cost, source_module, reference_id, movement_date, notes
+         )
+         VALUES ($1::uuid, 'received', $2, $3, 'procurement', $4::uuid, $5, $6)`,
+        inventoryItem.id,
+        receiptQuantity,
+        Number(row.unit_price || 0),
+        row.id,
+        receivedAt,
+        `Procurement receipt for ${row.item_name}`,
+      );
+
+      const updatedRows = await tx.$queryRawUnsafe<any[]>(
+        `UPDATE public.procurement
+         SET status = 'received',
+             received_at = $2,
+             inventory_id = $3::uuid,
+             updated_at = NOW()
+         WHERE id = $1::uuid
+         RETURNING *`,
+        row.id,
+        receivedAt,
+        inventoryItem.id,
+      );
+
+      return updatedRows[0];
+    });
+
+    res.json(result);
+  } catch (error: any) {
+    if (error?.code === 'NOT_FOUND') {
+      return res.status(404).json({ error: 'Procurement record not found', code: 'NOT_FOUND' });
+    }
+    if (error?.code === 'ALREADY_RECEIVED') {
+      return res.status(400).json({ error: 'This procurement record has already been received.', code: 'ALREADY_RECEIVED' });
+    }
+    if (error?.code === 'INVALID_QTY') {
+      return res.status(400).json({ error: 'Receipt quantity must be greater than zero.', code: 'INVALID_QTY' });
+    }
+    res.status(500).json({ error: 'Failed to receive showcase procurement', code: 'DB_ERROR' });
+  }
+});
+
 // ── Purchase Orders ───────────────────────────────────────────────
 
 const poSchema = z.object({

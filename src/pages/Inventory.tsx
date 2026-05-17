@@ -41,7 +41,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import api from '@/lib/api';
 import {
   buildInventoryDashboard,
   formatCurrency,
@@ -225,54 +225,38 @@ export default function Inventory() {
 
   const { data: inventory = [], isLoading } = useQuery({
     queryKey: ['inventory'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('inventory').select('*').order('item_name');
-      if (error) throw error;
-      return data as InventoryItem[];
-    },
+    queryFn: () => api.get<InventoryItem[]>('/inventory/showcase-items'),
   });
 
   const { data: movements } = useQuery({
     queryKey: ['inventory-movements-dashboard'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('inventory_movements')
-        .select('*')
-        .order('movement_date', { ascending: false });
-      if (error) throw error;
-      return data as InventoryMovement[];
-    },
+    queryFn: () => api.get<InventoryMovement[]>('/inventory/showcase-movements'),
   });
 
   const { data: suppliers } = useQuery({
     queryKey: ['inventory-suppliers'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('suppliers').select('id, name').order('name');
-      if (error) throw error;
-      return data as Supplier[];
+      const data = await api.get<any[]>('/procurement/suppliers');
+      return data.map((supplier) => ({ id: supplier.id, name: supplier.name })) as Supplier[];
     },
   });
 
   const addMutation = useMutation({
-    mutationFn: async (data: InventoryFormData) => {
-      const { error } = await supabase.from('inventory').insert([
-        {
-          item_name: data.item_name,
-          category: data.category,
-          quantity: data.quantity,
-          unit: data.unit || null,
-          min_stock_level: data.min_stock_level,
-          location: data.location || null,
-          expiry_date: data.expiry_date || null,
-          batch_no: data.batch_no || null,
-          quality_status: data.quality_status,
-          reserved_quantity: data.reserved_quantity,
-          supplier_id: data.supplier_id === 'none' ? null : data.supplier_id,
-          unit_cost: data.unit_cost,
-        },
-      ]);
-      if (error) throw error;
-    },
+    mutationFn: (data: InventoryFormData) =>
+      api.post('/inventory/showcase-items', {
+        item_name: data.item_name,
+        category: data.category,
+        quantity: data.quantity,
+        unit: data.unit || null,
+        min_stock_level: data.min_stock_level,
+        location: data.location || null,
+        expiry_date: data.expiry_date || null,
+        batch_no: data.batch_no || null,
+        quality_status: data.quality_status,
+        reserved_quantity: data.reserved_quantity,
+        supplier_id: data.supplier_id === 'none' ? null : data.supplier_id,
+        unit_cost: data.unit_cost,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       toast({ title: 'Item added successfully' });
@@ -285,19 +269,14 @@ export default function Inventory() {
   });
 
   const addSupplierMutation = useMutation({
-    mutationFn: async (data: SupplierFormData) => {
-      const { error } = await supabase.from('suppliers').insert([
-        {
-          name: data.name,
-          contact_person: data.contact_person || null,
-          phone: data.phone || null,
-          email: data.email || null,
-          address: data.address || null,
-          notes: data.notes || null,
-        },
-      ]);
-      if (error) throw error;
-    },
+    mutationFn: (data: SupplierFormData) =>
+      api.post('/procurement/suppliers', {
+        name: data.name,
+        phone: data.phone || null,
+        email: data.email || null,
+        address: data.address || null,
+        notes: [data.contact_person, data.notes].filter(Boolean).join(' | ') || null,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory-suppliers'] });
       toast({ title: 'Supplier added' });
@@ -317,45 +296,15 @@ export default function Inventory() {
   });
 
   const recordMovementMutation = useMutation({
-    mutationFn: async (data: MovementFormData) => {
-      const selectedItem = inventory?.find((item) => item.id === data.inventory_id);
-      if (!selectedItem) throw new Error('Select an inventory item before recording movement.');
-      if (data.quantity <= 0) throw new Error('Movement quantity must be greater than zero.');
-
-      const currentQuantity = Number(selectedItem.quantity || 0);
-      const nextQuantity =
-        data.movement_type === 'received'
-          ? currentQuantity + data.quantity
-          : Math.max(currentQuantity - data.quantity, 0);
-
-      const { error: movementError } = await supabase.from('inventory_movements').insert([
-        {
-          inventory_id: data.inventory_id,
-          movement_type: data.movement_type,
-          quantity: data.quantity,
-          unit_cost: data.unit_cost || null,
-          movement_date: data.movement_date ? new Date(data.movement_date).toISOString() : new Date().toISOString(),
-          source_module: 'inventory',
-          notes: data.notes || null,
-        },
-      ]);
-      if (movementError) throw movementError;
-
-      const updates: {
-        quantity: number;
-        unit_cost?: number;
-      } = { quantity: nextQuantity };
-
-      if (data.movement_type === 'received' && data.unit_cost > 0) {
-        updates.unit_cost = data.unit_cost;
-      }
-
-      const { error: inventoryError } = await supabase
-        .from('inventory')
-        .update(updates)
-        .eq('id', data.inventory_id);
-      if (inventoryError) throw inventoryError;
-    },
+    mutationFn: (data: MovementFormData) =>
+      api.post('/inventory/showcase-movements', {
+        inventory_id: data.inventory_id,
+        movement_type: data.movement_type,
+        quantity: data.quantity,
+        unit_cost: data.unit_cost || null,
+        movement_date: data.movement_date || null,
+        notes: data.notes || null,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       queryClient.invalidateQueries({ queryKey: ['inventory-movements-dashboard'] });
@@ -376,10 +325,7 @@ export default function Inventory() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from('inventory').delete().eq('id', id);
-      if (error) throw error;
-    },
+    mutationFn: (id: string) => api.delete(`/inventory/showcase-items/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
       toast({ title: 'Item deleted' });

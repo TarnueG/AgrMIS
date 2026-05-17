@@ -303,6 +303,167 @@ router.patch('/alerts/:id', async (req, res) => {
   }
 });
 
+// Demo showcase inventory tables used by the frontend Inventory/Procurement pages.
+// These rows live in public.inventory/public.procurement for backward compatibility with the UI.
+
+const showcaseItemSchema = z.object({
+  item_name: z.string().min(1),
+  category: z.string().min(1),
+  quantity: z.number().min(0),
+  unit: z.string().optional().nullable(),
+  min_stock_level: z.number().min(0).default(0),
+  location: z.string().optional().nullable(),
+  expiry_date: z.string().optional().nullable(),
+  batch_no: z.string().optional().nullable(),
+  quality_status: z.string().default('available'),
+  reserved_quantity: z.number().min(0).default(0),
+  supplier_id: z.string().uuid().optional().nullable(),
+  unit_cost: z.number().min(0).default(0),
+  notes: z.string().optional().nullable(),
+});
+
+const showcaseMovementSchema = z.object({
+  inventory_id: z.string().uuid(),
+  movement_type: z.enum(['received', 'dispatched']),
+  quantity: z.number().positive(),
+  unit_cost: z.number().min(0).optional().nullable(),
+  movement_date: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
+router.get('/showcase-items', async (_req, res) => {
+  try {
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT *
+      FROM public.inventory
+      ORDER BY item_name ASC
+    `;
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch showcase inventory', code: 'DB_ERROR' });
+  }
+});
+
+router.post('/showcase-items', async (req, res) => {
+  const parsed = showcaseItemSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  }
+
+  const d = parsed.data;
+  try {
+    const rows = await prisma.$queryRawUnsafe<any[]>(
+      `INSERT INTO public.inventory (
+         item_name, category, quantity, unit, min_stock_level, location, expiry_date, batch_no,
+         quality_status, reserved_quantity, supplier_id, unit_cost, notes
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::uuid, $12, $13)
+       RETURNING *`,
+      d.item_name,
+      d.category,
+      d.quantity,
+      d.unit ?? null,
+      d.min_stock_level,
+      d.location ?? null,
+      d.expiry_date ? new Date(d.expiry_date) : null,
+      d.batch_no ?? null,
+      d.quality_status,
+      d.reserved_quantity,
+      d.supplier_id ?? null,
+      d.unit_cost,
+      d.notes ?? null,
+    );
+    res.status(201).json(rows[0]);
+  } catch {
+    res.status(500).json({ error: 'Failed to create showcase inventory item', code: 'DB_ERROR' });
+  }
+});
+
+router.delete('/showcase-items/:id', async (req, res) => {
+  try {
+    await prisma.$executeRawUnsafe(`DELETE FROM public.inventory WHERE id = $1::uuid`, req.params.id);
+    res.status(204).end();
+  } catch {
+    res.status(500).json({ error: 'Failed to delete showcase inventory item', code: 'DB_ERROR' });
+  }
+});
+
+router.get('/showcase-movements', async (_req, res) => {
+  try {
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT *
+      FROM public.inventory_movements
+      ORDER BY movement_date DESC, created_at DESC
+    `;
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch showcase inventory movements', code: 'DB_ERROR' });
+  }
+});
+
+router.post('/showcase-movements', async (req, res) => {
+  const parsed = showcaseMovementSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  }
+
+  const d = parsed.data;
+  try {
+    const movement = await prisma.$transaction(async (tx) => {
+      const existing = await tx.$queryRawUnsafe<any[]>(
+        `SELECT * FROM public.inventory WHERE id = $1::uuid LIMIT 1`,
+        d.inventory_id,
+      );
+
+      if (!existing.length) {
+        throw Object.assign(new Error('Inventory item not found'), { code: 'NOT_FOUND' });
+      }
+
+      const item = existing[0];
+      const currentQuantity = Number(item.quantity || 0);
+      const nextQuantity = d.movement_type === 'received'
+        ? currentQuantity + d.quantity
+        : Math.max(currentQuantity - d.quantity, 0);
+
+      const movementRows = await tx.$queryRawUnsafe<any[]>(
+        `INSERT INTO public.inventory_movements (
+           inventory_id, movement_type, quantity, unit_cost, source_module, movement_date, notes
+         )
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        d.inventory_id,
+        d.movement_type,
+        d.quantity,
+        d.unit_cost ?? null,
+        'inventory',
+        d.movement_date ? new Date(d.movement_date) : new Date(),
+        d.notes ?? null,
+      );
+
+      await tx.$executeRawUnsafe(
+        `UPDATE public.inventory
+         SET quantity = $2,
+             unit_cost = CASE WHEN $3::numeric > 0 AND $4 = 'received' THEN $3 ELSE unit_cost END,
+             updated_at = NOW()
+         WHERE id = $1::uuid`,
+        d.inventory_id,
+        nextQuantity,
+        d.unit_cost ?? 0,
+        d.movement_type,
+      );
+
+      return movementRows[0];
+    });
+
+    res.status(201).json(movement);
+  } catch (error: any) {
+    if (error?.code === 'NOT_FOUND') {
+      return res.status(404).json({ error: 'Inventory item not found', code: 'NOT_FOUND' });
+    }
+    res.status(500).json({ error: 'Failed to record showcase inventory movement', code: 'DB_ERROR' });
+  }
+});
+
 // ── Inventory Production Requests ──────────────────────────────
 
 const prodReqDb = (prisma as any).inventory_production_requests;

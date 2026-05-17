@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import api from '@/lib/api';
 
 type InventoryItem = {
   id: string;
@@ -129,47 +129,33 @@ export default function Procurement() {
 
   const { data: procurement } = useQuery({
     queryKey: ['procurement'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('procurement').select('*').order('created_at', { ascending: false });
-      if (error) throw error;
-      return data as ProcurementRow[];
-    },
+    queryFn: () => api.get<ProcurementRow[]>('/procurement/showcase'),
   });
 
   const { data: inventory } = useQuery({
     queryKey: ['inventory-for-procurement'],
-    queryFn: async () => {
-      const { data, error } = await supabase.from('inventory').select('id, item_name, category, quantity, unit, unit_cost, supplier_id').order('item_name');
-      if (error) throw error;
-      return data as InventoryItem[];
-    },
+    queryFn: () => api.get<InventoryItem[]>('/inventory/showcase-items'),
   });
 
   const { data: suppliers } = useQuery({
     queryKey: ['inventory-suppliers'],
     queryFn: async () => {
-      const { data, error } = await supabase.from('suppliers').select('id, name').order('name');
-      if (error) throw error;
-      return data as Supplier[];
+      const data = await api.get<any[]>('/procurement/suppliers');
+      return data.map((supplier) => ({ id: supplier.id, name: supplier.name })) as Supplier[];
     },
   });
 
   const supplierMap = useMemo(() => new Map((suppliers || []).map((supplier) => [supplier.id, supplier.name])), [suppliers]);
 
   const addSupplierMutation = useMutation({
-    mutationFn: async (data: SupplierFormData) => {
-      const { error } = await supabase.from('suppliers').insert([
-        {
-          name: data.name,
-          contact_person: data.contact_person || null,
-          phone: data.phone || null,
-          email: data.email || null,
-          address: data.address || null,
-          notes: data.notes || null,
-        },
-      ]);
-      if (error) throw error;
-    },
+    mutationFn: (data: SupplierFormData) =>
+      api.post('/procurement/suppliers', {
+        name: data.name,
+        phone: data.phone || null,
+        email: data.email || null,
+        address: data.address || null,
+        notes: [data.contact_person, data.notes].filter(Boolean).join(' | ') || null,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory-suppliers'] });
       toast({ title: 'Supplier added' });
@@ -182,27 +168,20 @@ export default function Procurement() {
   });
 
   const addProcurementMutation = useMutation({
-    mutationFn: async (data: ProcurementFormData) => {
+    mutationFn: (data: ProcurementFormData) => {
       const selectedInventory = inventory?.find((item) => item.id === data.inventory_id);
       const selectedSupplierName = data.supplier_id === 'none' ? data.supplier : supplierMap.get(data.supplier_id) || data.supplier;
       const itemName = selectedInventory?.item_name || data.item_name;
-      const totalCost = data.quantity * data.unit_price;
-
-      const { error } = await supabase.from('procurement').insert([
-        {
-          item_name: itemName,
-          inventory_id: data.inventory_id === 'none' ? null : data.inventory_id,
-          supplier_id: data.supplier_id === 'none' ? null : data.supplier_id,
-          supplier: selectedSupplierName || null,
-          quantity: data.quantity,
-          unit_price: data.unit_price,
-          total_cost: totalCost,
-          status: 'ordered',
-          expected_date: data.expected_date || null,
-          notes: data.notes || null,
-        },
-      ]);
-      if (error) throw error;
+      return api.post('/procurement/showcase', {
+        item_name: itemName,
+        inventory_id: data.inventory_id === 'none' ? null : data.inventory_id,
+        supplier_id: data.supplier_id === 'none' ? null : data.supplier_id,
+        supplier: selectedSupplierName || null,
+        quantity: data.quantity,
+        unit_price: data.unit_price,
+        expected_date: data.expected_date || null,
+        notes: data.notes || null,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['procurement'] });
@@ -226,72 +205,7 @@ export default function Procurement() {
   });
 
   const receiveProcurementMutation = useMutation({
-    mutationFn: async (row: ProcurementRow) => {
-      if (row.status === 'received') throw new Error('This procurement record has already been received.');
-      const receiptQuantity = Number(row.quantity || 0);
-      if (receiptQuantity <= 0) throw new Error('Receipt quantity must be greater than zero.');
-
-      let inventoryItem = inventory?.find((item) => item.id === row.inventory_id);
-
-      if (!inventoryItem) {
-        inventoryItem = inventory?.find((item) => item.item_name.toLowerCase() === row.item_name.toLowerCase());
-      }
-
-      if (!inventoryItem) {
-        const { data: createdInventory, error: createError } = await supabase
-          .from('inventory')
-          .insert([
-            {
-              item_name: row.item_name,
-              category: 'supplies',
-              quantity: 0,
-              unit_cost: Number(row.unit_price || 0),
-              supplier_id: row.supplier_id,
-              notes: 'Created automatically from procurement receipt.',
-            },
-          ])
-          .select('id, item_name, category, quantity, unit, unit_cost, supplier_id')
-          .single();
-        if (createError) throw createError;
-        inventoryItem = createdInventory as InventoryItem;
-      }
-
-      const nextQuantity = Number(inventoryItem.quantity || 0) + receiptQuantity;
-      const { error: inventoryError } = await supabase
-        .from('inventory')
-        .update({
-          quantity: nextQuantity,
-          unit_cost: Number(row.unit_price || inventoryItem.unit_cost || 0),
-          supplier_id: row.supplier_id || inventoryItem.supplier_id,
-        })
-        .eq('id', inventoryItem.id);
-      if (inventoryError) throw inventoryError;
-
-      const receivedAt = new Date().toISOString();
-      const { error: movementError } = await supabase.from('inventory_movements').insert([
-        {
-          inventory_id: inventoryItem.id,
-          movement_type: 'received',
-          quantity: receiptQuantity,
-          unit_cost: Number(row.unit_price || 0),
-          source_module: 'procurement',
-          reference_id: row.id,
-          movement_date: receivedAt,
-          notes: `Procurement receipt for ${row.item_name}`,
-        },
-      ]);
-      if (movementError) throw movementError;
-
-      const { error: procurementError } = await supabase
-        .from('procurement')
-        .update({
-          status: 'received',
-          received_at: receivedAt,
-          inventory_id: inventoryItem.id,
-        })
-        .eq('id', row.id);
-      if (procurementError) throw procurementError;
-    },
+    mutationFn: (row: ProcurementRow) => api.post(`/procurement/showcase/${row.id}/receive`, {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['procurement'] });
       queryClient.invalidateQueries({ queryKey: ['inventory'] });
