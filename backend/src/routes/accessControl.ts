@@ -30,7 +30,7 @@ export const SUBSYSTEMS = [
   { key: 'settings',          label: 'Settings & Access Control' },
 ];
 
-const isAdmin = requireRole('admin');
+const isAdmin = requireRole('super_admin', 'admin');
 
 // GET /api/v1/access-control/subsystems
 router.get('/subsystems', isAdmin, async (req, res) => {
@@ -194,6 +194,7 @@ function generatePassword(): string {
 
 const ELIGIBLE_JOB_TITLES = new Set([
   'farm manager', 'asset manager', 'marketing manager',
+  'sales customer officer', 'sales_customer_officer',
   'human resource', 'accountant', 'procurement', 'field supervisor',
 ]);
 

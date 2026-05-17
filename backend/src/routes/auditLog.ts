@@ -4,7 +4,7 @@ import { requireAuth, requireRole } from '../middleware/auth';
 
 const router = Router();
 router.use(requireAuth);
-const isAdmin = requireRole('admin');
+const isAdmin = requireRole('super_admin', 'admin');
 
 // GET /api/v1/audit-log
 // Query params: eventType, subsystem, dateRange (last7|last30|last90), page, limit, format=csv

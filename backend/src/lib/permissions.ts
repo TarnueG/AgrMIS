@@ -1,10 +1,19 @@
 import prisma from './prisma';
 
-const ADMIN_ROLES = new Set(['admin']);
+const ADMIN_ROLES = new Set(['super_admin', 'admin']);
 
 export const VALID_ROLE_NAMES = new Set([
-  'admin', 'field_supervisor', 'asset_manager', 'production_manager',
-  'accountant', 'marketing_manager', 'human_resource', 'customer',
+  'super_admin',
+  'admin',
+  'farm_manager',
+  'field_supervisor',
+  'asset_manager',
+  'production_manager',
+  'accountant',
+  'sales_customer_officer',
+  'marketing_manager',
+  'human_resource',
+  'customer',
 ]);
 
 export interface SubsystemAccess {

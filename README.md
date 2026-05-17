@@ -60,6 +60,15 @@ This project is built with:
 - shadcn-ui
 - Tailwind CSS
 
+## Demo accounts
+
+After running the backend permission seed and `backend/prisma/seed.ts`, the default demo users are:
+
+- `admin@agritech.local / password123` -> `super_admin`
+- `manager@agritech.local / password123` -> `farm_manager`
+- `sales@agritech.local / password123` -> `sales_customer_officer`
+- `customer@agritech.local / password123` -> `customer`
+
 ## How can I deploy this project?
 
 Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.

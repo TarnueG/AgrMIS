@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { isUserActive } from '../lib/userStatus';
-import { getPermissions } from '../lib/permissions';
+import { getPermissions, isAdminRole } from '../lib/permissions';
 
 export interface AuthUser {
   userId: string;
@@ -62,7 +62,7 @@ export function requirePermission(subsystem: string, action: 'view' | 'create' |
       return res.status(401).json({ error: 'Authentication required', code: 'AUTH_REQUIRED' });
     }
     // Admins bypass all CRUD permission checks
-    if (req.user.roleName === 'admin') return next();
+    if (isAdminRole(req.user.roleName)) return next();
 
     try {
       const perms = await getPermissions(req.user.roleId, req.user.roleName, req.user.farmId);

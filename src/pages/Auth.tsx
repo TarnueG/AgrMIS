@@ -28,7 +28,7 @@ export default function Auth() {
   }
 
   if (user) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/" replace />;
   }
 
   const validate = (data: { identifier: string; password: string }, prefix: string) => {
@@ -54,7 +54,7 @@ export default function Auth() {
         variant: 'destructive',
       });
     } else {
-      navigate('/dashboard');
+      navigate('/');
     }
   };
 

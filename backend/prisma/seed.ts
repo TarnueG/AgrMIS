@@ -1,23 +1,191 @@
+import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
+
+dotenv.config();
 
 const prisma = new PrismaClient();
 
 const FARM_ID = '00000000-0000-0000-0000-000000000001';
-const ADMIN_USER_ID = '00000000-0000-0000-0000-000000000002';
-const ADMIN_EMPLOYEE_ID = '00000000-0000-0000-0000-000000000003';
+
+const USERS = {
+  superAdmin: {
+    userId: '00000000-0000-0000-0000-000000000002',
+    employeeId: '00000000-0000-0000-0000-000000000003',
+    email: 'admin@agritech.local',
+    password: 'password123',
+    fullName: 'System Administrator',
+    role: 'super_admin',
+    username: 'admin',
+    jobTitle: 'System Administrator',
+    department: 'Administration',
+  },
+  farmManager: {
+    userId: '00000000-0000-0000-0000-000000000004',
+    employeeId: '00000000-0000-0000-0000-000000000005',
+    email: 'manager@agritech.local',
+    password: 'password123',
+    fullName: 'Farm Manager',
+    role: 'farm_manager',
+    username: 'manager',
+    jobTitle: 'Farm Manager',
+    department: 'Operations',
+  },
+  salesOfficer: {
+    userId: '00000000-0000-0000-0000-000000000006',
+    employeeId: '00000000-0000-0000-0000-000000000007',
+    email: 'sales@agritech.local',
+    password: 'password123',
+    fullName: 'Sales Officer',
+    role: 'sales_customer_officer',
+    username: 'sales',
+    jobTitle: 'Sales Customer Officer',
+    department: 'Sales',
+  },
+  customer: {
+    userId: '00000000-0000-0000-0000-000000000008',
+    customerId: '00000000-0000-0000-0000-000000000009',
+    email: 'customer@agritech.local',
+    password: 'password123',
+    fullName: 'Demo Customer',
+    role: 'customer',
+    username: 'customer',
+    customerType: 'retailer',
+  },
+} as const;
+
+async function ensureRole(name: string) {
+  const role = await prisma.roles.findFirst({ where: { name } });
+  if (!role) {
+    throw new Error(`Role '${name}' not found. Run the permission seed before backend/prisma/seed.ts.`);
+  }
+  return role;
+}
+
+async function upsertEmployeeUser(config: {
+  userId: string;
+  employeeId: string;
+  email: string;
+  password: string;
+  fullName: string;
+  role: string;
+  username: string;
+  jobTitle: string;
+  department: string;
+}) {
+  const role = await ensureRole(config.role);
+  const passwordHash = await bcrypt.hash(config.password, 12);
+
+  const user = await prisma.users.upsert({
+    where: { id: config.userId },
+    update: {
+      role_id: role.id,
+      full_name: config.fullName,
+      email: config.email,
+      username: config.username,
+      password_hash: passwordHash,
+      is_active: true,
+      deleted_at: null,
+      deactivated_at: null,
+    },
+    create: {
+      id: config.userId,
+      role_id: role.id,
+      full_name: config.fullName,
+      email: config.email,
+      username: config.username,
+      password_hash: passwordHash,
+    },
+  });
+
+  await prisma.employees.upsert({
+    where: { id: config.employeeId },
+    update: {
+      user_id: user.id,
+      farm_id: FARM_ID,
+      full_name: config.fullName,
+      employment_type: 'permanent',
+      job_title: config.jobTitle,
+      department: config.department,
+      email: config.email,
+      status: 'active',
+      deleted_at: null,
+    },
+    create: {
+      id: config.employeeId,
+      user_id: user.id,
+      farm_id: FARM_ID,
+      full_name: config.fullName,
+      employment_type: 'permanent',
+      job_title: config.jobTitle,
+      department: config.department,
+      email: config.email,
+      status: 'active',
+      personnel_id: config.username.toUpperCase(),
+    },
+  });
+}
+
+async function upsertCustomerUser(config: {
+  userId: string;
+  customerId: string;
+  email: string;
+  password: string;
+  fullName: string;
+  role: string;
+  username: string;
+  customerType: string;
+}) {
+  const role = await ensureRole(config.role);
+  const passwordHash = await bcrypt.hash(config.password, 12);
+
+  await prisma.customers.upsert({
+    where: { id: config.customerId },
+    update: {
+      farm_id: FARM_ID,
+      name: config.fullName,
+      email: config.email,
+      customer_type: config.customerType,
+      is_active: true,
+      deleted_at: null,
+      deactivated_at: null,
+    },
+    create: {
+      id: config.customerId,
+      farm_id: FARM_ID,
+      name: config.fullName,
+      email: config.email,
+      customer_type: config.customerType,
+      is_active: true,
+    },
+  });
+
+  await prisma.users.upsert({
+    where: { id: config.userId },
+    update: {
+      role_id: role.id,
+      full_name: config.fullName,
+      email: config.email,
+      username: config.username,
+      password_hash: passwordHash,
+      linked_customer_id: config.customerId,
+      is_active: true,
+      deleted_at: null,
+      deactivated_at: null,
+    },
+    create: {
+      id: config.userId,
+      role_id: role.id,
+      full_name: config.fullName,
+      email: config.email,
+      username: config.username,
+      password_hash: passwordHash,
+      linked_customer_id: config.customerId,
+    },
+  });
+}
 
 async function main() {
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@agritech.local';
-  const adminPassword = process.env.ADMIN_PASSWORD || 'Admin@1234';
-
-  // Roles are already seeded by amis_schema.sql — just verify
-  const adminRole = await prisma.roles.findFirst({ where: { name: 'admin' } });
-  if (!adminRole) {
-    throw new Error('Admin role not found. Run docs/amis_schema.sql against AMIS_DB first.');
-  }
-
-  // Default farm
   await prisma.farm_profiles.upsert({
     where: { id: FARM_ID },
     update: {},
@@ -29,42 +197,23 @@ async function main() {
     },
   });
 
-  // Admin user
-  const passwordHash = await bcrypt.hash(adminPassword, 12);
-  const admin = await prisma.users.upsert({
-    where: { id: ADMIN_USER_ID },
-    update: {},
-    create: {
-      id: ADMIN_USER_ID,
-      role_id: adminRole.id,
-      full_name: 'System Administrator',
-      email: adminEmail,
-      password_hash: passwordHash,
-    },
-  });
-
-  // Link admin to farm via employees so farm context resolves on login
-  await prisma.employees.upsert({
-    where: { id: ADMIN_EMPLOYEE_ID },
-    update: {},
-    create: {
-      id: ADMIN_EMPLOYEE_ID,
-      user_id: admin.id,
-      farm_id: FARM_ID,
-      full_name: 'System Administrator',
-      employment_type: 'permanent',
-      job_title: 'System Administrator',
-      department: 'Administration',
-    },
-  });
+  await upsertEmployeeUser(USERS.superAdmin);
+  await upsertEmployeeUser(USERS.farmManager);
+  await upsertEmployeeUser(USERS.salesOfficer);
+  await upsertCustomerUser(USERS.customer);
 
   console.log('\nSeed complete.');
-  console.log('Login with:');
-  console.log('  Email   :', adminEmail);
-  console.log('  Password:', adminPassword);
-  console.log('\nChange the password after first login.\n');
+  console.log('Demo logins:');
+  console.log(`  super_admin            ${USERS.superAdmin.email} / ${USERS.superAdmin.password}`);
+  console.log(`  farm_manager           ${USERS.farmManager.email} / ${USERS.farmManager.password}`);
+  console.log(`  sales_customer_officer ${USERS.salesOfficer.email} / ${USERS.salesOfficer.password}`);
+  console.log(`  customer               ${USERS.customer.email} / ${USERS.customer.password}`);
+  console.log('');
 }
 
 main()
-  .catch((e) => { console.error(e); process.exit(1); })
+  .catch((error) => {
+    console.error(error);
+    process.exit(1);
+  })
   .finally(() => prisma.$disconnect());

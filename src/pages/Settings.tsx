@@ -1,6 +1,6 @@
-import { useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api, { getAccessToken } from '@/lib/api';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -1230,11 +1230,25 @@ function AccessControlContent() {
 // ─── Settings (main two-pane layout) ─────────────────────────────────────────
 
 export function Settings() {
-  const [panel, setPanel] = useState<Panel>('profile');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialPanel = (searchParams.get('panel') as Panel | null) ?? 'profile';
+  const [panel, setPanel] = useState<Panel>(initialPanel);
   const [auditUserId, setAuditUserId] = useState<string | undefined>();
   const { signOut } = useAuth();
   const { theme } = useTheme();
   const { isAdmin } = usePermissions();
+
+  useEffect(() => {
+    const nextPanel = (searchParams.get('panel') as Panel | null) ?? 'profile';
+    setPanel(nextPanel);
+  }, [searchParams]);
+
+  const setPanelState = (nextPanel: Panel) => {
+    setPanel(nextPanel);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('panel', nextPanel);
+    setSearchParams(nextParams, { replace: true });
+  };
 
   const navSections = [
     {
@@ -1264,7 +1278,7 @@ export function Settings() {
 
   const handleNavAuditLog = (userId: string) => {
     setAuditUserId(userId);
-    setPanel('audit-log');
+    setPanelState('audit-log');
   };
 
   return (
@@ -1283,7 +1297,7 @@ export function Settings() {
                   {section.items.map((item) => (
                     <button
                       key={item.id}
-                      onClick={() => setPanel(item.id)}
+                      onClick={() => setPanelState(item.id)}
                       className={`w-full flex items-center gap-2 px-2 py-2 rounded-md text-sm transition-colors ${
                         panel === item.id
                           ? 'bg-sidebar-primary text-sidebar-primary-foreground'

@@ -48,11 +48,26 @@ function signRefreshToken(userId: string): string {
 }
 
 async function getFarmId(userId: string): Promise<string | null> {
+  const user = await prisma.users.findUnique({
+    where: { id: userId },
+    select: { linked_customer_id: true },
+  });
+
   const employee = await prisma.employees.findFirst({
     where: { user_id: userId, deleted_at: null },
     select: { farm_id: true },
   });
-  return employee?.farm_id ?? null;
+  if (employee?.farm_id) return employee.farm_id;
+
+  if (user?.linked_customer_id) {
+    const customer = await prisma.customers.findUnique({
+      where: { id: user.linked_customer_id },
+      select: { farm_id: true },
+    });
+    return customer?.farm_id ?? null;
+  }
+
+  return null;
 }
 
 async function checkPassword(password: string, stored: string): Promise<boolean> {

@@ -6,8 +6,10 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { ThemeProvider } from "@/hooks/useTheme";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import { useAuth } from "@/hooks/useAuth";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
+import CustomerPortal from "./pages/CustomerPortal";
 import Inventory from "./pages/Inventory";
 import Customers from "./pages/Customers";
 import Orders from "./pages/Orders";
@@ -23,8 +25,17 @@ import Marketing from "./pages/Marketing";
 import SalesOrderPoints from "./pages/SalesOrderPoints";
 import { Settings, AccessControl } from "./pages/Settings";
 import NotFound from "./pages/NotFound";
+import { isCustomerRole } from "./lib/roles";
 
 const queryClient = new QueryClient();
+
+function HomeRedirect() {
+  const { user, loading } = useAuth();
+
+  if (loading) return null;
+  if (!user) return <Navigate to="/auth" replace />;
+  return <Navigate to={isCustomerRole(user.role) ? "/customer" : "/dashboard"} replace />;
+}
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -35,10 +46,11 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/" element={<HomeRedirect />} />
             <Route path="/auth" element={<Auth />} />
 
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/customer" element={<ProtectedRoute><CustomerPortal /></ProtectedRoute>} />
             <Route path="/inventory" element={<ProtectedRoute subsystem="inventory"><Inventory /></ProtectedRoute>} />
             <Route path="/customers" element={<ProtectedRoute subsystem="crm"><Customers /></ProtectedRoute>} />
             <Route path="/orders" element={<ProtectedRoute subsystem="sales_order_points"><Orders /></ProtectedRoute>} />

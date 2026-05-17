@@ -1,10 +1,12 @@
 import prisma from '../lib/prisma';
 import { clearPermissionCache } from '../lib/permissions';
 
+const DEFAULT_FARM_ID = '00000000-0000-0000-0000-000000000001';
+
 type Perm = { view: boolean; create: boolean; edit: boolean; delete: boolean };
 
-const V: Perm = { view: true,  create: false, edit: false, delete: false };
-const F: Perm = { view: true,  create: true,  edit: true,  delete: true  };
+const V: Perm = { view: true, create: false, edit: false, delete: false };
+const F: Perm = { view: true, create: true, edit: true, delete: true };
 const N: Perm = { view: false, create: false, edit: false, delete: false };
 
 interface RoleDef {
@@ -15,9 +17,23 @@ interface RoleDef {
 
 const ROLES: RoleDef[] = [
   {
-    name: 'admin',
-    description: 'Full unrestricted system access',
+    name: 'super_admin',
+    description: 'Full unrestricted AMIS access',
     subsystems: {},
+  },
+  {
+    name: 'admin',
+    description: 'Legacy full unrestricted AMIS access',
+    subsystems: {},
+  },
+  {
+    name: 'farm_manager',
+    description: 'Farm-wide operational management across core modules',
+    subsystems: {
+      dashboard: F, inventory: F, procurement: F, crm: F, marketing: F,
+      sales_order_points: F, production: F, livestock: F, finance: F,
+      reports: F, human_capital: F, machinery: F, land_parcels: F, settings: V,
+    },
   },
   {
     name: 'field_supervisor',
@@ -58,8 +74,18 @@ const ROLES: RoleDef[] = [
     },
   },
   {
+    name: 'sales_customer_officer',
+    description: 'Sales, distribution, customer, and order management',
+    subsystems: {
+      dashboard: V, crm: F, marketing: F, sales_order_points: F,
+      reports: V, settings: V,
+      procurement: N, production: N, livestock: N, finance: N,
+      human_capital: N, machinery: N, land_parcels: N, inventory: N,
+    },
+  },
+  {
     name: 'marketing_manager',
-    description: 'Marketing, CRM, and sales order management',
+    description: 'Legacy marketing and customer operations role',
     subsystems: {
       dashboard: V, marketing: F, crm: F, sales_order_points: F,
       inventory: V, reports: V, settings: V,
@@ -78,32 +104,36 @@ const ROLES: RoleDef[] = [
   },
   {
     name: 'customer',
-    description: 'Customer portal — own orders and marketing',
+    description: 'Customer portal access only',
     subsystems: {
-      dashboard: V, sales_order_points: F, marketing: V, crm: V, inventory: V, settings: V,
+      dashboard: N, sales_order_points: F, marketing: V, settings: V,
       procurement: N, production: N, livestock: N, finance: N,
-      reports: N, human_capital: N, machinery: N, land_parcels: N,
+      reports: N, human_capital: N, machinery: N, land_parcels: N, crm: N, inventory: N,
     },
   },
 ];
 
-// Canonical set of valid role names
-export const VALID_ROLE_NAMES = new Set(ROLES.map(r => r.name));
+export const VALID_ROLE_NAMES = new Set(ROLES.map((role) => role.name));
 
-// Renamed roles: old_name -> new_canonical_name (users get reassigned, old role deleted)
 const ROLE_RENAMES: Record<string, string> = {
   accounting: 'accountant',
+  sales_officer: 'sales_customer_officer',
+  customer_officer: 'sales_customer_officer',
 };
 
 export async function seedPermissions(): Promise<void> {
   try {
-    const farm = await prisma.farm_profiles.findFirst({ where: { deleted_at: null } });
-    if (!farm) {
-      console.log('[seed] No farm found — skipping permission seed');
-      return;
-    }
+    const farm = await prisma.farm_profiles.upsert({
+      where: { id: DEFAULT_FARM_ID },
+      update: {},
+      create: {
+        id: DEFAULT_FARM_ID,
+        name: 'Agri-Tech Default Farm',
+        country: 'Liberia',
+        operational_sectors: ['crop', 'livestock', 'aquaculture'],
+      },
+    });
 
-    // Step 1: Upsert all 8 canonical roles and their subsystem permissions
     for (const def of ROLES) {
       const role = await prisma.roles.upsert({
         where: { name: def.name },
@@ -111,26 +141,31 @@ export async function seedPermissions(): Promise<void> {
         create: { name: def.name, description: def.description },
       });
 
-      for (const [subsystem, p] of Object.entries(def.subsystems)) {
+      for (const [subsystem, perm] of Object.entries(def.subsystems)) {
         await (prisma as any).subsystem_permissions.upsert({
           where: { farm_id_role_id_subsystem: { farm_id: farm.id, role_id: role.id, subsystem } },
           update: {
-            can_view: p.view, can_create: p.create,
-            can_edit: p.edit, can_delete: p.delete,
+            can_view: perm.view,
+            can_create: perm.create,
+            can_edit: perm.edit,
+            can_delete: perm.delete,
             updated_at: new Date(),
           },
           create: {
-            farm_id: farm.id, role_id: role.id, subsystem,
-            can_view: p.view, can_create: p.create,
-            can_edit: p.edit, can_delete: p.delete,
+            farm_id: farm.id,
+            role_id: role.id,
+            subsystem,
+            can_view: perm.view,
+            can_create: perm.create,
+            can_edit: perm.edit,
+            can_delete: perm.delete,
           },
         });
       }
     }
 
-    // Step 2: Remove stale roles — reassign users first, then delete
     const allRoles = await prisma.roles.findMany();
-    const staleRoles = allRoles.filter(r => !VALID_ROLE_NAMES.has(r.name));
+    const staleRoles = allRoles.filter((role) => !VALID_ROLE_NAMES.has(role.name));
 
     if (staleRoles.length > 0) {
       const fallback = await prisma.roles.findFirstOrThrow({ where: { name: 'customer' } });
@@ -144,8 +179,9 @@ export async function seedPermissions(): Promise<void> {
           where: { role_id: stale.id },
           data: { role_id: reassignId },
         });
+
         if (affected.count > 0) {
-          console.log(`[seed] Reassigned ${affected.count} user(s) from '${stale.name}' → '${targetName}'`);
+          console.log(`[seed] Reassigned ${affected.count} user(s) from '${stale.name}' to '${targetName}'`);
         }
 
         await (prisma as any).subsystem_permissions.deleteMany({ where: { role_id: stale.id } });

@@ -2,6 +2,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Loader2 } from 'lucide-react';
+import { isCustomerRole } from '@/lib/roles';
 
 interface Props {
   children: React.ReactNode;
@@ -22,9 +23,11 @@ export function ProtectedRoute({ children, subsystem }: Props) {
 
   if (!user) return <Navigate to="/auth" replace />;
 
+  const fallbackPath = isCustomerRole(user.role) ? '/customer' : '/dashboard';
+
   // If a subsystem gate is specified, wait for permissions then check
   if (subsystem && !permsLoading && !canView(subsystem)) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={fallbackPath} replace />;
   }
 
   return <>{children}</>;

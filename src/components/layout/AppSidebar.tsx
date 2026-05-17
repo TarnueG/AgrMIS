@@ -1,24 +1,25 @@
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { useRef, useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '@/lib/api';
 import {
-  LayoutDashboard,
-  Users,
-  Wheat,
-  Tractor,
-  Package,
-  ShoppingCart,
-  Factory,
-  DollarSign,
   BarChart3,
+  ChevronDown,
+  ClipboardList,
+  DollarSign,
+  Factory,
+  LayoutDashboard,
+  Leaf,
+  LogOut,
+  Package,
   Settings,
   Shield,
+  ShoppingCart,
+  Tractor,
   Truck,
   UserCog,
-  ChevronDown,
-  LogOut,
-  Leaf,
+  Users,
+  Wheat,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -32,97 +33,89 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { useAuth } from '@/hooks/useAuth';
-import { usePermissions } from '@/hooks/usePermissions';
 import { Button } from '@/components/ui/button';
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import { useState } from 'react';
+import { useAuth } from '@/hooks/useAuth';
+import { usePermissions } from '@/hooks/usePermissions';
+import { isAdminRole, isCustomerRole } from '@/lib/roles';
 
-// Each leaf item declares which subsystem key gates its visibility.
-// Group items are visible if at least one child is visible.
-const menuItems = [
+type MenuLeaf = {
+  title: string;
+  icon: any;
+  path: string;
+  subsystem?: string;
+  adminOnly?: boolean;
+};
+
+type MenuGroup = {
+  title: string;
+  icon: any;
+  items: MenuLeaf[];
+};
+
+const INTERNAL_MENU: Array<MenuLeaf | MenuGroup> = [
+  { title: 'Dashboard', icon: LayoutDashboard, path: '/dashboard', subsystem: 'dashboard' },
+  { title: 'Inventory Management', icon: Package, path: '/inventory', subsystem: 'inventory' },
+  { title: 'Procurement', icon: Truck, path: '/procurement', subsystem: 'procurement' },
   {
-    title: 'Dashboard',
-    icon: LayoutDashboard,
-    path: '/dashboard',
-    subsystem: 'dashboard',
+    title: 'Sales & Distribution',
+    icon: ShoppingCart,
+    items: [
+      { title: 'Orders', icon: ShoppingCart, path: '/orders', subsystem: 'sales_order_points' },
+      { title: 'Sales & Order Points', icon: Factory, path: '/sales-order-points', subsystem: 'sales_order_points' },
+      { title: 'Marketing', icon: BarChart3, path: '/marketing', subsystem: 'marketing' },
+    ],
   },
+  { title: 'Customers / CRM', icon: Users, path: '/customers', subsystem: 'crm' },
+  {
+    title: 'Production Management',
+    icon: Factory,
+    items: [
+      { title: 'Production', icon: Factory, path: '/production', subsystem: 'production' },
+      { title: 'Livestock / Farm Ops', icon: Leaf, path: '/assets/livestock', subsystem: 'livestock' },
+    ],
+  },
+  { title: 'HR / Labor Management', icon: UserCog, path: '/employees', subsystem: 'human_capital' },
   {
     title: 'Asset Management',
     icon: Tractor,
     items: [
-      { title: 'Land Parcels', path: '/assets/land',      icon: Wheat,   subsystem: 'land_parcels' },
-      { title: 'Machinery',    path: '/assets/machinery', icon: Tractor, subsystem: 'machinery'    },
+      { title: 'Machinery', icon: Tractor, path: '/assets/machinery', subsystem: 'machinery' },
+      { title: 'Land Parcels', icon: Wheat, path: '/assets/land', subsystem: 'land_parcels' },
     ],
   },
-  {
-    title: 'Inventory',
-    icon: Package,
-    path: '/inventory',
-    subsystem: 'inventory',
-  },
-  {
-    title: 'Procurement',
-    icon: Truck,
-    path: '/procurement',
-    subsystem: 'procurement',
-  },
-  {
-    title: 'CRM',
-    icon: Users,
-    path: '/customers',
-    subsystem: 'crm',
-  },
-  {
-    title: 'Marketing',
-    icon: ShoppingCart,
-    items: [
-      { title: 'Marketing Dashboard',  path: '/marketing',          icon: ShoppingCart, subsystem: 'marketing'          },
-      { title: 'Sales & Order Points', path: '/sales-order-points', icon: Factory,      subsystem: 'sales_order_points' },
-    ],
-  },
-  {
-    title: 'Production',
-    icon: Factory,
-    items: [
-      { title: 'Production',          path: '/production',       icon: Factory, subsystem: 'production' },
-      { title: 'Livestock Dashboard', path: '/assets/livestock', icon: Leaf,    subsystem: 'livestock'  },
-    ],
-  },
-  {
-    title: 'Finance',
-    icon: DollarSign,
-    path: '/finance',
-    subsystem: 'finance',
-  },
-  {
-    title: 'Reports',
-    icon: BarChart3,
-    path: '/reports',
-    subsystem: 'reports',
-  },
-  {
-    title: 'Human Capital',
-    icon: UserCog,
-    path: '/employees',
-    subsystem: 'human_capital',
-  },
+  { title: 'Finance / Accounting', icon: DollarSign, path: '/finance', subsystem: 'finance' },
+  { title: 'Reports / Analytics', icon: BarChart3, path: '/reports', subsystem: 'reports' },
+  { title: 'Settings', icon: Settings, path: '/settings', subsystem: 'settings' },
+  { title: 'Access Control', icon: Shield, path: '/access-control', subsystem: 'settings', adminOnly: true },
+  { title: 'Audit Logs', icon: ClipboardList, path: '/settings?panel=audit-log', subsystem: 'settings', adminOnly: true },
+];
+
+const CUSTOMER_MENU: MenuLeaf[] = [
+  { title: 'Customer Portal', icon: LayoutDashboard, path: '/customer' },
+  { title: 'Sales & Order Points', icon: ShoppingCart, path: '/sales-order-points', subsystem: 'sales_order_points' },
+  { title: 'Marketing', icon: BarChart3, path: '/marketing', subsystem: 'marketing' },
+  { title: 'Settings', icon: Settings, path: '/settings', subsystem: 'settings' },
 ];
 
 export function AppSidebar() {
   const location = useLocation();
   const { signOut, user } = useAuth();
-  const { canView, isLoading: permsLoading } = usePermissions();
-  const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management', 'Marketing', 'Production']);
+  const { canView } = usePermissions();
+  const [openGroups, setOpenGroups] = useState<string[]>(['Sales & Distribution', 'Production Management', 'Asset Management']);
   const contentRef = useRef<HTMLDivElement>(null);
+  const customerRole = isCustomerRole(user?.role);
+  const adminRole = isAdminRole(user?.role);
+  const canSeeInventory = canView('inventory');
 
   const { data: alertData } = useQuery<{ count: number }>({
     queryKey: ['inventory-alert-count'],
     queryFn: () => api.get('/inventory/alerts/count'),
+    enabled: !customerRole && canSeeInventory,
     refetchInterval: 60_000,
   });
 
@@ -157,44 +150,56 @@ export function AppSidebar() {
 
   const toggleGroup = (title: string) => {
     saveScroll();
-    setOpenGroups(prev =>
-      prev.includes(title) ? prev.filter(g => g !== title) : [...prev, title]
+    setOpenGroups((prev) =>
+      prev.includes(title) ? prev.filter((group) => group !== title) : [...prev, title]
     );
   };
 
-  const isActive = (path: string) => location.pathname === path;
+  const isPathActive = (path: string) => {
+    const current = `${location.pathname}${location.search}`;
+    if (path.includes('?')) return current === path;
+    return location.pathname === path;
+  };
 
-  // Don't filter while permissions are loading — avoid flicker
-  const itemVisible = (subsystem: string) => permsLoading || canView(subsystem);
+  const leafVisible = (item: MenuLeaf) => {
+    if (item.adminOnly && !adminRole) return false;
+    if (!item.subsystem) return true;
+    return canView(item.subsystem);
+  };
 
-  const visibleItems = menuItems
-    .map(item => {
+  const menu = customerRole ? CUSTOMER_MENU : INTERNAL_MENU;
+  const visibleItems = menu
+    .map((item) => {
       if ('items' in item) {
-        const visibleChildren = item.items.filter(c => itemVisible(c.subsystem));
+        const visibleChildren = item.items.filter(leafVisible);
         return visibleChildren.length > 0 ? { ...item, items: visibleChildren } : null;
       }
-      return itemVisible(item.subsystem!) ? item : null;
+      return leafVisible(item) ? item : null;
     })
-    .filter(Boolean) as typeof menuItems;
+    .filter(Boolean) as Array<MenuLeaf | MenuGroup>;
+
+  const homePath = customerRole ? '/customer' : '/dashboard';
 
   return (
     <Sidebar className="border-r border-sidebar-border">
       <SidebarHeader className="border-b border-sidebar-border p-4">
-        <Link to="/dashboard" className="flex items-center gap-3">
+        <Link to={homePath} className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg gradient-primary glow-primary">
             <Leaf className="h-6 w-6 text-primary-foreground" />
           </div>
           <div>
             <h1 className="text-lg font-bold text-sidebar-foreground">Agri-Tech</h1>
-            <p className="text-xs text-sidebar-foreground/60">Farm Management</p>
+            <p className="text-xs text-sidebar-foreground/60">
+              {customerRole ? 'Customer Portal' : 'AMIS Internal System'}
+            </p>
           </div>
         </Link>
       </SidebarHeader>
 
       <SidebarContent ref={contentRef} onScroll={saveScroll} className="px-2 py-4">
         <SidebarGroup>
-          <SidebarGroupLabel className="text-sidebar-foreground/50 text-xs uppercase tracking-wider mb-2">
-            Main Menu
+          <SidebarGroupLabel className="mb-2 text-xs uppercase tracking-wider text-sidebar-foreground/50">
+            {customerRole ? 'Portal Menu' : 'Main Menu'}
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -213,9 +218,7 @@ export function AppSidebar() {
                             {item.title}
                           </span>
                           <ChevronDown
-                            className={`h-4 w-4 transition-transform ${
-                              openGroups.includes(item.title) ? 'rotate-180' : ''
-                            }`}
+                            className={`h-4 w-4 transition-transform ${openGroups.includes(item.title) ? 'rotate-180' : ''}`}
                           />
                         </SidebarMenuButton>
                       </CollapsibleTrigger>
@@ -224,11 +227,7 @@ export function AppSidebar() {
                           {item.items.map((subItem) => (
                             <Link key={subItem.path} to={subItem.path}>
                               <SidebarMenuButton
-                                className={`w-full ${
-                                  isActive(subItem.path)
-                                    ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                                    : 'hover:bg-sidebar-accent'
-                                }`}
+                                className={`w-full ${isPathActive(subItem.path) ? 'bg-sidebar-primary text-sidebar-primary-foreground' : 'hover:bg-sidebar-accent'}`}
                               >
                                 <subItem.icon className="h-4 w-4" />
                                 {subItem.title}
@@ -240,19 +239,15 @@ export function AppSidebar() {
                     </SidebarMenuItem>
                   </Collapsible>
                 ) : (
-                  <SidebarMenuItem key={(item as any).path}>
-                    <Link to={(item as any).path}>
+                  <SidebarMenuItem key={item.path}>
+                    <Link to={item.path}>
                       <SidebarMenuButton
-                        className={`w-full ${
-                          isActive((item as any).path)
-                            ? 'bg-sidebar-primary text-sidebar-primary-foreground'
-                            : 'hover:bg-sidebar-accent'
-                        }`}
+                        className={`w-full ${isPathActive(item.path) ? 'bg-sidebar-primary text-sidebar-primary-foreground' : 'hover:bg-sidebar-accent'}`}
                       >
                         <item.icon className="h-4 w-4" />
                         <span className="flex-1">{item.title}</span>
-                        {item.title === 'Inventory' && (alertData?.count ?? 0) > 0 && (
-                          <span className="ml-auto text-xs bg-destructive text-destructive-foreground rounded-full px-1.5 py-0.5 leading-none">
+                        {item.path === '/inventory' && (alertData?.count ?? 0) > 0 && (
+                          <span className="ml-auto rounded-full bg-destructive px-1.5 py-0.5 text-xs leading-none text-destructive-foreground">
                             {alertData!.count}
                           </span>
                         )}
@@ -267,42 +262,34 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border p-4">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="h-9 w-9 rounded-full bg-sidebar-accent overflow-hidden flex items-center justify-center shrink-0">
+        <div className="mb-3 flex items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-sidebar-accent">
             {profile?.profilePictureUrl ? (
               <img src={profile.profilePictureUrl} alt="Profile" className="h-full w-full object-cover" />
             ) : (
               <span className="text-xs font-bold text-sidebar-foreground">
                 {profile?.fullName
-                  ? profile.fullName.split(' ').map((p: string) => p[0]).slice(0, 2).join('').toUpperCase()
+                  ? profile.fullName.split(' ').map((part: string) => part[0]).slice(0, 2).join('').toUpperCase()
                   : (user?.email?.[0] ?? 'U').toUpperCase()}
               </span>
             )}
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-sidebar-foreground truncate capitalize">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium capitalize text-sidebar-foreground">
               {profile?.role?.replace(/_/g, ' ') ?? user?.email?.split('@')[0] ?? ''}
             </p>
-            <p className="text-xs text-sidebar-foreground/60 truncate">
-              {profile?.employee?.jobTitle ?? 'Staff'}
+            <p className="truncate text-xs text-sidebar-foreground/60">
+              {profile?.employee?.jobTitle ?? (customerRole ? 'Customer' : 'Staff')}
             </p>
           </div>
         </div>
-        <Link to="/settings" className="block mb-1">
-          <SidebarMenuButton
-            className={`w-full ${isActive('/settings') ? 'bg-sidebar-primary text-sidebar-primary-foreground' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent'}`}
-          >
-            <Settings className="h-4 w-4 mr-2" />
-            Settings
-          </SidebarMenuButton>
-        </Link>
         <Button
           variant="ghost"
           size="sm"
           onClick={signOut}
-          className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+          className="w-full justify-start text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
         >
-          <LogOut className="h-4 w-4 mr-2" />
+          <LogOut className="mr-2 h-4 w-4" />
           Sign Out
         </Button>
       </SidebarFooter>
