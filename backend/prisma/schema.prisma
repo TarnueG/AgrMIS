@@ -1072,12 +1072,15 @@ model fish_ponds {
   id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   farm_id            String    @db.Uuid
   pond_id            String    @db.VarChar(60)
+  fish_type          String?   @db.VarChar(100)
   length_m           Decimal?  @db.Decimal(10, 2)
   width_m            Decimal?  @db.Decimal(10, 2)
   location           String?   @db.VarChar(200)
   capacity           Int       @default(2000)
   current_fish_count Int       @default(0)
   status             String    @default("available") @db.VarChar(20)
+  stocking_date      DateTime? @db.Date
+  expected_harvest_date DateTime? @db.Date
   created_by         String    @db.Uuid
   created_at         DateTime  @default(now()) @db.Timestamptz(6)
   updated_at         DateTime  @default(now()) @db.Timestamptz(6)
@@ -1111,6 +1114,7 @@ model mortality_records {
   record_id       String?  @db.VarChar(60)
   pen_or_location String?  @db.VarChar(100)
   cause_of_death  String?
+  quantity        Int      @default(1)
   status          String   @default("dead") @db.VarChar(20)
   date_recorded   DateTime @default(dbgenerated("CURRENT_DATE")) @db.Date
   source_table    String?  @db.VarChar(30)
@@ -1121,6 +1125,46 @@ model mortality_records {
 
   @@index([farm_id], map: "idx_mortality_farm")
   @@index([livestock_type], map: "idx_mortality_type")
+}
+
+model farm_ops_health_logs {
+  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  farm_id                 String    @db.Uuid
+  reference_kind          String    @db.VarChar(20)
+  reference_id            String?   @db.Uuid
+  reference_code          String?   @db.VarChar(80)
+  issue                   String
+  treatment               String?
+  medicine_used           String?   @db.VarChar(150)
+  inventory_stock_item_id String?   @db.Uuid
+  inventory_quantity_used Decimal?  @db.Decimal(14, 3)
+  vet_staff_responsible   String?   @db.VarChar(150)
+  recovery_status         String?   @db.VarChar(30)
+  log_date                DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  next_check_date         DateTime? @db.Date
+  notes                   String?
+  created_by              String    @db.Uuid
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime  @default(now()) @db.Timestamptz(6)
+}
+
+model farm_ops_feed_usage_logs {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  farm_id            String    @db.Uuid
+  reference_kind     String    @db.VarChar(20)
+  reference_id       String?   @db.Uuid
+  reference_code     String?   @db.VarChar(80)
+  group_name         String
+  feed_stock_item_id String?   @db.Uuid
+  feed_item_name     String    @db.VarChar(150)
+  quantity_used      Decimal   @db.Decimal(14, 3)
+  unit               String    @db.VarChar(30)
+  inventory_source   String?
+  log_date           DateTime  @default(dbgenerated("CURRENT_DATE")) @db.Date
+  notes              String?
+  recorded_by        String    @db.Uuid
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @default(now()) @db.Timestamptz(6)
 }
 
 model pigs {
