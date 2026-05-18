@@ -1,858 +1,823 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  AlertTriangle,
+  ArrowRight,
+  BadgeDollarSign,
+  BriefcaseBusiness,
+  CalendarClock,
+  CheckCircle2,
+  Clock3,
+  Coins,
+  Crown,
+  DollarSign,
+  HardHat,
+  Leaf,
+  ShieldCheck,
+  Tractor,
+  UserCheck,
+  UserMinus,
+  Users,
+  Wheat,
+} from 'lucide-react';
+import { addDays, format, subDays } from 'date-fns';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+
 import api from '@/lib/api';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Users, CalendarDays, ClipboardCheck, UserCheck, UserX, Briefcase, HardHat, DollarSign, Search, Pencil, Ban } from 'lucide-react';
-import { format } from 'date-fns';
 import { usePermissions } from '@/hooks/usePermissions';
 
-type EmpView = 'contractor' | 'suspension' | 'active' | 'inactive' | 'employee' | 'daily' | 'salary' | 'attendance_rate' | 'daily_log' | null;
+type Summary = {
+  totalWorkforce: number;
+  presentToday: number;
+  absentOnLeave: number;
+  dailyWorkersClockedIn: number;
+  openFieldTasks: number;
+  payrollDue: number;
+  contractorsActive: number;
+  laborCostThisMonth: number;
+  overtimeHours: number;
+  supervisorsAssigned: number;
+};
 
-const ns = 'w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground';
+type Personnel = {
+  id: string;
+  personnelId: string | null;
+  fullName: string;
+  workerType: string;
+  sector: string | null;
+  job_title: string | null;
+  supervisor: string | null;
+  phone: string | null;
+  hireDate: string | null;
+  status: string;
+  currentAssignment: string | null;
+};
 
-const JOB_TITLES = ['Farm Manager', 'Asset Manager', 'Marketing Manager', 'Human Resource', 'Accounting', 'Procurement', 'Field Supervisor', 'Mechanic', 'Transporter', 'Regular Staff'];
-const SECTORS_NEW = ['Crops', 'Livestock', 'Administration', 'General'];
-const EMP_TYPES_NEW = ['employee', 'daily'];
-const CONTRACT_SECTORS = ['crops', 'livestock'];
+type AttendanceRow = {
+  id: string | null;
+  employeeId: string;
+  workerName: string;
+  sector: string | null;
+  attendanceStatus: string;
+  checkIn: string | null;
+  checkOut: string | null;
+  hoursWorked: number;
+  late: boolean;
+  recordedBy: string | null;
+};
+
+type TaskRow = {
+  id: string;
+  task_title: string;
+  sector: string | null;
+  workerName: string | null;
+  supervisor: string | null;
+  due_date: string | null;
+  priority: string;
+  status: string;
+  workflowStatus: 'unassigned' | 'assigned' | 'in_progress' | 'completed' | 'overdue';
+  notes: string | null;
+  description: string | null;
+};
+
+type PayrollRow = {
+  id: string;
+  employeeId: string;
+  worker: string;
+  payType: string;
+  daysWorked: number;
+  hoursWorked: number;
+  overtime: number;
+  rate: number;
+  grossPay: number;
+  deductions: number;
+  netPay: number;
+  paymentStatus: string;
+  workerType: string;
+};
+
+type LeaveRow = {
+  id: string;
+  worker: string | null;
+  type: string;
+  startDate: string;
+  endDate: string;
+  approvalStatus: string;
+  notes: string | null;
+};
+
+const currency = (value: number) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value || 0);
+
+function metricTone(tone: 'green' | 'amber' | 'blue' | 'red' | 'slate') {
+  return {
+    green: 'border-emerald-500/20 bg-emerald-500/10',
+    amber: 'border-amber-500/20 bg-amber-500/10',
+    blue: 'border-sky-500/20 bg-sky-500/10',
+    red: 'border-rose-500/20 bg-rose-500/10',
+    slate: 'border-border bg-card/80',
+  }[tone];
+}
 
 function statusBadge(status: string) {
-  const map: Record<string, string> = {
-    active: 'bg-success/20 text-success',
-    inactive: 'bg-muted text-muted-foreground',
-    suspended: 'bg-warning/20 text-warning',
+  const key = status.toLowerCase();
+  const styles: Record<string, string> = {
+    active: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20',
+    suspended: 'bg-amber-500/15 text-amber-300 border-amber-500/20',
+    inactive: 'bg-rose-500/15 text-rose-300 border-rose-500/20',
+    present: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20',
+    absent: 'bg-rose-500/15 text-rose-300 border-rose-500/20',
+    leave: 'bg-sky-500/15 text-sky-300 border-sky-500/20',
+    half_day: 'bg-amber-500/15 text-amber-300 border-amber-500/20',
+    pending: 'bg-amber-500/15 text-amber-300 border-amber-500/20',
+    approved: 'bg-sky-500/15 text-sky-300 border-sky-500/20',
+    paid: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20',
+    assigned: 'bg-sky-500/15 text-sky-300 border-sky-500/20',
+    in_progress: 'bg-amber-500/15 text-amber-300 border-amber-500/20',
+    completed: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/20',
+    overdue: 'bg-rose-500/15 text-rose-300 border-rose-500/20',
+    rejected: 'bg-rose-500/15 text-rose-300 border-rose-500/20',
   };
-  return map[status] ?? 'bg-muted';
+  return <Badge className={styles[key] ?? 'bg-muted text-muted-foreground border-border'}>{status.replace('_', ' ')}</Badge>;
 }
 
-function isImmutable(emp: any) {
-  if (!emp.terminated_at) return false;
-  return (Date.now() - new Date(emp.terminated_at).getTime()) / 3600000 >= 48;
+function MetricCard({
+  title,
+  value,
+  detail,
+  icon: Icon,
+  tone,
+}: {
+  title: string;
+  value: string | number;
+  detail: string;
+  icon: typeof Users;
+  tone: 'green' | 'amber' | 'blue' | 'red' | 'slate';
+}) {
+  return (
+    <Card className={`border ${metricTone(tone)}`}>
+      <CardContent className="flex min-h-[92px] items-start justify-between gap-3 p-4">
+        <div className="space-y-1">
+          <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{title}</p>
+          <p className="text-2xl font-bold text-white">{value}</p>
+          <p className="text-xs text-muted-foreground">{detail}</p>
+        </div>
+        <div className="rounded-lg border border-white/10 bg-black/20 p-2">
+          <Icon className="h-4 w-4 text-white" />
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
-const BLANK_EMP = { fullName: '', dateOfBirth: '', placeOfBirth: '', employmentType: 'employee', sector: 'General', jobTitle: '', email: '', phone: '', address: '', dateHired: '', salaryAmount: '', bankId: '' };
-const BLANK_CONTRACT = { contractorName: '', contractType: '', sector: 'crops', amountCharged: '', description: '', bankId: '', startDate: '', endDate: '' };
-const BLANK_SUSPEND = { suspensionReason: '', suspensionExpiresAt: '' };
+function TaskColumn({
+  title,
+  tasks,
+  accent,
+  onAdvance,
+}: {
+  title: string;
+  tasks: TaskRow[];
+  accent: string;
+  onAdvance: (task: TaskRow) => void;
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card/70 p-3">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={`h-2.5 w-2.5 rounded-full ${accent}`} />
+          <p className="text-sm font-semibold text-white">{title}</p>
+        </div>
+        <Badge className="border-border bg-muted text-muted-foreground">{tasks.length}</Badge>
+      </div>
+      <div className="space-y-3">
+        {tasks.map((task) => (
+          <div key={task.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-white">{task.task_title}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{task.description || task.notes || 'No field note recorded'}</p>
+              </div>
+              {statusBadge(task.priority)}
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+              <div>Sector: <span className="capitalize text-white">{task.sector || 'general'}</span></div>
+              <div>Worker: <span className="text-white">{task.workerName || 'Unassigned'}</span></div>
+              <div>Supervisor: <span className="text-white">{task.supervisor || 'Pending'}</span></div>
+              <div>Due: <span className="text-white">{task.due_date ? format(new Date(task.due_date), 'MMM d') : 'Open'}</span></div>
+            </div>
+            {task.workflowStatus !== 'completed' && (
+              <Button size="sm" variant="outline" className="mt-3 w-full border-border text-white" onClick={() => onAdvance(task)}>
+                Advance Task
+              </Button>
+            )}
+          </div>
+        ))}
+        {!tasks.length && <div className="rounded-lg border border-dashed border-border/70 p-4 text-center text-xs text-muted-foreground">No tasks in this lane.</div>}
+      </div>
+    </div>
+  );
+}
 
 export default function Employees() {
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { canCreate, canEdit, canDelete } = usePermissions();
+  const { canCreate, canEdit } = usePermissions();
 
-  const [view, setView] = useState<EmpView>(null);
-  const [personnelSearch, setPersonnelSearch] = useState('');
-  const [attendTypeFilter, setAttendTypeFilter] = useState('all');
-  const [salaryMonthFilter, setSalaryMonthFilter] = useState('');
-  const [dailyLogSelected, setDailyLogSelected] = useState<Set<string>>(new Set());
+  const [workerTab, setWorkerTab] = useState('all');
+  const [search, setSearch] = useState('');
+  const [payMonth] = useState(format(new Date(), 'yyyy-MM'));
 
-  const [isAddOpen, setIsAddOpen] = useState(false);
-  const [editEmp, setEditEmp] = useState<any>(null);
-  const [suspendTarget, setSuspendTarget] = useState<any>(null);
-  const [empForm, setEmpForm] = useState({ ...BLANK_EMP });
-  const [contractForm, setContractForm] = useState({ ...BLANK_CONTRACT });
-  const [suspendForm, setSuspendForm] = useState({ ...BLANK_SUSPEND });
-
-  const { data: stats } = useQuery<any>({
-    queryKey: ['hr-stats'],
-    queryFn: () => api.get('/hr/stats'),
-    refetchInterval: 60_000,
+  const { data: summary } = useQuery<Summary>({
+    queryKey: ['hr-summary'],
+    queryFn: () => api.get('/hr/summary'),
+    refetchInterval: 60000,
   });
 
-  const { data: employees = [] } = useQuery<any[]>({
-    queryKey: ['employees-all'],
-    queryFn: () => api.get('/hr/employees'),
-    refetchInterval: 30_000,
+  const { data: personnel = [] } = useQuery<Personnel[]>({
+    queryKey: ['hr-personnel'],
+    queryFn: () => api.get('/hr/personnel'),
   });
 
-  const { data: contractors = [] } = useQuery<any[]>({
-    queryKey: ['hr-contractors'],
-    queryFn: () => api.get('/hr/contractors'),
+  const { data: attendance = [] } = useQuery<AttendanceRow[]>({
+    queryKey: ['hr-attendance-today'],
+    queryFn: () => api.get(`/hr/attendance?date=${format(new Date(), 'yyyy-MM-dd')}`),
+    refetchInterval: 30000,
   });
 
-  const { data: attendanceSummary = [] } = useQuery<any[]>({
-    queryKey: ['attendance-summary', attendTypeFilter],
-    queryFn: () => {
-      const p = attendTypeFilter !== 'all' ? `?employment_type=${attendTypeFilter}` : '';
-      return api.get(`/hr/attendance-summary${p}`);
+  const { data: tasks = [] } = useQuery<TaskRow[]>({
+    queryKey: ['hr-tasks'],
+    queryFn: () => api.get('/hr/tasks'),
+  });
+
+  const { data: payroll = [] } = useQuery<PayrollRow[]>({
+    queryKey: ['hr-payroll', payMonth],
+    queryFn: () => api.get(`/hr/payroll?month=${payMonth}`),
+  });
+
+  const { data: leave = [] } = useQuery<LeaveRow[]>({
+    queryKey: ['hr-leave'],
+    queryFn: () => api.get('/hr/leave'),
+  });
+
+  const { data: weeklyAttendance = [] } = useQuery<any[]>({
+    queryKey: ['hr-attendance-week'],
+    queryFn: async () => {
+      const dates = Array.from({ length: 7 }, (_, index) => format(subDays(new Date(), 6 - index), 'yyyy-MM-dd'));
+      const rows = await Promise.all(dates.map(async (date) => {
+        const daily = await api.get<AttendanceRow[]>(`/hr/attendance?date=${date}`);
+        const present = daily.filter((item) => item.attendanceStatus === 'present' || item.attendanceStatus === 'half_day').length;
+        const absent = daily.filter((item) => item.attendanceStatus === 'absent' || item.attendanceStatus === 'leave').length;
+        return { date: format(new Date(date), 'EEE'), present, absent };
+      }));
+      return rows;
     },
   });
 
-  const { data: salaryData = [] } = useQuery<any[]>({
-    queryKey: ['hr-salary'],
-    queryFn: () => api.get('/hr/salary'),
-  });
-
-  const addEmployee = useMutation({
-    mutationFn: (d: typeof empForm) => api.post('/hr/employees', {
-      fullName: d.fullName, dateOfBirth: d.dateOfBirth || undefined, placeOfBirth: d.placeOfBirth || undefined,
-      employmentType: d.employmentType, sector: d.sector.toLowerCase(), jobTitle: d.jobTitle || undefined,
-      email: d.email || undefined, phone: d.phone || undefined, address: d.address || undefined,
-      dateHired: d.dateHired || undefined, salaryAmount: d.salaryAmount ? Number(d.salaryAmount) : undefined, bankId: d.bankId || undefined,
-    }),
+  const markAttendance = useMutation({
+    mutationFn: (payload: { employeeId: string; status: 'present' | 'absent'; clockIn?: string }) => api.post('/hr/attendance', payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['employees-all'] });
-      qc.invalidateQueries({ queryKey: ['hr-stats'] });
-      toast({ title: 'Personnel added' });
-      setIsAddOpen(false);
-      setEmpForm({ ...BLANK_EMP });
+      qc.invalidateQueries({ queryKey: ['hr-attendance-today'] });
+      qc.invalidateQueries({ queryKey: ['hr-attendance-week'] });
+      qc.invalidateQueries({ queryKey: ['hr-summary'] });
+      toast({ title: 'Attendance updated' });
     },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (error: any) => toast({ title: error.message || 'Failed to update attendance', variant: 'destructive' }),
   });
 
-  const editEmployee = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => api.patch(`/hr/employees/${id}`, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees-all'] }); toast({ title: 'Updated' }); setEditEmp(null); },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
-  });
-
-  const terminate = useMutation({
-    mutationFn: (id: string) => api.patch(`/hr/employees/${id}/terminate`, {}),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees-all'] }); qc.invalidateQueries({ queryKey: ['hr-stats'] }); toast({ title: 'Personnel terminated' }); },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
-  });
-
-  const unterminate = useMutation({
-    mutationFn: (id: string) => api.patch(`/hr/employees/${id}/unterminate`, {}),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees-all'] }); qc.invalidateQueries({ queryKey: ['hr-stats'] }); toast({ title: 'Personnel restored' }); },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
-  });
-
-  const suspendMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: any }) => api.patch(`/hr/employees/${id}/suspend`, data),
+  const clockOutWorker = useMutation({
+    mutationFn: ({ id }: { id: string }) => api.patch(`/hr/attendance/${id}`, { clockOut: format(new Date(), 'HH:mm') }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['employees-all'] });
-      qc.invalidateQueries({ queryKey: ['hr-stats'] });
-      toast({ title: 'Personnel suspended' });
-      setSuspendTarget(null);
-      setSuspendForm({ ...BLANK_SUSPEND });
+      qc.invalidateQueries({ queryKey: ['hr-attendance-today'] });
+      qc.invalidateQueries({ queryKey: ['hr-attendance-week'] });
+      qc.invalidateQueries({ queryKey: ['hr-payroll', payMonth] });
+      toast({ title: 'Clock-out recorded' });
     },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (error: any) => toast({ title: error.message || 'Clock-out failed', variant: 'destructive' }),
   });
 
-  const cancelSuspension = useMutation({
-    mutationFn: (id: string) => api.patch(`/hr/employees/${id}/cancel-suspension`, {}),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['employees-all'] }); qc.invalidateQueries({ queryKey: ['hr-stats'] }); toast({ title: 'Suspension cancelled' }); },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
-  });
-
-  const addContractor = useMutation({
-    mutationFn: (d: typeof contractForm) => api.post('/hr/contractors', {
-      contractorName: d.contractorName, contractType: d.contractType, sector: d.sector,
-      amountCharged: Number(d.amountCharged), description: d.description || undefined,
-      bankId: d.bankId || undefined, startDate: d.startDate || undefined, endDate: d.endDate || undefined,
-    }),
+  const advanceTask = useMutation({
+    mutationFn: ({ id, nextStatus }: { id: string; nextStatus: string }) => api.patch(`/hr/tasks/${id}`, { status: nextStatus }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hr-contractors'] });
-      qc.invalidateQueries({ queryKey: ['hr-stats'] });
-      toast({ title: 'Contractor added' });
-      setIsAddOpen(false);
-      setContractForm({ ...BLANK_CONTRACT });
+      qc.invalidateQueries({ queryKey: ['hr-tasks'] });
+      qc.invalidateQueries({ queryKey: ['hr-summary'] });
+      toast({ title: 'Task board updated' });
     },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (error: any) => toast({ title: error.message || 'Task update failed', variant: 'destructive' }),
   });
 
-  const finishContract = useMutation({
-    mutationFn: (id: string) => api.patch(`/hr/contractors/${id}/finish`, {}),
+  const generatePayroll = useMutation({
+    mutationFn: () => api.post('/hr/payroll/generate', { month: payMonth }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hr-contractors'] });
-      qc.invalidateQueries({ queryKey: ['finance-contractor-payments'] });
-      toast({ title: 'Contract finished — payment sent to Finance' });
+      qc.invalidateQueries({ queryKey: ['hr-payroll', payMonth] });
+      qc.invalidateQueries({ queryKey: ['hr-summary'] });
+      toast({ title: 'Payroll records generated' });
     },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (error: any) => toast({ title: error.message || 'Payroll generation failed', variant: 'destructive' }),
   });
 
-  const sendForPayment = useMutation({
-    mutationFn: () => api.post('/hr/wages/send-for-payment', {}),
-    onSuccess: (data: any) => {
-      qc.invalidateQueries({ queryKey: ['hr-salary'] });
-      qc.invalidateQueries({ queryKey: ['finance-wages'] });
-      toast({ title: `Sent ${data.count} personnel to Finance` });
+  const payPayroll = useMutation({
+    mutationFn: (id: string) => api.patch(`/hr/payroll/${id}/pay`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['hr-payroll', payMonth] });
+      qc.invalidateQueries({ queryKey: ['hr-summary'] });
+      toast({ title: 'Payroll marked paid' });
     },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+    onError: (error: any) => toast({ title: error.message || 'Payroll payment failed', variant: 'destructive' }),
   });
 
-  const submitDailyLog = useMutation({
-    mutationFn: (ids: string[]) => api.post('/hr/daily-log', { employeeIds: ids }),
-    onSuccess: (data: any) => {
-      qc.invalidateQueries({ queryKey: ['employees-all'] });
-      qc.invalidateQueries({ queryKey: ['attendance-summary'] });
-      qc.invalidateQueries({ queryKey: ['hr-stats'] });
-      toast({ title: `Daily log submitted — ${data.submitted} logged, ${data.skipped} already done today` });
-      setDailyLogSelected(new Set());
-    },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
-  });
+  const filteredPersonnel = useMemo(() => {
+    const base = personnel.filter((row) => {
+      if (workerTab === 'all') return row.status !== 'inactive';
+      if (workerTab === 'permanent') return row.workerType === 'permanent';
+      if (workerTab === 'daily') return row.workerType === 'daily';
+      if (workerTab === 'contract') return row.workerType === 'contract';
+      if (workerTab === 'supervisor') return row.workerType === 'supervisor';
+      if (workerTab === 'restricted') return row.status === 'suspended' || row.status === 'inactive';
+      return true;
+    });
+    if (!search.trim()) return base;
+    const q = search.toLowerCase();
+    return base.filter((row) =>
+      row.fullName.toLowerCase().includes(q)
+      || (row.personnelId || '').toLowerCase().includes(q)
+      || (row.currentAssignment || '').toLowerCase().includes(q),
+    );
+  }, [personnel, search, workerTab]);
 
-  // ── derived lists ──
-  const activeEmps = employees.filter(e => e.status === 'active');
-  const inactiveEmps = employees.filter(e => e.status === 'inactive');
-  const suspendedEmps = employees.filter(e => e.status === 'suspended');
-  const visibleTotal = employees.filter(e => e.status !== 'inactive');
-  const employeeType = employees.filter(e => (e.employment_type === 'employee' || e.employment_type === 'permanent' || e.employment_type === 'contract') && e.status !== 'inactive');
-  const dailyWorkers = employees.filter(e => e.employment_type === 'daily' && e.status === 'active');
+  const taskColumns = useMemo(() => ({
+    unassigned: tasks.filter((task) => task.workflowStatus === 'unassigned'),
+    assigned: tasks.filter((task) => task.workflowStatus === 'assigned'),
+    in_progress: tasks.filter((task) => task.workflowStatus === 'in_progress'),
+    completed: tasks.filter((task) => task.workflowStatus === 'completed'),
+    overdue: tasks.filter((task) => task.workflowStatus === 'overdue'),
+  }), [tasks]);
 
-  const filteredContractors = personnelSearch
-    ? contractors.filter((c: any) => c.contractor_name.toLowerCase().includes(personnelSearch.toLowerCase()))
-    : contractors;
+  const workforceBySector = useMemo(() => {
+    const totals = personnel.reduce<Record<string, number>>((acc, person) => {
+      const key = person.sector || 'general';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    return Object.entries(totals).map(([name, value]) => ({ name, value }));
+  }, [personnel]);
 
-  const cardClass = (v: EmpView) =>
-    `cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${view === v ? 'ring-2 ring-primary shadow-lg scale-105' : ''}`;
+  const laborCostByType = useMemo(() => {
+    const totals = payroll.reduce<Record<string, number>>((acc, row) => {
+      acc[row.workerType] = (acc[row.workerType] || 0) + row.netPay;
+      return acc;
+    }, {});
+    return Object.entries(totals).map(([name, value]) => ({ name, value }));
+  }, [payroll]);
 
-  const CARDS = [
-    { key: 'contractor' as EmpView, label: 'Contractor', count: stats?.contractorCount ?? contractors.length, Icon: Briefcase, color: 'bg-orange-500/10 border-orange-500/20 text-orange-400' },
-    { key: 'suspension' as EmpView, label: 'Suspension', count: stats?.suspendedCount ?? suspendedEmps.length, Icon: Ban, color: 'bg-warning/10 border-warning/20 text-warning' },
-    { key: 'active' as EmpView, label: 'Active', count: stats?.activeCount ?? activeEmps.length, Icon: UserCheck, color: 'bg-success/10 border-success/20 text-success' },
-    { key: 'inactive' as EmpView, label: 'Inactive', count: stats?.inactiveCount ?? inactiveEmps.length, Icon: UserX, color: 'bg-muted/50 border-muted text-muted-foreground' },
-    { key: 'employee' as EmpView, label: 'Employee', count: stats?.employeeCount ?? employeeType.length, Icon: Users, color: 'bg-primary/10 border-primary/20 text-primary' },
-    { key: 'daily' as EmpView, label: 'Daily Workers', count: stats?.dailyCount ?? dailyWorkers.length, Icon: HardHat, color: 'bg-info/10 border-info/20 text-info' },
-    { key: 'salary' as EmpView, label: 'Salary', count: salaryData.filter(s => s.action === 'qualified').length, Icon: DollarSign, color: 'bg-purple-500/10 border-purple-500/20 text-purple-400' },
-    { key: 'attendance_rate' as EmpView, label: 'Attendance Log', count: attendanceSummary.length, Icon: ClipboardCheck, color: 'bg-blue-500/10 border-blue-500/20 text-blue-400' },
-    { key: 'daily_log' as EmpView, label: 'Daily Log', count: stats?.presentToday ?? 0, Icon: CalendarDays, color: 'bg-teal-500/10 border-teal-500/20 text-teal-400' },
+  const taskCompletionBySector = useMemo(() => {
+    const totals = tasks.reduce<Record<string, { completed: number; open: number }>>((acc, task) => {
+      const key = task.sector || 'general';
+      acc[key] ||= { completed: 0, open: 0 };
+      if (task.workflowStatus === 'completed') acc[key].completed += 1;
+      else acc[key].open += 1;
+      return acc;
+    }, {});
+    return Object.entries(totals).map(([sector, value]) => ({ sector, ...value }));
+  }, [tasks]);
+
+  const commandStrip = [
+    { title: 'Total Workforce', value: summary?.totalWorkforce ?? 0, detail: 'All workers on roster', icon: Users, tone: 'slate' as const },
+    { title: 'Present Today', value: summary?.presentToday ?? 0, detail: 'Checked in or marked present', icon: UserCheck, tone: 'green' as const },
+    { title: 'Absent / On Leave', value: summary?.absentOnLeave ?? 0, detail: 'Unavailable today', icon: UserMinus, tone: 'amber' as const },
+    { title: 'Daily Workers Clocked In', value: summary?.dailyWorkersClockedIn ?? 0, detail: 'Casual labor active today', icon: HardHat, tone: 'blue' as const },
+    { title: 'Open Field Tasks', value: summary?.openFieldTasks ?? 0, detail: 'Assigned, live, and overdue tasks', icon: Tractor, tone: 'amber' as const },
+    { title: 'Payroll Due', value: currency(summary?.payrollDue ?? 0), detail: 'Pending labor payout', icon: BadgeDollarSign, tone: 'red' as const },
+    { title: 'Contractors Active', value: summary?.contractorsActive ?? 0, detail: 'Current contract labor', icon: BriefcaseBusiness, tone: 'blue' as const },
+    { title: 'Labor Cost This Month', value: currency(summary?.laborCostThisMonth ?? 0), detail: 'Payroll and contract spend', icon: Coins, tone: 'slate' as const },
+    { title: 'Overtime Hours', value: summary?.overtimeHours ?? 0, detail: 'Today overtime exposure', icon: Clock3, tone: 'amber' as const },
+    { title: 'Supervisors Assigned', value: summary?.supervisorsAssigned ?? 0, detail: 'Active line supervision', icon: Crown, tone: 'green' as const },
   ];
 
-  const btnLabel = view === 'contractor' ? 'Add Contract' : view === 'salary' ? 'Send For Payment' : view === 'daily_log' ? 'Add Personnel' : 'Add Personnel';
-
-  function handlePrimaryBtn() {
-    if (view === 'salary') {
-      if (confirm('Send all qualified personnel to Finance for payment?')) sendForPayment.mutate();
-    } else {
-      setIsAddOpen(true);
-    }
-  }
-
-  function getViewList() {
-    const base = (() => {
-      switch (view) {
-        case 'active': return activeEmps;
-        case 'inactive': return inactiveEmps;
-        case 'suspension': return suspendedEmps;
-        case 'employee': return employeeType;
-        case 'daily': return dailyWorkers;
-        default: return visibleTotal;
-      }
-    })();
-    if (!personnelSearch) return base;
-    const q = personnelSearch.toLowerCase();
-    return base.filter(e => e.full_name.toLowerCase().includes(q) || (e.personnel_id ?? '').toLowerCase().includes(q));
-  }
-
-  const showPersonnelTable = view !== 'contractor' && view !== 'salary' && view !== 'attendance_rate' && view !== 'daily_log';
-  const showDailyLogView = view === 'daily_log';
-  const showAttendanceView = view === 'attendance_rate';
-  const showContractorView = view === 'contractor';
-  const showSalaryView = view === 'salary';
-
-  const filteredSalary = salaryMonthFilter
-    ? salaryData.filter(s => {
-        if (!s.date_hired) return true;
-        return format(new Date(s.date_hired), 'yyyy-MM') === salaryMonthFilter;
-      })
-    : salaryData;
+  const nextTaskStatus = (task: TaskRow) => {
+    if (task.workflowStatus === 'unassigned') return 'assigned';
+    if (task.workflowStatus === 'assigned' || task.workflowStatus === 'overdue') return 'in_progress';
+    return 'completed';
+  };
 
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        <div className="flex justify-between items-center flex-wrap gap-3">
-          <div>
-            <h1 className="text-3xl font-bold">Human Capital</h1>
-            <p className="text-muted-foreground">Workforce management, payroll, and contractor oversight</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by name..."
-                value={personnelSearch}
-                onChange={e => setPersonnelSearch(e.target.value)}
-                onBlur={() => setPersonnelSearch('')}
-                className="pl-9 w-52 text-white placeholder:text-white/50"
-              />
+        <div className="rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.18),transparent_38%),radial-gradient(circle_at_top_right,rgba(245,158,11,0.18),transparent_32%),linear-gradient(135deg,rgba(10,15,22,0.96),rgba(18,26,38,0.92))] p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="mb-2 inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-emerald-300">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Workforce Operations Deck
+              </p>
+              <h1 className="text-3xl font-bold text-white">Human Capital</h1>
+              <p className="mt-2 max-w-3xl text-sm text-muted-foreground">Workforce management, attendance, payroll, and field task supervision.</p>
             </div>
-            {(view === 'salary' ? canCreate('human_capital') : canCreate('human_capital')) && (
-              <Button className="gradient-primary text-black font-medium" onClick={handlePrimaryBtn} disabled={view === 'salary' && sendForPayment.isPending}>
-                <Plus className="h-4 w-4 mr-2" />{btnLabel}
-              </Button>
-            )}
+            <div className="flex flex-wrap gap-3">
+              <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Today</p>
+                <p className="text-sm font-semibold text-white">{format(new Date(), 'EEEE, MMM d')}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3">
+                <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Payroll Window</p>
+                <p className="text-sm font-semibold text-white">{format(new Date(`${payMonth}-01`), 'MMMM yyyy')}</p>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* 9 Cards */}
-        <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3">
-          {CARDS.map(({ key, label, count, Icon, color }) => (
-            <Card key={key} className={`border ${color} ${cardClass(key)}`} onClick={() => setView(view === key ? null : key)}>
-              <CardContent className="p-4">
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <Icon className="h-6 w-6" />
-                  <div>
-                    <p className="text-xs font-medium leading-tight">{label}</p>
-                    <p className="text-xl font-bold">{count}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {commandStrip.map((card) => (
+            <MetricCard key={card.title} {...card} />
           ))}
         </div>
 
-        {/* ── Contractor View ── */}
-        {showContractorView && (
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Contractor ID</TableHead>
-                    <TableHead>Contractor Name</TableHead>
-                    <TableHead>Contract Type</TableHead>
-                    <TableHead>Sector</TableHead>
-                    <TableHead>Amount Charged</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Bank ID</TableHead>
-                    <TableHead>Start Date</TableHead>
-                    <TableHead>End Date</TableHead>
-                    <TableHead>Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredContractors.map((c: any) => (
-                    <TableRow key={c.id}>
-                      <TableCell className="font-mono text-xs">{c.contractor_id}</TableCell>
-                      <TableCell className="font-medium">{c.contractor_name}</TableCell>
-                      <TableCell>{c.contract_type}</TableCell>
-                      <TableCell className="capitalize">{c.sector}</TableCell>
-                      <TableCell>${Number(c.amount_charged).toFixed(2)}</TableCell>
-                      <TableCell className="max-w-[150px] truncate">{c.description ?? '-'}</TableCell>
-                      <TableCell>{c.bank_id ?? '-'}</TableCell>
-                      <TableCell>{c.start_date ? format(new Date(c.start_date), 'MMM d, yyyy') : '-'}</TableCell>
-                      <TableCell>{c.end_date ? format(new Date(c.end_date), 'MMM d, yyyy') : '-'}</TableCell>
-                      <TableCell>
-                        {!c.payment_sent ? (
-                          canEdit('human_capital') && (
-                            <Button size="sm" className="gradient-primary text-black font-medium text-xs"
-                              onClick={() => { if (confirm('Mark contract as finished and send payment request to Finance?')) finishContract.mutate(c.id); }}
-                              disabled={finishContract.isPending}>
-                              Finish
-                            </Button>
-                          )
-                        ) : (
-                          <Badge className="bg-success/20 text-success text-xs">Sent to Finance</Badge>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {!filteredContractors.length && (
-                    <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No contractors</TableCell></TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ── Salary View ── */}
-        {showSalaryView && (
-          <Card>
-            <div className="p-4 border-b flex items-center justify-between">
-              <p className="font-medium text-sm">Salary — Employees & Daily Workers</p>
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground">Filter by month:</Label>
-                <Input type="month" value={salaryMonthFilter} onChange={e => setSalaryMonthFilter(e.target.value)} className="w-36 h-8 text-xs text-white" />
-                {salaryMonthFilter && <Button size="sm" variant="outline" className="text-xs text-white border-input" onClick={() => setSalaryMonthFilter('')}>Clear</Button>}
-              </div>
-            </div>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Personnel ID</TableHead>
-                    <TableHead>Full Name</TableHead>
-                    <TableHead>Employment Type</TableHead>
-                    <TableHead>Number of Days</TableHead>
-                    <TableHead>Sector</TableHead>
-                    <TableHead>Pay Period</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Bank ID</TableHead>
-                    <TableHead>Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredSalary.map((s: any) => (
-                    <TableRow key={s.id}>
-                      <TableCell className="font-mono text-xs">{s.personnel_id ?? '-'}</TableCell>
-                      <TableCell className="font-medium">{s.full_name}</TableCell>
-                      <TableCell className="capitalize">{s.employment_type}</TableCell>
-                      <TableCell>{s.days_worked}</TableCell>
-                      <TableCell className="capitalize">{s.sector ?? '-'}</TableCell>
-                      <TableCell>{s.pay_period}</TableCell>
-                      <TableCell><Badge className={statusBadge(s.status)}>{s.status}</Badge></TableCell>
-                      <TableCell className="font-medium">${Number(s.amount).toFixed(2)}</TableCell>
-                      <TableCell>{s.bank_id ?? '-'}</TableCell>
-                      <TableCell>
-                        {s.action === 'qualified'
-                          ? <Badge className="bg-success/20 text-success text-xs">Qualified</Badge>
-                          : <Badge className="bg-warning/20 text-warning text-xs">Review</Badge>
-                        }
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {!filteredSalary.length && (
-                    <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No salary data</TableCell></TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ── Daily Log View ── */}
-        {showDailyLogView && (
-          <Card>
-            <div className="p-4 border-b">
-              <p className="font-medium text-sm">Daily Log — {format(new Date(), 'EEEE, MMM d, yyyy')}</p>
-            </div>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Action</TableHead>
-                    <TableHead>Personnel ID</TableHead>
-                    <TableHead>Full Name</TableHead>
-                    <TableHead>Employee Type</TableHead>
-                    <TableHead>Sector</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {employees.filter(e => e.status === 'active').map((emp: any) => (
-                    <TableRow key={emp.id}>
-                      <TableCell>
-                        <input
-                          type="checkbox"
-                          checked={dailyLogSelected.has(emp.id)}
-                          onChange={ev => {
-                            const next = new Set(dailyLogSelected);
-                            if (ev.target.checked) next.add(emp.id); else next.delete(emp.id);
-                            setDailyLogSelected(next);
-                          }}
-                          className="h-4 w-4 accent-primary cursor-pointer"
-                        />
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{emp.personnel_id ?? '-'}</TableCell>
-                      <TableCell className="font-medium">{emp.full_name}</TableCell>
-                      <TableCell className="capitalize text-xs">{emp.employment_type}</TableCell>
-                      <TableCell className="capitalize text-xs">{emp.sector ?? '-'}</TableCell>
-                    </TableRow>
-                  ))}
-                  {!employees.filter(e => e.status === 'active').length && (
-                    <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No active personnel</TableCell></TableRow>
-                  )}
-                </TableBody>
-              </Table>
-              {canCreate('human_capital') && (
-                <div className="p-4 flex justify-center">
-                  <Button
-                    className="gradient-primary text-black font-medium"
-                    disabled={submitDailyLog.isPending}
-                    onClick={() => {
-                      if (dailyLogSelected.size === 0) { toast({ title: 'Select at least one personnel', variant: 'destructive' }); return; }
-                      if (confirm(`Submit daily log for ${dailyLogSelected.size} personnel?`)) submitDailyLog.mutate(Array.from(dailyLogSelected));
-                    }}
-                  >
-                    Submit Daily Log
-                  </Button>
+        <div className="grid gap-6 xl:grid-cols-[1.3fr_0.9fr]">
+          <Card className="border-border bg-card/80">
+            <CardHeader className="pb-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <CardTitle className="text-white">Workforce Register</CardTitle>
+                  <p className="text-sm text-muted-foreground">Roster, accountability line, and current assignment visibility.</p>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ── Attendance Rate View ── */}
-        {showAttendanceView && (
-          <Card>
-            <div className="p-4 border-b flex items-center justify-between">
-              <p className="font-medium text-sm">Attendance Log</p>
-              <select value={attendTypeFilter} onChange={e => setAttendTypeFilter(e.target.value)} className="h-8 w-40 rounded border border-input bg-background px-2 text-sm text-foreground">
-                <option value="all">All Types</option>
-                <option value="employee">Employee</option>
-                <option value="daily">Daily</option>
-              </select>
-            </div>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Personnel ID</TableHead>
-                    <TableHead>Full Name</TableHead>
-                    <TableHead>Employee Type</TableHead>
-                    <TableHead>Number of Days</TableHead>
-                    <TableHead>Total Number of Days</TableHead>
-                    <TableHead>Sector</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {attendanceSummary.map((s: any) => (
-                    <TableRow key={s.id}>
-                      <TableCell className="font-mono text-xs">{s.personnel_id ?? '-'}</TableCell>
-                      <TableCell className="font-medium">{s.full_name}</TableCell>
-                      <TableCell className="capitalize">{s.employment_type}</TableCell>
-                      <TableCell>{s.days_worked}</TableCell>
-                      <TableCell>{s.total_days_worked ?? 0}</TableCell>
-                      <TableCell className="capitalize">{s.sector ?? '-'}</TableCell>
-                    </TableRow>
-                  ))}
-                  {!attendanceSummary.length && (
-                    <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No attendance data</TableCell></TableRow>
-                  )}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* ── Total Workers / Filtered Personnel Table ── */}
-        {showPersonnelTable && (
-          <>
-            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
-              <div>
-                <p className="font-semibold">
-                  {view === 'suspension' ? 'Suspended Personnel' :
-                   view === 'active' ? 'Active Personnel' :
-                   view === 'inactive' ? 'Inactive Personnel' :
-                   view === 'employee' ? 'Employees' :
-                   view === 'daily' ? 'Daily Workers' :
-                   'Total Workers'}
-                </p>
-                <p className="text-xs text-muted-foreground">{getViewList().length} records</p>
+                <Input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Search worker or current assignment"
+                  className="w-full max-w-sm border-border bg-background/70 text-white"
+                />
               </div>
-            </div>
-
-            <Card>
-              <CardContent className="p-0">
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Tabs value={workerTab} onValueChange={setWorkerTab}>
+                <TabsList className="grid w-full grid-cols-3 gap-2 bg-transparent lg:grid-cols-6">
+                  <TabsTrigger value="all">All Workers</TabsTrigger>
+                  <TabsTrigger value="permanent">Permanent</TabsTrigger>
+                  <TabsTrigger value="daily">Daily Workers</TabsTrigger>
+                  <TabsTrigger value="contract">Contractors</TabsTrigger>
+                  <TabsTrigger value="supervisor">Supervisors</TabsTrigger>
+                  <TabsTrigger value="restricted">Suspended / Terminated</TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Personnel ID</TableHead>
                       <TableHead>Full Name</TableHead>
-                      <TableHead>Employee Type</TableHead>
+                      <TableHead>Worker Type</TableHead>
                       <TableHead>Sector</TableHead>
                       <TableHead>Job Title</TableHead>
-                      <TableHead>Email</TableHead>
+                      <TableHead>Supervisor</TableHead>
                       <TableHead>Phone</TableHead>
-                      <TableHead>Address</TableHead>
                       <TableHead>Hire Date</TableHead>
                       <TableHead>Status</TableHead>
-                      {view === 'suspension' && <TableHead>Reason</TableHead>}
-                      {view === 'suspension' && <TableHead>Expires</TableHead>}
-                      {canEdit('human_capital') && <TableHead>Edit</TableHead>}
-                      {(canEdit('human_capital') || canDelete('human_capital')) && <TableHead>Action</TableHead>}
+                      <TableHead>Current Assignment</TableHead>
+                      <TableHead>Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {getViewList().map((emp: any) => {
-                      const immutable = isImmutable(emp);
-                      return (
-                        <TableRow key={emp.id} className={immutable ? 'opacity-50' : ''}>
-                          <TableCell className="font-mono text-xs">{emp.personnel_id ?? '-'}</TableCell>
-                          <TableCell className="font-medium">{emp.full_name}</TableCell>
-                          <TableCell className="capitalize text-xs">{emp.employment_type}</TableCell>
-                          <TableCell className="capitalize text-xs">{emp.sector ?? '-'}</TableCell>
-                          <TableCell className="text-xs">{emp.job_title ?? '-'}</TableCell>
-                          <TableCell className="text-xs">{emp.email ?? '-'}</TableCell>
-                          <TableCell className="text-xs">{emp.phone ?? '-'}</TableCell>
-                          <TableCell className="text-xs max-w-[100px] truncate">{emp.address ?? '-'}</TableCell>
-                          <TableCell className="text-xs">{emp.date_hired ? format(new Date(emp.date_hired), 'MMM d, yyyy') : '-'}</TableCell>
-                          <TableCell><Badge className={`${statusBadge(emp.status)} text-xs`}>{emp.status}</Badge></TableCell>
-                          {view === 'suspension' && (
-                            <TableCell className="text-xs max-w-[120px] truncate">{emp.suspension_reason ?? '-'}</TableCell>
-                          )}
-                          {view === 'suspension' && (
-                            <TableCell className="text-xs">{emp.suspension_expires_at ? format(new Date(emp.suspension_expires_at), 'MMM d, yyyy') : '-'}</TableCell>
-                          )}
-                          {canEdit('human_capital') && (
-                            <TableCell>
-                              <Button variant="ghost" size="icon" disabled={immutable} onClick={() => setEditEmp(emp)}>
-                                <Pencil className="h-4 w-4 text-muted-foreground" />
-                              </Button>
-                            </TableCell>
-                          )}
-                          {(canEdit('human_capital') || canDelete('human_capital')) && (
-                            <TableCell>
-                              {immutable ? (
-                                <Badge className="bg-muted text-muted-foreground text-xs">Immutable</Badge>
-                              ) : view === 'suspension' ? (
-                                canEdit('human_capital') && (
-                                  <Button size="sm" variant="outline" className="text-xs text-white border-input"
-                                    onClick={() => { if (confirm('Cancel suspension and restore Active?')) cancelSuspension.mutate(emp.id); }}>
-                                    Cancel Suspension
-                                  </Button>
-                                )
-                              ) : emp.status === 'inactive' ? (
-                                canEdit('human_capital') && (
-                                  <Button size="sm" variant="outline" className="text-xs text-white border-input"
-                                    onClick={() => { if (confirm('Restore this personnel to Active?')) unterminate.mutate(emp.id); }}>
-                                    Un-terminate
-                                  </Button>
-                                )
-                              ) : (
-                                <div className="flex gap-1">
-                                  {canEdit('human_capital') && (
-                                    <Button size="sm" variant="outline" className="text-xs text-white border-input"
-                                      onClick={() => setSuspendTarget(emp)}>
-                                      Suspend
-                                    </Button>
-                                  )}
-                                  {canDelete('human_capital') && (
-                                    <Button size="sm" variant="destructive" className="text-xs"
-                                      onClick={() => { if (confirm('Terminate this personnel? Record becomes immutable after 48 hours.')) terminate.mutate(emp.id); }}>
-                                      Terminate
-                                    </Button>
-                                  )}
-                                </div>
-                              )}
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      );
-                    })}
-                    {!getViewList().length && (
-                      <TableRow>
-                        <TableCell colSpan={view === 'suspension' ? 14 : 12} className="text-center py-8 text-muted-foreground">
-                          No records found
+                    {filteredPersonnel.map((worker) => (
+                      <TableRow key={worker.id}>
+                        <TableCell className="font-mono text-xs">{worker.personnelId || '-'}</TableCell>
+                        <TableCell className="font-medium text-white">{worker.fullName}</TableCell>
+                        <TableCell className="capitalize">{worker.workerType}</TableCell>
+                        <TableCell className="capitalize">{worker.sector || '-'}</TableCell>
+                        <TableCell>{worker.job_title || '-'}</TableCell>
+                        <TableCell>{worker.supervisor || '-'}</TableCell>
+                        <TableCell>{worker.phone || '-'}</TableCell>
+                        <TableCell>{worker.hireDate ? format(new Date(worker.hireDate), 'MMM d, yyyy') : '-'}</TableCell>
+                        <TableCell>{statusBadge(worker.status)}</TableCell>
+                        <TableCell className="max-w-[220px] truncate text-muted-foreground">{worker.currentAssignment || 'No active assignment'}</TableCell>
+                        <TableCell>
+                          {worker.status === 'active'
+                            ? <Badge className="border-emerald-500/20 bg-emerald-500/10 text-emerald-300">Selectable</Badge>
+                            : <Badge className="border-rose-500/20 bg-rose-500/10 text-rose-300">Restricted</Badge>}
                         </TableCell>
+                      </TableRow>
+                    ))}
+                    {!filteredPersonnel.length && (
+                      <TableRow>
+                        <TableCell colSpan={11} className="py-8 text-center text-muted-foreground">No workforce records match this filter.</TableCell>
                       </TableRow>
                     )}
                   </TableBody>
                 </Table>
-              </CardContent>
-            </Card>
-          </>
-        )}
-
-        {/* ── Add Personnel / Add Contract Dialog ── */}
-        {canCreate('human_capital') && <Dialog open={isAddOpen} onOpenChange={o => { setIsAddOpen(o); if (!o) { setEmpForm({ ...BLANK_EMP }); setContractForm({ ...BLANK_CONTRACT }); } }}>
-          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>{view === 'contractor' ? 'Add Contract' : 'Add Personnel'}</DialogTitle>
-            </DialogHeader>
-
-            {view !== 'contractor' ? (
-              <form onSubmit={e => { e.preventDefault(); addEmployee.mutate(empForm); }} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Full Name *</Label>
-                    <Input value={empForm.fullName} onChange={e => setEmpForm({ ...empForm, fullName: e.target.value })} required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Date of Birth</Label>
-                    <Input type="date" value={empForm.dateOfBirth} onChange={e => setEmpForm({ ...empForm, dateOfBirth: e.target.value })} />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Place of Birth</Label>
-                  <Input value={empForm.placeOfBirth} onChange={e => setEmpForm({ ...empForm, placeOfBirth: e.target.value })} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Employment Type *</Label>
-                    <select value={empForm.employmentType} onChange={e => setEmpForm({ ...empForm, employmentType: e.target.value })} className={ns} required>
-                      {EMP_TYPES_NEW.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Sector *</Label>
-                    <select value={empForm.sector} onChange={e => setEmpForm({ ...empForm, sector: e.target.value })} className={ns} required>
-                      {SECTORS_NEW.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Job Title *</Label>
-                  <select value={empForm.jobTitle} onChange={e => setEmpForm({ ...empForm, jobTitle: e.target.value })} className={ns} required>
-                    <option value="">Select job title</option>
-                    {JOB_TITLES.map(j => <option key={j} value={j}>{j}</option>)}
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Contact Email *</Label>
-                    <Input type="email" value={empForm.email} onChange={e => setEmpForm({ ...empForm, email: e.target.value })} required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Phone Number *</Label>
-                    <Input value={empForm.phone} onChange={e => setEmpForm({ ...empForm, phone: e.target.value })} placeholder="+231..." required />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Address *</Label>
-                  <Input value={empForm.address} onChange={e => setEmpForm({ ...empForm, address: e.target.value })} required />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Date Hired *</Label>
-                    <Input type="date" value={empForm.dateHired} onChange={e => setEmpForm({ ...empForm, dateHired: e.target.value })} required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>{empForm.employmentType === 'daily' ? 'Daily Rate *' : 'Monthly Salary *'}</Label>
-                    <Input type="number" step="0.01" min="0.01" value={empForm.salaryAmount} onChange={e => setEmpForm({ ...empForm, salaryAmount: e.target.value })} required />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Bank ID *</Label>
-                  <Input value={empForm.bankId} onChange={e => setEmpForm({ ...empForm, bankId: e.target.value })} required />
-                </div>
-                <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={addEmployee.isPending}>Add Personnel</Button>
-              </form>
-            ) : (
-              <form onSubmit={e => { e.preventDefault(); addContractor.mutate(contractForm); }} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Contractor Name *</Label>
-                    <Input value={contractForm.contractorName} onChange={e => setContractForm({ ...contractForm, contractorName: e.target.value })} required />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Contract Type *</Label>
-                    <Input value={contractForm.contractType} onChange={e => setContractForm({ ...contractForm, contractType: e.target.value })} required />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Sector *</Label>
-                    <select value={contractForm.sector} onChange={e => setContractForm({ ...contractForm, sector: e.target.value })} className={ns} required>
-                      {CONTRACT_SECTORS.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Amount Charged *</Label>
-                    <Input type="number" step="0.01" min="0.01" value={contractForm.amountCharged} onChange={e => setContractForm({ ...contractForm, amountCharged: e.target.value })} required />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Description (max 50 words)</Label>
-                  <Input value={contractForm.description} onChange={e => {
-                    const words = e.target.value.trim().split(/\s+/).filter(Boolean);
-                    if (words.length <= 50) setContractForm({ ...contractForm, description: e.target.value });
-                  }} placeholder="Brief description..." />
-                </div>
-                <div className="space-y-2">
-                  <Label>Bank ID</Label>
-                  <Input value={contractForm.bankId} onChange={e => setContractForm({ ...contractForm, bankId: e.target.value })} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Start Date</Label>
-                    <Input type="date" value={contractForm.startDate} onChange={e => setContractForm({ ...contractForm, startDate: e.target.value })} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>End Date</Label>
-                    <Input type="date" value={contractForm.endDate} onChange={e => setContractForm({ ...contractForm, endDate: e.target.value })} />
-                  </div>
-                </div>
-                <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={addContractor.isPending}>Add Contract</Button>
-              </form>
-            )}
-          </DialogContent>
-        </Dialog>}
-
-        {/* ── Edit Personnel Dialog ── */}
-        {canEdit('human_capital') && <Dialog open={!!editEmp} onOpenChange={o => { if (!o) setEditEmp(null); }}>
-          <DialogContent className="max-w-xl max-h-[85vh] overflow-y-auto">
-            <DialogHeader><DialogTitle>Edit Personnel</DialogTitle></DialogHeader>
-            {editEmp && (
-              <form onSubmit={e => {
-                e.preventDefault();
-                const fd = new FormData(e.currentTarget);
-                editEmployee.mutate({
-                  id: editEmp.id,
-                  data: {
-                    fullName: fd.get('fullName') as string,
-                    email: (fd.get('email') as string) || undefined,
-                    phone: (fd.get('phone') as string) || undefined,
-                    address: (fd.get('address') as string) || undefined,
-                    jobTitle: (fd.get('jobTitle') as string) || undefined,
-                    sector: (fd.get('sector') as string) || undefined,
-                    bankId: (fd.get('bankId') as string) || undefined,
-                    salaryAmount: fd.get('salaryAmount') ? Number(fd.get('salaryAmount')) : undefined,
-                  },
-                });
-              }} className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Full Name</Label>
-                  <Input name="fullName" defaultValue={editEmp.full_name} required />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Email</Label>
-                    <Input name="email" type="email" defaultValue={editEmp.email ?? ''} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Phone</Label>
-                    <Input name="phone" defaultValue={editEmp.phone ?? ''} />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label>Address</Label>
-                  <Input name="address" defaultValue={editEmp.address ?? ''} />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Job Title</Label>
-                    <select name="jobTitle" defaultValue={editEmp.job_title ?? ''} className={ns}>
-                      <option value="">Select</option>
-                      {JOB_TITLES.map(j => <option key={j} value={j}>{j}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Sector</Label>
-                    <select name="sector" defaultValue={editEmp.sector ?? 'general'} className={ns}>
-                      {SECTORS_NEW.map(s => <option key={s} value={s.toLowerCase()}>{s}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Bank ID</Label>
-                    <Input name="bankId" defaultValue={editEmp.bank_id ?? ''} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Salary Amount</Label>
-                    <Input name="salaryAmount" type="number" step="0.01" defaultValue={editEmp.monthly_salary ?? editEmp.daily_wage ?? ''} />
-                  </div>
-                </div>
-                <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={editEmployee.isPending}>Save Changes</Button>
-              </form>
-            )}
-          </DialogContent>
-        </Dialog>}
-
-        {/* ── Suspend Dialog ── */}
-        {canEdit('human_capital') && <Dialog open={!!suspendTarget} onOpenChange={o => { if (!o) { setSuspendTarget(null); setSuspendForm({ ...BLANK_SUSPEND }); } }}>
-          <DialogContent>
-            <DialogHeader><DialogTitle>Suspend — {suspendTarget?.full_name}</DialogTitle></DialogHeader>
-            <form onSubmit={e => {
-              e.preventDefault();
-              const words = suspendForm.suspensionReason.trim().split(/\s+/).filter(Boolean);
-              if (words.length > 50) { toast({ title: 'Reason must be 50 words or fewer', variant: 'destructive' }); return; }
-              suspendMutation.mutate({ id: suspendTarget.id, data: { suspensionReason: suspendForm.suspensionReason, suspensionExpiresAt: suspendForm.suspensionExpiresAt } });
-            }} className="space-y-4">
-              <div className="space-y-2">
-                <Label>Suspension Reason (max 50 words) *</Label>
-                <Input value={suspendForm.suspensionReason} onChange={e => setSuspendForm({ ...suspendForm, suspensionReason: e.target.value })} required />
-                <p className="text-xs text-muted-foreground">{suspendForm.suspensionReason.trim().split(/\s+/).filter(Boolean).length} / 50 words</p>
               </div>
-              <div className="space-y-2">
-                <Label>Return / Expiration Date *</Label>
-                <Input type="date" value={suspendForm.suspensionExpiresAt} onChange={e => setSuspendForm({ ...suspendForm, suspensionExpiresAt: e.target.value })} required min={new Date().toISOString().split('T')[0]} />
+            </CardContent>
+          </Card>
+
+          <Card className="border-border bg-card/80">
+            <CardHeader>
+              <CardTitle className="text-white">Today&apos;s Attendance</CardTitle>
+              <p className="text-sm text-muted-foreground">Operational attendance board for check-in, absence, and payroll-ready time capture.</p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={weeklyAttendance}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                    <XAxis dataKey="date" stroke="rgba(255,255,255,0.45)" tickLine={false} axisLine={false} />
+                    <YAxis stroke="rgba(255,255,255,0.45)" tickLine={false} axisLine={false} />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="present" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="absent" fill="#f97316" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-              <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={suspendMutation.isPending}>Confirm Suspension</Button>
-            </form>
-          </DialogContent>
-        </Dialog>}
+              <div className="max-h-[520px] overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Worker</TableHead>
+                      <TableHead>Sector</TableHead>
+                      <TableHead>Check-In</TableHead>
+                      <TableHead>Check-Out</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Hours</TableHead>
+                      <TableHead>Late</TableHead>
+                      <TableHead>Recorded By</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {attendance.map((row) => (
+                      <TableRow key={row.employeeId}>
+                        <TableCell className="font-medium text-white">{row.workerName}</TableCell>
+                        <TableCell className="capitalize">{row.sector || '-'}</TableCell>
+                        <TableCell>{row.checkIn || '-'}</TableCell>
+                        <TableCell>{row.checkOut || '-'}</TableCell>
+                        <TableCell>{statusBadge(row.attendanceStatus)}</TableCell>
+                        <TableCell>{row.hoursWorked ? row.hoursWorked.toFixed(2) : '-'}</TableCell>
+                        <TableCell>{row.late ? <Badge className="border-amber-500/20 bg-amber-500/10 text-amber-300">Late</Badge> : '-'}</TableCell>
+                        <TableCell>{row.recordedBy || '-'}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-2">
+                            {!row.id && canEdit('human_capital') && (
+                              <>
+                                <Button size="sm" variant="outline" className="border-border text-white" onClick={() => markAttendance.mutate({ employeeId: row.employeeId, status: 'present', clockIn: format(new Date(), 'HH:mm') })}>
+                                  Mark Present
+                                </Button>
+                                <Button size="sm" variant="outline" className="border-border text-white" onClick={() => markAttendance.mutate({ employeeId: row.employeeId, status: 'absent' })}>
+                                  Mark Absent
+                                </Button>
+                              </>
+                            )}
+                            {row.id && !row.checkOut && row.attendanceStatus !== 'absent' && row.attendanceStatus !== 'leave' && canEdit('human_capital') && (
+                              <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-500" onClick={() => clockOutWorker.mutate({ id: row.id! })}>
+                                Clock Out
+                              </Button>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="border-border bg-card/80">
+          <CardHeader>
+            <CardTitle className="text-white">Task Assignment Board</CardTitle>
+            <p className="text-sm text-muted-foreground">Who is working today, where the work sits, and which field activities need supervisor intervention.</p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 xl:grid-cols-5">
+              <TaskColumn title="Unassigned" tasks={taskColumns.unassigned} accent="bg-slate-400" onAdvance={(task) => advanceTask.mutate({ id: task.id, nextStatus: nextTaskStatus(task) })} />
+              <TaskColumn title="Assigned" tasks={taskColumns.assigned} accent="bg-sky-400" onAdvance={(task) => advanceTask.mutate({ id: task.id, nextStatus: nextTaskStatus(task) })} />
+              <TaskColumn title="In Progress" tasks={taskColumns.in_progress} accent="bg-amber-400" onAdvance={(task) => advanceTask.mutate({ id: task.id, nextStatus: nextTaskStatus(task) })} />
+              <TaskColumn title="Completed" tasks={taskColumns.completed} accent="bg-emerald-400" onAdvance={(task) => advanceTask.mutate({ id: task.id, nextStatus: nextTaskStatus(task) })} />
+              <TaskColumn title="Overdue" tasks={taskColumns.overdue} accent="bg-rose-400" onAdvance={(task) => advanceTask.mutate({ id: task.id, nextStatus: nextTaskStatus(task) })} />
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+          <Card className="border-border bg-card/80">
+            <CardHeader className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <CardTitle className="text-white">Payroll Preview</CardTitle>
+                <p className="text-sm text-muted-foreground">Attendance-derived pay records with overtime, deductions, and finance-ready payout status.</p>
+              </div>
+              {canCreate('human_capital') && (
+                <Button className="bg-emerald-600 text-white hover:bg-emerald-500" onClick={() => generatePayroll.mutate()} disabled={generatePayroll.isPending}>
+                  <DollarSign className="mr-2 h-4 w-4" />
+                  Generate Payroll
+                </Button>
+              )}
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Worker</TableHead>
+                    <TableHead>Pay Type</TableHead>
+                    <TableHead>Days Worked</TableHead>
+                    <TableHead>Hours Worked</TableHead>
+                    <TableHead>Overtime</TableHead>
+                    <TableHead>Rate</TableHead>
+                    <TableHead>Gross Pay</TableHead>
+                    <TableHead>Deductions</TableHead>
+                    <TableHead>Net Pay</TableHead>
+                    <TableHead>Payment Status</TableHead>
+                    <TableHead>Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {payroll.map((row) => (
+                    <TableRow key={row.employeeId}>
+                      <TableCell className="font-medium text-white">{row.worker}</TableCell>
+                      <TableCell className="capitalize">{row.payType.replace('_', ' ')}</TableCell>
+                      <TableCell>{row.daysWorked}</TableCell>
+                      <TableCell>{row.hoursWorked.toFixed(2)}</TableCell>
+                      <TableCell>{row.overtime.toFixed(2)}</TableCell>
+                      <TableCell>{currency(row.rate)}</TableCell>
+                      <TableCell>{currency(row.grossPay)}</TableCell>
+                      <TableCell>{currency(row.deductions)}</TableCell>
+                      <TableCell className="font-semibold text-white">{currency(row.netPay)}</TableCell>
+                      <TableCell>{statusBadge(row.paymentStatus)}</TableCell>
+                      <TableCell>
+                        {row.id !== row.employeeId && row.paymentStatus !== 'paid' && canEdit('human_capital')
+                          ? (
+                            <Button size="sm" variant="outline" className="border-border text-white" onClick={() => payPayroll.mutate(row.id)}>
+                              Mark Paid
+                            </Button>
+                          )
+                          : <span className="text-xs text-muted-foreground">Posted when approved</span>}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border bg-card/80">
+            <CardHeader>
+              <CardTitle className="text-white">Leave / Absence Tracker</CardTitle>
+              <p className="text-sm text-muted-foreground">Approved and pending absences affecting deployment and deductions.</p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {leave.map((row) => (
+                <div key={row.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-white">{row.worker || 'Unlinked worker'}</p>
+                      <p className="text-xs capitalize text-muted-foreground">{row.type.replace('_', ' ')}</p>
+                    </div>
+                    {statusBadge(row.approvalStatus)}
+                  </div>
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    {format(new Date(row.startDate), 'MMM d')} to {format(new Date(row.endDate), 'MMM d')}
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">{row.notes || 'No note attached.'}</p>
+                </div>
+              ))}
+              {!leave.length && <div className="rounded-lg border border-dashed border-border/70 p-4 text-center text-sm text-muted-foreground">No leave records available.</div>}
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="border-border bg-card/80">
+          <CardHeader>
+            <CardTitle className="text-white">Labor Insights</CardTitle>
+            <p className="text-sm text-muted-foreground">Sector mix, attendance movement, labor cost exposure, and task completion pressure.</p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 xl:grid-cols-4">
+              <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+                  <Wheat className="h-4 w-4" />
+                  Workforce by Sector
+                </div>
+                <div className="h-56">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={workforceBySector} dataKey="value" nameKey="name" innerRadius={45} outerRadius={78}>
+                        {workforceBySector.map((_, index) => <Cell key={index} fill={['#22c55e', '#38bdf8', '#f59e0b', '#a78bfa', '#f97316'][index % 5]} />)}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+                  <CalendarClock className="h-4 w-4" />
+                  Attendance Trend
+                </div>
+                <div className="h-56">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={weeklyAttendance}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                      <XAxis dataKey="date" stroke="rgba(255,255,255,0.45)" tickLine={false} axisLine={false} />
+                      <YAxis stroke="rgba(255,255,255,0.45)" tickLine={false} axisLine={false} />
+                      <Tooltip />
+                      <Bar dataKey="present" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+                  <Leaf className="h-4 w-4" />
+                  Labor Cost by Worker Type
+                </div>
+                <div className="h-56">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={laborCostByType}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                      <XAxis dataKey="name" stroke="rgba(255,255,255,0.45)" tickLine={false} axisLine={false} />
+                      <YAxis stroke="rgba(255,255,255,0.45)" tickLine={false} axisLine={false} />
+                      <Tooltip formatter={(value: number) => currency(value)} />
+                      <Bar dataKey="value" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-white">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Task Completion by Sector
+                </div>
+                <div className="space-y-3">
+                  {taskCompletionBySector.map((row) => (
+                    <div key={row.sector} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                      <div className="mb-2 flex items-center justify-between text-xs">
+                        <span className="capitalize text-white">{row.sector}</span>
+                        <span className="text-muted-foreground">{row.completed} done / {row.open} open</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                          <div className="h-full bg-emerald-500" style={{ width: `${((row.completed / Math.max(row.completed + row.open, 1)) * 100).toFixed(0)}%` }} />
+                        </div>
+                        <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                      </div>
+                    </div>
+                  ))}
+                  {!taskCompletionBySector.length && <div className="rounded-lg border border-dashed border-border/70 p-4 text-center text-sm text-muted-foreground">No sector task activity yet.</div>}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <Card className="border-border bg-card/80">
+            <CardContent className="flex items-center gap-3 p-4">
+              <AlertTriangle className="h-5 w-5 text-amber-300" />
+              <div>
+                <p className="text-sm font-semibold text-white">Suspended and terminated workers are task-locked</p>
+                <p className="text-xs text-muted-foreground">The backend blocks new task assignment when status is not active.</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-border bg-card/80">
+            <CardContent className="flex items-center gap-3 p-4">
+              <Clock3 className="h-5 w-5 text-sky-300" />
+              <div>
+                <p className="text-sm font-semibold text-white">Attendance drives hours and overtime</p>
+                <p className="text-xs text-muted-foreground">Clock-in and clock-out values feed payroll preview calculations.</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-border bg-card/80">
+            <CardContent className="flex items-center gap-3 p-4">
+              <Coins className="h-5 w-5 text-emerald-300" />
+              <div>
+                <p className="text-sm font-semibold text-white">Paid payroll posts labor expense</p>
+                <p className="text-xs text-muted-foreground">When finance tables exist, payroll payment writes a journal expense entry.</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </DashboardLayout>
   );

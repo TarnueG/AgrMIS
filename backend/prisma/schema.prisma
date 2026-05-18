@@ -46,6 +46,7 @@ model users {
   employees                                   employees[]
   fish_harvest_records                        fish_harvest_records[]
   journal_entries                             journal_entries[]
+  leave_requests                              leave_requests[]
   livestock_health_logs                       livestock_health_logs[]
   livestock_records                           livestock_records[]
   purchase_orders                             purchase_orders[]
@@ -57,6 +58,7 @@ model users {
   sales_orders_sales_orders_updated_byTousers sales_orders[]            @relation("sales_orders_updated_byTousers")
   sessions                                    sessions[]
   stock_transactions                          stock_transactions[]
+  supervisor_assignments                      supervisor_assignments[]
   task_assignments                            task_assignments[]
   role                                        roles                     @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   work_orders                                 work_orders[]
@@ -104,6 +106,7 @@ model farm_profiles {
   financial_accounts      financial_accounts[]
   journal_entries         journal_entries[]
   land_parcels            land_parcels[]
+  leave_requests          leave_requests[]
   livestock_records       livestock_records[]
   marketing_orders        marketing_orders[]
   module_configurations   module_configurations[]
@@ -114,6 +117,7 @@ model farm_profiles {
   quality_checks          quality_checks[]
   sales_orders            sales_orders[]
   stock_items             stock_items[]
+  supervisor_assignments  supervisor_assignments[]
   subsystem_permissions   subsystem_permissions[]
   suppliers               suppliers[]
   task_assignments        task_assignments[]
@@ -156,6 +160,9 @@ model employees {
   assets                assets[]
   attendance_logs       attendance_logs[]
   farm                  farm_profiles?     @relation(fields: [farm_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  leave_requests        leave_requests[]
+  supervised_workers    supervisor_assignments[] @relation("supervisor_assignments_supervisor")
+  supervisor_links      supervisor_assignments[] @relation("supervisor_assignments_worker")
   user                  users?             @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   personnel_wages       personnel_wages[]
   task_assignments      task_assignments[]
@@ -917,7 +924,7 @@ model task_assignments {
   id            String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   farm_id       String?        @db.Uuid
   assigned_by   String         @db.Uuid
-  employee_id   String         @db.Uuid
+  employee_id   String?        @db.Uuid
   work_order_id String?        @db.Uuid
   task_title    String         @db.VarChar(200)
   description   String?
@@ -930,7 +937,7 @@ model task_assignments {
   created_at    DateTime       @default(now()) @db.Timestamptz(6)
   updated_at    DateTime       @default(now()) @db.Timestamptz(6)
   users         users          @relation(fields: [assigned_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  employees     employees      @relation(fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  employees     employees?     @relation(fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   farm_profiles farm_profiles? @relation(fields: [farm_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   work_orders   work_orders?   @relation(fields: [work_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -1325,6 +1332,27 @@ model contractors {
   @@index([farm_id], map: "idx_contractors_farm")
 }
 
+model leave_requests {
+  id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  farm_id         String?        @db.Uuid
+  employee_id     String         @db.Uuid
+  leave_type      String         @db.VarChar(30)
+  start_date      DateTime       @db.Date
+  end_date        DateTime       @db.Date
+  approval_status String         @default("pending") @db.VarChar(20)
+  notes           String?
+  created_by      String?        @db.Uuid
+  created_at      DateTime       @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime       @default(now()) @db.Timestamptz(6)
+  employees       employees      @relation(fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  farm_profiles   farm_profiles? @relation(fields: [farm_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users           users?         @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([employee_id], map: "idx_leave_employee")
+  @@index([farm_id], map: "idx_leave_farm")
+  @@index([start_date, end_date], map: "idx_leave_dates")
+}
+
 model personnel_wages {
   id              String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   farm_id         String?        @db.Uuid
@@ -1346,6 +1374,25 @@ model personnel_wages {
   farm_profiles   farm_profiles? @relation(fields: [farm_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([farm_id], map: "idx_personnel_wages_farm")
+}
+
+model supervisor_assignments {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  farm_id        String?        @db.Uuid
+  supervisor_id  String         @db.Uuid
+  employee_id    String         @db.Uuid
+  assigned_by    String?        @db.Uuid
+  assigned_at    DateTime       @default(now()) @db.Timestamptz(6)
+  released_at    DateTime?      @db.Timestamptz(6)
+  notes          String?
+  employees      employees      @relation("supervisor_assignments_worker", fields: [employee_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  supervisors    employees      @relation("supervisor_assignments_supervisor", fields: [supervisor_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  farm_profiles  farm_profiles? @relation(fields: [farm_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users          users?         @relation(fields: [assigned_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([employee_id], map: "idx_supervisor_assignment_employee")
+  @@index([farm_id], map: "idx_supervisor_assignment_farm")
+  @@index([supervisor_id], map: "idx_supervisor_assignment_supervisor")
 }
 
 model subsystem_permissions {

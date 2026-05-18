@@ -886,68 +886,246 @@ async function ensureMarketing() {
 }
 
 async function ensureEmployeesAndHr() {
-  const existing = await prisma.employees.findFirst({
-    where: { farm_id: FARM_ID, full_name: 'James Kollie', deleted_at: null },
-  });
-  const dailyWorker = existing ?? await prisma.employees.create({
-    data: {
-      farm_id: FARM_ID,
-      full_name: 'James Kollie',
-      employment_type: 'daily',
-      sector: 'crop',
-      job_title: 'Field Worker',
-      department: 'Production',
-      phone: '+231 770 000 201',
-      date_hired: todayMinus(45),
-      daily_wage: 22,
-      bank_id: 'BANK-FLD-001',
-      personnel_id: 'PER-JKOLLIE',
-      status: 'active',
-      days_worked: 12,
-      total_days_worked: 28,
-    } as any,
-  });
+  async function ensureEmployee(data: any) {
+    const existing = await prisma.employees.findFirst({
+      where: { farm_id: FARM_ID, full_name: data.full_name, deleted_at: null },
+    });
+    if (existing) {
+      return prisma.employees.update({
+        where: { id: existing.id },
+        data: { ...data, updated_at: new Date() } as any,
+      });
+    }
+    return prisma.employees.create({ data });
+  }
 
-  const logistics = await prisma.employees.findFirst({
-    where: { farm_id: FARM_ID, full_name: 'Martha Dennis', deleted_at: null },
-  }) ?? await prisma.employees.create({
-    data: {
-      farm_id: FARM_ID,
-      full_name: 'Martha Dennis',
-      employment_type: 'contract',
-      sector: 'logistics',
-      job_title: 'Storekeeper',
-      department: 'Inventory',
-      phone: '+231 770 000 202',
-      date_hired: todayMinus(70),
-      monthly_salary: 1450,
-      bank_id: 'BANK-STO-001',
-      personnel_id: 'PER-MDENNIS',
-      status: 'active',
-      days_worked: 20,
-      total_days_worked: 63,
-    } as any,
-  });
+  const dailyWorker = await ensureEmployee({
+    farm_id: FARM_ID,
+    full_name: 'James Kollie',
+    employment_type: 'daily',
+    sector: 'crop',
+    job_title: 'Field Worker',
+    department: 'Production',
+    phone: '+231 770 000 201',
+    date_hired: todayMinus(45),
+    daily_wage: 22,
+    bank_id: 'BANK-FLD-001',
+    personnel_id: 'PER-JKOLLIE',
+    status: 'active',
+    days_worked: 12,
+    total_days_worked: 28,
+  } as any);
+
+  const logistics = await ensureEmployee({
+    farm_id: FARM_ID,
+    full_name: 'Martha Dennis',
+    employment_type: 'contract',
+    sector: 'logistics',
+    job_title: 'Storekeeper',
+    department: 'Inventory',
+    phone: '+231 770 000 202',
+    date_hired: todayMinus(70),
+    monthly_salary: 1450,
+    bank_id: 'BANK-STO-001',
+    personnel_id: 'PER-MDENNIS',
+    status: 'active',
+    days_worked: 20,
+    total_days_worked: 63,
+  } as any);
+
+  const fieldSupervisor = await ensureEmployee({
+    farm_id: FARM_ID,
+    full_name: 'Abigail Swen',
+    employment_type: 'supervisor',
+    sector: 'crop',
+    job_title: 'Field Supervisor',
+    department: 'Operations',
+    phone: '+231 770 000 203',
+    date_hired: todayMinus(220),
+    monthly_salary: 1850,
+    bank_id: 'BANK-SUP-001',
+    personnel_id: 'PER-ASWEN',
+    status: 'active',
+    days_worked: 21,
+    total_days_worked: 102,
+  } as any);
+
+  const productionSupervisor = await ensureEmployee({
+    farm_id: FARM_ID,
+    full_name: 'Moses Kpadeh',
+    employment_type: 'supervisor',
+    sector: 'production',
+    job_title: 'Production Supervisor',
+    department: 'Processing',
+    phone: '+231 770 000 204',
+    date_hired: todayMinus(195),
+    monthly_salary: 1980,
+    bank_id: 'BANK-SUP-002',
+    personnel_id: 'PER-MKPADEH',
+    status: 'active',
+    days_worked: 21,
+    total_days_worked: 97,
+  } as any);
+
+  const cropWorker = await ensureEmployee({
+    farm_id: FARM_ID,
+    full_name: 'Ruth Zayzay',
+    employment_type: 'permanent',
+    sector: 'crop',
+    job_title: 'Crop Technician',
+    department: 'Field Operations',
+    phone: '+231 770 000 205',
+    date_hired: todayMinus(160),
+    monthly_salary: 980,
+    bank_id: 'BANK-CRP-001',
+    personnel_id: 'PER-RZAYZAY',
+    status: 'active',
+    days_worked: 20,
+    total_days_worked: 80,
+  } as any);
+
+  const livestockAttendant = await ensureEmployee({
+    farm_id: FARM_ID,
+    full_name: 'Sarah Toah',
+    employment_type: 'permanent',
+    sector: 'livestock',
+    job_title: 'Livestock Attendant',
+    department: 'Animal Care',
+    phone: '+231 770 000 206',
+    date_hired: todayMinus(190),
+    monthly_salary: 1040,
+    bank_id: 'BANK-LIV-001',
+    personnel_id: 'PER-STOAH',
+    status: 'active',
+    days_worked: 19,
+    total_days_worked: 88,
+  } as any);
+
+  const dailyWorkerTwo = await ensureEmployee({
+    farm_id: FARM_ID,
+    full_name: 'Peter Wolo',
+    employment_type: 'daily',
+    sector: 'production',
+    job_title: 'Daily Processing Hand',
+    department: 'Processing',
+    phone: '+231 770 000 207',
+    date_hired: todayMinus(28),
+    daily_wage: 24,
+    bank_id: 'BANK-DLY-002',
+    personnel_id: 'PER-PWOLO',
+    status: 'active',
+    days_worked: 10,
+    total_days_worked: 17,
+  } as any);
+
+  const contractorLiaison = await ensureEmployee({
+    farm_id: FARM_ID,
+    full_name: 'Daniel Kormah',
+    employment_type: 'contract',
+    sector: 'production',
+    job_title: 'Cold Room Technician',
+    department: 'Maintenance',
+    phone: '+231 770 000 208',
+    date_hired: todayMinus(84),
+    monthly_salary: 1200,
+    bank_id: 'BANK-CON-009',
+    personnel_id: 'PER-DKORMAH',
+    status: 'active',
+    days_worked: 18,
+    total_days_worked: 56,
+  } as any);
+
+  const suspendedWorker = await ensureEmployee({
+    farm_id: FARM_ID,
+    full_name: 'Bendu Konneh',
+    employment_type: 'daily',
+    sector: 'crop',
+    job_title: 'Field Worker',
+    department: 'Production',
+    phone: '+231 770 000 209',
+    date_hired: todayMinus(23),
+    daily_wage: 20,
+    bank_id: 'BANK-DLY-003',
+    personnel_id: 'PER-BKONNEH',
+    status: 'suspended',
+    suspension_reason: 'No-show pending review',
+    suspension_expires_at: todayPlus(3),
+    days_worked: 6,
+    total_days_worked: 9,
+  } as any);
 
   const attendanceSeeds = [
-    { employee_id: USERS.superAdmin.employeeId, date: todayMinus(0), status: 'present', hours: 8 },
-    { employee_id: USERS.farmManager.employeeId, date: todayMinus(0), status: 'present', hours: 9 },
-    { employee_id: dailyWorker.id, date: todayMinus(0), status: 'present', hours: 8 },
-    { employee_id: logistics.id, date: todayMinus(1), status: 'present', hours: 8 },
+    { employee_id: USERS.superAdmin.employeeId, date: todayMinus(0), status: 'present', clockIn: '08:10', clockOut: '17:00' },
+    { employee_id: USERS.farmManager.employeeId, date: todayMinus(0), status: 'present', clockIn: '07:20', clockOut: '18:05' },
+    { employee_id: fieldSupervisor.id, date: todayMinus(0), status: 'present', clockIn: '07:15', clockOut: '17:40' },
+    { employee_id: productionSupervisor.id, date: todayMinus(0), status: 'present', clockIn: '07:35', clockOut: '17:15' },
+    { employee_id: cropWorker.id, date: todayMinus(0), status: 'present', clockIn: '08:25', clockOut: '16:50' },
+    { employee_id: dailyWorker.id, date: todayMinus(0), status: 'present', clockIn: '07:50', clockOut: '16:30' },
+    { employee_id: dailyWorkerTwo.id, date: todayMinus(0), status: 'present', clockIn: '08:05', clockOut: '18:10' },
+    { employee_id: logistics.id, date: todayMinus(0), status: 'present', clockIn: '07:55', clockOut: '17:00' },
+    { employee_id: contractorLiaison.id, date: todayMinus(0), status: 'present', clockIn: '08:00', clockOut: '17:25' },
+    { employee_id: USERS.salesOfficer.employeeId, date: todayMinus(0), status: 'leave' },
+    { employee_id: livestockAttendant.id, date: todayMinus(0), status: 'absent' },
+    { employee_id: fieldSupervisor.id, date: todayMinus(1), status: 'present', clockIn: '07:10', clockOut: '17:15' },
+    { employee_id: cropWorker.id, date: todayMinus(1), status: 'present', clockIn: '07:58', clockOut: '16:55' },
+    { employee_id: dailyWorker.id, date: todayMinus(1), status: 'present', clockIn: '08:12', clockOut: '16:18' },
+    { employee_id: dailyWorkerTwo.id, date: todayMinus(1), status: 'half_day', clockIn: '08:00', clockOut: '12:10' },
+    { employee_id: livestockAttendant.id, date: todayMinus(1), status: 'present', clockIn: '07:42', clockOut: '16:20' },
+    { employee_id: logistics.id, date: todayMinus(1), status: 'present', clockIn: '07:48', clockOut: '16:42' },
+    { employee_id: fieldSupervisor.id, date: todayMinus(2), status: 'present', clockIn: '07:12', clockOut: '17:12' },
+    { employee_id: cropWorker.id, date: todayMinus(2), status: 'present', clockIn: '08:20', clockOut: '17:05' },
+    { employee_id: dailyWorker.id, date: todayMinus(2), status: 'present', clockIn: '07:45', clockOut: '16:25' },
+    { employee_id: livestockAttendant.id, date: todayMinus(2), status: 'present', clockIn: '07:50', clockOut: '16:10' },
+    { employee_id: logistics.id, date: todayMinus(2), status: 'present', clockIn: '07:55', clockOut: '17:05' },
+    { employee_id: fieldSupervisor.id, date: todayMinus(3), status: 'present', clockIn: '07:18', clockOut: '17:30' },
+    { employee_id: cropWorker.id, date: todayMinus(3), status: 'present', clockIn: '07:58', clockOut: '16:40' },
+    { employee_id: dailyWorker.id, date: todayMinus(3), status: 'absent' },
+    { employee_id: livestockAttendant.id, date: todayMinus(3), status: 'present', clockIn: '07:44', clockOut: '16:00' },
+    { employee_id: logistics.id, date: todayMinus(3), status: 'present', clockIn: '07:50', clockOut: '16:33' },
+    { employee_id: fieldSupervisor.id, date: todayMinus(4), status: 'present', clockIn: '07:20', clockOut: '17:10' },
+    { employee_id: cropWorker.id, date: todayMinus(4), status: 'present', clockIn: '08:08', clockOut: '16:58' },
+    { employee_id: dailyWorker.id, date: todayMinus(4), status: 'present', clockIn: '07:49', clockOut: '16:05' },
+    { employee_id: livestockAttendant.id, date: todayMinus(4), status: 'leave' },
+    { employee_id: logistics.id, date: todayMinus(4), status: 'present', clockIn: '07:42', clockOut: '16:55' },
+    { employee_id: fieldSupervisor.id, date: todayMinus(5), status: 'present', clockIn: '07:14', clockOut: '17:20' },
+    { employee_id: cropWorker.id, date: todayMinus(5), status: 'present', clockIn: '07:54', clockOut: '16:44' },
+    { employee_id: dailyWorker.id, date: todayMinus(5), status: 'present', clockIn: '08:03', clockOut: '16:14' },
+    { employee_id: livestockAttendant.id, date: todayMinus(5), status: 'present', clockIn: '07:39', clockOut: '16:11' },
+    { employee_id: logistics.id, date: todayMinus(5), status: 'present', clockIn: '07:51', clockOut: '16:40' },
+    { employee_id: fieldSupervisor.id, date: todayMinus(6), status: 'present', clockIn: '07:25', clockOut: '17:05' },
+    { employee_id: cropWorker.id, date: todayMinus(6), status: 'half_day', clockIn: '08:16', clockOut: '12:40' },
+    { employee_id: dailyWorker.id, date: todayMinus(6), status: 'present', clockIn: '07:56', clockOut: '16:08' },
+    { employee_id: livestockAttendant.id, date: todayMinus(6), status: 'present', clockIn: '07:47', clockOut: '16:14' },
+    { employee_id: logistics.id, date: todayMinus(6), status: 'present', clockIn: '07:43', clockOut: '16:36' },
   ];
 
   for (const seed of attendanceSeeds) {
     const existingLog = await prisma.attendance_logs.findFirst({
       where: { employee_id: seed.employee_id, log_date: seed.date },
     });
-    if (!existingLog) {
+    const clockIn = seed.clockIn ? new Date(`1970-01-01T${seed.clockIn}:00`) : null;
+    const clockOut = seed.clockOut ? new Date(`1970-01-01T${seed.clockOut}:00`) : null;
+    const hours = clockIn && clockOut ? (clockOut.getTime() - clockIn.getTime()) / 3600000 : null;
+    if (existingLog) {
+      await prisma.attendance_logs.update({
+        where: { id: existingLog.id },
+        data: {
+          status: seed.status,
+          clock_in: clockIn,
+          clock_out: clockOut,
+          hours_worked: hours,
+        },
+      });
+    } else {
       await prisma.attendance_logs.create({
         data: {
           employee_id: seed.employee_id,
           recorded_by: USERS.farmManager.userId,
           log_date: seed.date,
           status: seed.status,
-          hours_worked: seed.hours,
+          clock_in: clockIn,
+          clock_out: clockOut,
+          hours_worked: hours,
         },
       });
     }
@@ -956,19 +1134,64 @@ async function ensureEmployeesAndHr() {
   const taskSeed = [
     {
       employee_id: dailyWorker.id,
-      task_title: 'Prepare east maize block for irrigation',
-      description: 'Finish channel cleanup and confirm pump handoff.',
+      task_title: 'Apply fertilizer to rice plot',
+      description: 'Side-dress the lowland rice plot before 14:00 and record bag balance.',
       sector: 'crop',
-      due_date: todayPlus(1),
+      due_date: todayPlus(0),
       priority: 'high',
-      status: 'pending',
+      status: 'assigned',
+    },
+    {
+      employee_id: livestockAttendant.id,
+      task_title: 'Feed broiler starter group',
+      description: 'Issue starter feed to broiler pens A and B and report intake variance.',
+      sector: 'livestock',
+      due_date: todayPlus(0),
+      priority: 'urgent',
+      status: 'in_progress',
     },
     {
       employee_id: logistics.id,
+      task_title: 'Load packaged rice for delivery',
+      description: 'Prepare 120 bags for Monrovia route and confirm dispatch count.',
+      sector: 'logistics',
+      due_date: todayPlus(1),
+      priority: 'high',
+      status: 'assigned',
+    },
+    {
+      employee_id: contractorLiaison.id,
+      task_title: 'Clean cold room storage area',
+      description: 'Sanitize holding area and confirm compressor readings after cleanup.',
+      sector: 'production',
+      due_date: todayPlus(1),
+      priority: 'normal',
+      status: 'assigned',
+    },
+    {
+      employee_id: null,
+      task_title: 'Inspect fish pond water level',
+      description: 'Verify water loss and note any inlet blockage before feeding window.',
+      sector: 'aquaculture',
+      due_date: todayPlus(0),
+      priority: 'normal',
+      status: 'pending',
+    },
+    {
+      employee_id: cropWorker.id,
+      task_title: 'Service irrigation line',
+      description: 'Replace cracked elbow at north line and test pressure.',
+      sector: 'crop',
+      due_date: todayMinus(1),
+      priority: 'high',
+      status: 'assigned',
+    },
+    {
+      employee_id: dailyWorkerTwo.id,
       task_title: 'Reconcile seed store receipts',
       description: 'Confirm physical stock against issue log.',
-      sector: 'logistics',
-      due_date: todayPlus(2),
+      sector: 'production',
+      due_date: todayMinus(2),
       priority: 'normal',
       status: 'completed',
       completed_at: todayMinus(1),
@@ -977,12 +1200,13 @@ async function ensureEmployeesAndHr() {
 
   for (const task of taskSeed) {
     const existingTask = await prisma.task_assignments.findFirst({
-      where: { farm_id: FARM_ID, task_title: task.task_title, employee_id: task.employee_id },
+      where: { farm_id: FARM_ID, task_title: task.task_title },
     });
     if (existingTask) {
       await prisma.task_assignments.update({
         where: { id: existingTask.id },
         data: {
+          employee_id: task.employee_id,
           description: task.description,
           sector: task.sector,
           due_date: task.due_date,
@@ -1005,6 +1229,105 @@ async function ensureEmployeesAndHr() {
           priority: task.priority,
           status: task.status,
           completed_at: task.completed_at ?? null,
+        },
+      });
+    }
+  }
+
+  const supervisorLinks = [
+    { supervisor_id: fieldSupervisor.id, employee_id: dailyWorker.id, notes: 'Crop block A and B' },
+    { supervisor_id: fieldSupervisor.id, employee_id: cropWorker.id, notes: 'Field fertiliser and irrigation line work' },
+    { supervisor_id: fieldSupervisor.id, employee_id: suspendedWorker.id, notes: 'Temporary field labor pool' },
+    { supervisor_id: productionSupervisor.id, employee_id: logistics.id, notes: 'Store and dispatch operations' },
+    { supervisor_id: productionSupervisor.id, employee_id: dailyWorkerTwo.id, notes: 'Processing support shift' },
+    { supervisor_id: productionSupervisor.id, employee_id: contractorLiaison.id, notes: 'Cold room and packhouse maintenance' },
+    { supervisor_id: productionSupervisor.id, employee_id: livestockAttendant.id, notes: 'Livestock feed issue coordination' },
+  ];
+
+  for (const link of supervisorLinks) {
+    const existingLink = await prismaAny.supervisor_assignments.findFirst({
+      where: {
+        farm_id: FARM_ID,
+        supervisor_id: link.supervisor_id,
+        employee_id: link.employee_id,
+        released_at: null,
+      },
+    });
+    if (existingLink) {
+      await prismaAny.supervisor_assignments.update({
+        where: { id: existingLink.id },
+        data: { notes: link.notes, assigned_by: USERS.farmManager.userId },
+      });
+    } else {
+      await prismaAny.supervisor_assignments.create({
+        data: {
+          farm_id: FARM_ID,
+          supervisor_id: link.supervisor_id,
+          employee_id: link.employee_id,
+          assigned_by: USERS.farmManager.userId,
+          notes: link.notes,
+        },
+      });
+    }
+  }
+
+  const leaveSeeds = [
+    {
+      employee_id: livestockAttendant.id,
+      leave_type: 'sick',
+      start_date: todayMinus(0),
+      end_date: todayPlus(1),
+      approval_status: 'approved',
+      notes: 'Veterinary clinic visit and rest day.',
+    },
+    {
+      employee_id: USERS.salesOfficer.employeeId,
+      leave_type: 'personal',
+      start_date: todayMinus(0),
+      end_date: todayMinus(0),
+      approval_status: 'approved',
+      notes: 'Customer engagement trip outside district.',
+    },
+    {
+      employee_id: dailyWorkerTwo.id,
+      leave_type: 'unpaid',
+      start_date: todayMinus(8),
+      end_date: todayMinus(7),
+      approval_status: 'approved',
+      notes: 'Requested unpaid absence for family obligation.',
+    },
+  ];
+
+  for (const leave of leaveSeeds) {
+    const existingLeave = await prismaAny.leave_requests.findFirst({
+      where: {
+        farm_id: FARM_ID,
+        employee_id: leave.employee_id,
+        leave_type: leave.leave_type,
+        start_date: leave.start_date,
+        end_date: leave.end_date,
+      },
+    });
+    if (existingLeave) {
+      await prismaAny.leave_requests.update({
+        where: { id: existingLeave.id },
+        data: {
+          approval_status: leave.approval_status,
+          notes: leave.notes,
+          updated_at: new Date(),
+        },
+      });
+    } else {
+      await prismaAny.leave_requests.create({
+        data: {
+          farm_id: FARM_ID,
+          employee_id: leave.employee_id,
+          leave_type: leave.leave_type,
+          start_date: leave.start_date,
+          end_date: leave.end_date,
+          approval_status: leave.approval_status,
+          notes: leave.notes,
+          created_by: USERS.farmManager.userId,
         },
       });
     }
@@ -1055,7 +1378,7 @@ async function ensureEmployeesAndHr() {
       full_name: 'Farm Manager',
       employment_type: 'permanent',
       sector: 'general',
-      pay_period: 'Monthly',
+      pay_period: 'Current Month',
       days_worked: 20,
       amount: 3200,
       bank_id: 'BANK-MGR-001',
@@ -1067,13 +1390,37 @@ async function ensureEmployeesAndHr() {
       full_name: 'James Kollie',
       employment_type: 'daily',
       sector: 'crop',
-      pay_period: 'Every 15 days',
+      pay_period: 'Current Month',
       days_worked: 12,
       amount: 264,
       bank_id: 'BANK-FLD-001',
       payment_status: 'paid',
       paid_at: todayMinus(3),
       immutable: true,
+    },
+    {
+      employee_id: fieldSupervisor.id,
+      personnel_id: 'PER-ASWEN',
+      full_name: 'Abigail Swen',
+      employment_type: 'supervisor',
+      sector: 'crop',
+      pay_period: 'Current Month',
+      days_worked: 21,
+      amount: 1925,
+      bank_id: 'BANK-SUP-001',
+      payment_status: 'pending',
+    },
+    {
+      employee_id: logistics.id,
+      personnel_id: 'PER-MDENNIS',
+      full_name: 'Martha Dennis',
+      employment_type: 'contract',
+      sector: 'logistics',
+      pay_period: 'Current Month',
+      days_worked: 20,
+      amount: 1450,
+      bank_id: 'BANK-STO-001',
+      payment_status: 'approved',
     },
   ];
 
