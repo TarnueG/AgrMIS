@@ -1190,6 +1190,10 @@ model inventory_production_requests {
   link_order                   String?                        @default("Make-to-Stock") @db.VarChar(50)
   status                       String?                        @default("pending") @db.VarChar(30)
   stock_item_id                String?                        @db.Uuid
+  sales_order_id               String?                        @db.Uuid
+  rejection_reason             String?
+  notes                        String?
+  due_date                     DateTime?                      @db.Date
   created_at                   DateTime?                      @default(now()) @db.Timestamptz(6)
   updated_at                   DateTime?                      @default(now()) @db.Timestamptz(6)
   inventory_production_batches inventory_production_batches[]
@@ -1202,6 +1206,18 @@ model inventory_production_batches {
   batch_number                  String?                        @db.VarChar(50)
   quantity                      Decimal?                       @db.Decimal(10, 2)
   status                        String?                        @default("pending") @db.VarChar(30)
+  sector                        String?                        @default("processing") @db.VarChar(30)
+  linked_sales_order_id         String?                        @db.Uuid
+  planned_quantity              Decimal?                       @db.Decimal(14, 3)
+  produced_quantity             Decimal?                       @default(0) @db.Decimal(14, 3)
+  waste_quantity                Decimal?                       @default(0) @db.Decimal(14, 3)
+  quantity_unit                 String?                        @default("kg") @db.VarChar(20)
+  start_date                    DateTime?                      @db.Date
+  expected_completion           DateTime?                      @db.Date
+  actual_completion             DateTime?                      @db.Date
+  failure_reason                String?
+  passed_to_inventory           Boolean?                       @default(false)
+  notes                         String?
   created_at                    DateTime?                      @default(now()) @db.Timestamptz(6)
   updated_at                    DateTime?                      @default(now()) @db.Timestamptz(6)
   inventory_production_requests inventory_production_requests? @relation(fields: [request_id], references: [id], onDelete: Cascade, onUpdate: NoAction)

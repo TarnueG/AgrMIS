@@ -2005,8 +2005,132 @@ async function ensureManagerCoverage() {
   }
 
   const productionRequestSeeds = [
-    { product_name: 'Broiler Starter Feed', quantity: 180, quantity_unit: 'bag', location: 'Feed Store A', order_type: 'Make-to-Stock', link_order: 'Internal Demand', status: 'accepted', batch_number: 'BATCH-DEMO-002', batch_quantity: 90, batch_status: 'quality_check' },
-    { product_name: 'Packaged Rice 5kg', quantity: 210, quantity_unit: 'bag', location: 'Finished Goods Store', order_type: 'Make-to-Order', link_order: 'Customer Sales', status: 'pending', batch_number: 'BATCH-DEMO-003', batch_quantity: 120, batch_status: 'pending' },
+    {
+      product_name: 'Broiler Starter Feed',
+      quantity: 180,
+      quantity_unit: 'bag',
+      location: 'Feed Store A',
+      order_type: 'Make-to-Stock',
+      link_order: 'Internal Demand',
+      status: 'accepted',
+      notes: 'Feed mill blend for the next broiler cycle.',
+      due_date: todayPlus(2),
+      batch_number: 'BATCH-DEMO-002',
+      batch_quantity: 90,
+      batch_status: 'quality_check',
+      sector: 'processing',
+      planned_quantity: 90,
+      produced_quantity: 84,
+      waste_quantity: 3,
+      start_date: todayMinus(2),
+      expected_completion: todayPlus(1),
+      actual_completion: null,
+    },
+    {
+      product_name: 'Packaged Rice 5kg',
+      quantity: 210,
+      quantity_unit: 'bag',
+      location: 'Finished Goods Store',
+      order_type: 'Make-to-Order',
+      link_order: 'SO-DEMO-003',
+      status: 'pending',
+      notes: 'Retail dispatch packing run for morning loading.',
+      due_date: todayPlus(1),
+      batch_number: 'BATCH-DEMO-003',
+      batch_quantity: 120,
+      batch_status: 'pending',
+      sector: 'processing',
+      planned_quantity: 120,
+      produced_quantity: 0,
+      waste_quantity: 0,
+      start_date: todayPlus(0),
+      expected_completion: todayPlus(1),
+      actual_completion: null,
+    },
+    {
+      product_name: 'Tilapia Harvest Pack',
+      quantity: 65,
+      quantity_unit: 'crate',
+      location: 'Cold Room 1',
+      order_type: 'Make-to-Order',
+      link_order: 'SO-DEMO-006',
+      status: 'accepted',
+      notes: 'Harvest and grade tilapia for local wholesale demand.',
+      due_date: todayPlus(4),
+      batch_number: 'BATCH-DEMO-004',
+      batch_quantity: 65,
+      batch_status: 'in_process',
+      sector: 'aquaculture',
+      planned_quantity: 65,
+      produced_quantity: 28,
+      waste_quantity: 1,
+      start_date: todayMinus(1),
+      expected_completion: todayPlus(3),
+      actual_completion: null,
+    },
+    {
+      product_name: 'Cassava Chips 10kg',
+      quantity: 48,
+      quantity_unit: 'bag',
+      location: 'Dry Goods Bay',
+      order_type: 'Make-to-Stock',
+      link_order: 'Warehouse Buffer',
+      status: 'passed',
+      notes: 'Shelf-stable processing run for wholesale bagging.',
+      due_date: todayMinus(4),
+      batch_number: 'BATCH-DEMO-005',
+      batch_quantity: 48,
+      batch_status: 'passed',
+      sector: 'crop',
+      planned_quantity: 48,
+      produced_quantity: 44,
+      waste_quantity: 2,
+      start_date: todayMinus(8),
+      expected_completion: todayMinus(5),
+      actual_completion: todayMinus(4),
+    },
+    {
+      product_name: 'Goat Manure Compost',
+      quantity: 30,
+      quantity_unit: 'bag',
+      location: 'Compost Pad',
+      order_type: 'Make-to-Stock',
+      link_order: 'Organic Input Program',
+      status: 'accepted',
+      notes: 'Curing batch awaiting moisture correction and bagging.',
+      due_date: todayPlus(5),
+      batch_number: 'BATCH-DEMO-006',
+      batch_quantity: 30,
+      batch_status: 'rework',
+      sector: 'livestock',
+      planned_quantity: 30,
+      produced_quantity: 18,
+      waste_quantity: 4,
+      start_date: todayMinus(6),
+      expected_completion: todayPlus(2),
+      actual_completion: null,
+    },
+    {
+      product_name: 'Smoked Catfish Packs',
+      quantity: 22,
+      quantity_unit: 'crate',
+      location: 'Processing Room 2',
+      order_type: 'Make-to-Order',
+      link_order: 'SO-DEMO-008',
+      status: 'cancelled',
+      notes: 'Rejected due to moisture and packaging seal failures.',
+      due_date: todayMinus(2),
+      batch_number: 'BATCH-DEMO-007',
+      batch_quantity: 22,
+      batch_status: 'declined',
+      sector: 'aquaculture',
+      planned_quantity: 22,
+      produced_quantity: 10,
+      waste_quantity: 6,
+      start_date: todayMinus(5),
+      expected_completion: todayMinus(3),
+      actual_completion: todayMinus(2),
+    },
   ];
   for (const seed of productionRequestSeeds) {
     let request = await prismaAny.inventory_production_requests.findFirst({
@@ -2024,6 +2148,8 @@ async function ensureManagerCoverage() {
           link_order: seed.link_order,
           status: seed.status,
           stock_item_id: stockByName.get(seed.product_name) ?? null,
+          notes: seed.notes,
+          due_date: seed.due_date,
           updated_at: new Date(),
         },
       });
@@ -2039,6 +2165,8 @@ async function ensureManagerCoverage() {
           link_order: seed.link_order,
           status: seed.status,
           stock_item_id: stockByName.get(seed.product_name) ?? null,
+          notes: seed.notes,
+          due_date: seed.due_date,
         },
       });
     }
@@ -2049,7 +2177,22 @@ async function ensureManagerCoverage() {
     if (batch) {
       await prismaAny.inventory_production_batches.update({
         where: { id: batch.id },
-        data: { quantity: seed.batch_quantity, status: seed.batch_status, updated_at: new Date() },
+        data: {
+          quantity: seed.batch_quantity,
+          status: seed.batch_status === 'declined' ? 'failed' : seed.batch_status,
+          sector: seed.sector,
+          planned_quantity: seed.planned_quantity,
+          produced_quantity: seed.produced_quantity,
+          waste_quantity: seed.waste_quantity,
+          quantity_unit: seed.quantity_unit,
+          start_date: seed.start_date,
+          expected_completion: seed.expected_completion,
+          actual_completion: seed.actual_completion,
+          failure_reason: seed.batch_status === 'declined' ? 'Moisture variance and seal quality failure.' : null,
+          passed_to_inventory: seed.batch_status === 'passed',
+          notes: seed.notes,
+          updated_at: new Date(),
+        },
       });
     } else {
       await prismaAny.inventory_production_batches.create({
@@ -2058,7 +2201,18 @@ async function ensureManagerCoverage() {
           request_id: request.id,
           batch_number: seed.batch_number,
           quantity: seed.batch_quantity,
-          status: seed.batch_status,
+          status: seed.batch_status === 'declined' ? 'failed' : seed.batch_status,
+          sector: seed.sector,
+          planned_quantity: seed.planned_quantity,
+          produced_quantity: seed.produced_quantity,
+          waste_quantity: seed.waste_quantity,
+          quantity_unit: seed.quantity_unit,
+          start_date: seed.start_date,
+          expected_completion: seed.expected_completion,
+          actual_completion: seed.actual_completion,
+          failure_reason: seed.batch_status === 'declined' ? 'Moisture variance and seal quality failure.' : null,
+          passed_to_inventory: seed.batch_status === 'passed',
+          notes: seed.notes,
         },
       });
     }
@@ -2630,6 +2784,220 @@ async function ensureSalesCommandCenter() {
         },
       });
     }
+  }
+
+  const productionSalesLinks = [
+    { order_number: 'SO-DEMO-003', product_name: 'Packaged Rice 5kg', batch_number: 'BATCH-DEMO-003' },
+    { order_number: 'SO-DEMO-006', product_name: 'Tilapia Harvest Pack', batch_number: 'BATCH-DEMO-004' },
+    { order_number: 'SO-DEMO-008', product_name: 'Smoked Catfish Packs', batch_number: 'BATCH-DEMO-007' },
+  ];
+
+  for (const link of productionSalesLinks) {
+    const order = await prisma.sales_orders.findFirst({
+      where: { farm_id: FARM_ID, order_number: link.order_number },
+    });
+    const request = await prismaAny.inventory_production_requests.findFirst({
+      where: { farm_id: FARM_ID, product_name: link.product_name },
+    });
+    const batch = await prismaAny.inventory_production_batches.findFirst({
+      where: { farm_id: FARM_ID, batch_number: link.batch_number },
+    });
+
+    if (order && request) {
+      await prismaAny.inventory_production_requests.update({
+        where: { id: request.id },
+        data: {
+          sales_order_id: order.id,
+          link_order: order.order_number,
+          updated_at: new Date(),
+        },
+      });
+    }
+
+    if (order && batch) {
+      await prismaAny.inventory_production_batches.update({
+        where: { id: batch.id },
+        data: {
+          linked_sales_order_id: order.id,
+          updated_at: new Date(),
+        },
+      });
+    }
+  }
+
+  const productionConsumptionSeeds = [
+    { batch_number: 'BATCH-DEMO-002', item_id: stockBySku.get('SEED-MAIZE-350')?.id, quantity: 6, notes: 'Premix additive lot consumed during feed blending.' },
+    { batch_number: 'BATCH-DEMO-002', item_id: stockBySku.get('FERT-UREA-4600')?.id, quantity: 2, notes: 'Nutrient fortification consumed in feed mill trial.' },
+    { batch_number: 'BATCH-DEMO-003', item_id: stockBySku.get('TOOLS-CRATE-2026')?.id, quantity: 14, notes: 'Packaging crates issued for bagged rice staging.' },
+    { batch_number: 'BATCH-DEMO-004', item_id: stockBySku.get('FEED-FISH-32')?.id, quantity: 10, notes: 'Floating feed issued before harvest grading.' },
+    { batch_number: 'BATCH-DEMO-005', item_id: stockBySku.get('SEED-MAIZE-350')?.id, quantity: 4, notes: 'Drying trays and seed-grade liners allocated to cassava line.' },
+    { batch_number: 'BATCH-DEMO-006', item_id: stockBySku.get('FERT-UREA-4600')?.id, quantity: 3, notes: 'Nitrogen activator used during compost remediation.' },
+  ];
+
+  for (const seed of productionConsumptionSeeds) {
+    if (!seed.item_id) continue;
+    const batch = await prismaAny.inventory_production_batches.findFirst({
+      where: { farm_id: FARM_ID, batch_number: seed.batch_number },
+    });
+    if (!batch) continue;
+
+    const existing = await prisma.stock_transactions.findFirst({
+      where: {
+        reference_id: batch.id,
+        stock_item_id: seed.item_id,
+        transaction_type: 'production_consumption',
+        notes: seed.notes,
+      },
+    });
+    if (existing) continue;
+
+    const stockItem = await prisma.stock_items.findUnique({ where: { id: seed.item_id } });
+    if (!stockItem) continue;
+
+    const before = Number(stockItem.current_quantity);
+    const after = Math.max(before - seed.quantity, 0);
+
+    await prisma.stock_transactions.create({
+      data: {
+        stock_item_id: seed.item_id,
+        performed_by: USERS.farmManager.userId,
+        transaction_type: 'production_consumption',
+        quantity: seed.quantity,
+        quantity_before: before,
+        quantity_after: after,
+        reference_id: batch.id,
+        reference_table: 'inventory_production_batches',
+        source_module: 'production',
+        notes: seed.notes,
+      },
+    });
+
+    await prisma.stock_items.update({
+      where: { id: seed.item_id },
+      data: { current_quantity: after, updated_at: new Date() },
+    });
+  }
+
+  const productionOutputSeeds = [
+    { batch_number: 'BATCH-DEMO-001', product_name: 'Packaged Rice 5kg', quantity: 180, date: todayMinus(12), notes: 'Finished output posted from legacy packaged rice run.' },
+    { batch_number: 'BATCH-DEMO-005', product_name: 'Cassava Chips 10kg', quantity: 44, date: todayMinus(4), notes: 'Finished output posted from cassava processing line.' },
+  ];
+
+  for (const seed of productionOutputSeeds) {
+    const batch = await prismaAny.inventory_production_batches.findFirst({
+      where: { farm_id: FARM_ID, batch_number: seed.batch_number },
+      include: { inventory_production_requests: true },
+    });
+    if (!batch) continue;
+
+    let stockItem = await prisma.stock_items.findFirst({
+      where: { farm_id: FARM_ID, deleted_at: null, name: seed.product_name },
+    });
+    if (!stockItem) {
+      let category = await prisma.item_categories.findFirst({
+        where: { name: { equals: 'finished goods', mode: 'insensitive' }, deleted_at: null },
+      });
+      if (!category) {
+        category = await prisma.item_categories.create({
+          data: { name: 'finished goods', type: 'product' },
+        });
+      }
+      stockItem = await prisma.stock_items.create({
+        data: {
+          farm_id: FARM_ID,
+          category_id: category.id,
+          name: seed.product_name,
+          unit_of_measure: batch.quantity_unit ?? batch.inventory_production_requests?.quantity_unit ?? 'bag',
+          current_quantity: 0,
+          reorder_threshold: 0,
+          storage_location: batch.inventory_production_requests?.location ?? null,
+        },
+      });
+    }
+
+    const existing = await prisma.stock_transactions.findFirst({
+      where: {
+        reference_id: batch.id,
+        stock_item_id: stockItem.id,
+        transaction_type: 'production_output',
+      },
+    });
+    if (existing) continue;
+
+    const before = Number(stockItem.current_quantity);
+    const after = before + seed.quantity;
+
+    await prisma.stock_transactions.create({
+      data: {
+        stock_item_id: stockItem.id,
+        performed_by: USERS.farmManager.userId,
+        transaction_type: 'production_output',
+        quantity: seed.quantity,
+        quantity_before: before,
+        quantity_after: after,
+        reference_id: batch.id,
+        reference_table: 'inventory_production_batches',
+        source_module: 'production',
+        notes: seed.notes,
+        transacted_at: seed.date,
+      },
+    });
+
+    await prisma.stock_items.update({
+      where: { id: stockItem.id },
+      data: { current_quantity: after, updated_at: new Date() },
+    });
+
+    if (batch.inventory_production_requests?.id) {
+      await prismaAny.inventory_production_requests.update({
+        where: { id: batch.inventory_production_requests.id },
+        data: { stock_item_id: stockItem.id, updated_at: new Date() },
+      });
+    }
+  }
+
+  const productionQualitySeeds = [
+    { batch_number: 'BATCH-DEMO-001', result: 'passed', notes: 'Packaging weight and seal integrity cleared.', date: todayMinus(12) },
+    { batch_number: 'BATCH-DEMO-002', result: 'passed', notes: 'Granule consistency cleared for dispatch staging.', date: todayMinus(1) },
+    { batch_number: 'BATCH-DEMO-006', result: 'rework', notes: 'Moisture profile above threshold. Return to curing pad.', date: todayMinus(1) },
+    { batch_number: 'BATCH-DEMO-007', result: 'failed', notes: 'Smoke density and seal failure triggered rejection.', date: todayMinus(2) },
+  ];
+
+  for (const seed of productionQualitySeeds) {
+    const batch = await prismaAny.inventory_production_batches.findFirst({
+      where: { farm_id: FARM_ID, batch_number: seed.batch_number },
+      include: { inventory_production_requests: true },
+    });
+    if (!batch) continue;
+
+    const existing = await prisma.quality_checks.findFirst({
+      where: {
+        farm_id: FARM_ID,
+        notes: seed.notes,
+      },
+    });
+    if (existing) continue;
+
+    await prisma.quality_checks.create({
+      data: {
+        farm_id: FARM_ID,
+        checked_by: USERS.farmManager.userId,
+        check_date: seed.date,
+        grade: seed.result === 'passed' ? 'A' : seed.result === 'rework' ? 'B' : 'C',
+        passed: seed.result === 'passed',
+        notes: seed.notes,
+        stock_item_id: batch.inventory_production_requests?.stock_item_id ?? null,
+        sales_order_id: batch.linked_sales_order_id ?? batch.inventory_production_requests?.sales_order_id ?? null,
+        parameters: {
+          batchId: batch.id,
+          batchNumber: batch.batch_number,
+          productName: batch.inventory_production_requests?.product_name ?? seed.batch_number,
+          result: seed.result,
+          producedQuantity: Number(batch.produced_quantity ?? 0),
+          wasteQuantity: Number(batch.waste_quantity ?? 0),
+        },
+      } as any,
+    });
   }
 }
 
