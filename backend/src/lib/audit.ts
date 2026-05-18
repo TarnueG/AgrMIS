@@ -16,6 +16,7 @@ export type AuditEventType =
   | 'user_activated'
   | 'customer_deactivated'
   | 'customer_activated'
+  | 'asset_status_changed'
   | 'labor_task_created'
   | 'labor_task_updated'
   | 'payroll_paid'
