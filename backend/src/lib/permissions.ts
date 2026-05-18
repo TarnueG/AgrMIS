@@ -1,40 +1,20 @@
 import prisma from './prisma';
+import {
+  ADMIN_ROLE_NAMES,
+  ALL_SUBSYSTEMS,
+  FULL_ACCESS,
+  type PermissionState,
+  VALID_ROLE_NAMES,
+} from './accessControlConfig';
 
-const ADMIN_ROLES = new Set(['super_admin', 'admin']);
+export { VALID_ROLE_NAMES } from './accessControlConfig';
 
-export const VALID_ROLE_NAMES = new Set([
-  'super_admin',
-  'admin',
-  'farm_manager',
-  'field_supervisor',
-  'asset_manager',
-  'production_manager',
-  'accountant',
-  'sales_customer_officer',
-  'marketing_manager',
-  'human_resource',
-  'customer',
-]);
-
-export interface SubsystemAccess {
-  canView: boolean;
-  canCreate: boolean;
-  canEdit: boolean;
-  canDelete: boolean;
-}
+export interface SubsystemAccess extends PermissionState {}
 
 export type PermissionMap = Record<string, SubsystemAccess>;
 
-export const ALL_SUBSYSTEMS = [
-  'dashboard', 'inventory', 'procurement', 'crm', 'marketing',
-  'sales_order_points', 'production', 'livestock', 'finance', 'reports',
-  'human_capital', 'machinery', 'land_parcels', 'settings',
-] as const;
-
-const FULL: SubsystemAccess = { canView: true, canCreate: true, canEdit: true, canDelete: true };
-
 const FULL_ACCESS_MAP: PermissionMap = Object.fromEntries(
-  ALL_SUBSYSTEMS.map(s => [s, FULL])
+  ALL_SUBSYSTEMS.map((subsystem) => [subsystem, FULL_ACCESS]),
 );
 
 // In-process 1-minute cache keyed by roleId:farmId
@@ -42,7 +22,7 @@ const cache = new Map<string, { map: PermissionMap; ts: number }>();
 const TTL = 60_000;
 
 export function isAdminRole(roleName: string): boolean {
-  return ADMIN_ROLES.has(roleName.toLowerCase().trim());
+  return ADMIN_ROLE_NAMES.has(roleName.toLowerCase().trim());
 }
 
 export async function getPermissions(
@@ -67,6 +47,8 @@ export async function getPermissions(
       canCreate: r.can_create as boolean,
       canEdit: r.can_edit as boolean,
       canDelete: r.can_delete as boolean,
+      canApprove: r.can_approve as boolean,
+      canExport: r.can_export as boolean,
     };
   }
 

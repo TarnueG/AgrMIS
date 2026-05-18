@@ -1,14 +1,16 @@
 import { Router } from 'express';
 import prisma from '../lib/prisma';
-import { requireAuth, requireRole } from '../middleware/auth';
+import { requireAuth, requirePermission } from '../middleware/auth';
 
 const router = Router();
 router.use(requireAuth);
-const isAdmin = requireRole('super_admin', 'admin');
 
 // GET /api/v1/audit-log
 // Query params: eventType, subsystem, dateRange (last7|last30|last90), page, limit, format=csv
-router.get('/', isAdmin, async (req, res) => {
+router.get('/', (req, res, next) => {
+  const action = req.query.format === 'csv' ? 'export' : 'view';
+  return requirePermission('audit_logs', action)(req, res, next);
+}, async (req, res) => {
   const { eventType, subsystem, dateRange, page = '1', limit = '50', format } = req.query as Record<string, string>;
 
   const pageNum = Math.max(1, parseInt(page) || 1);

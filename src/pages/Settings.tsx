@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { usePermissions } from '@/hooks/usePermissions';
+import { AccessControlContent as AccessControlPanel } from '@/components/settings/AccessControlContent';
 import {
   User, Edit2, LogOut, Sun, Moon, Shield, Check,
   Camera, Briefcase, Building2, Calendar, Mail, Hash,
@@ -706,6 +707,7 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
 
 function AuditLogPanel({ prefilterUserId }: { prefilterUserId?: string }) {
   const { toast } = useToast();
+  const { canExport } = usePermissions();
   const [eventType, setEventType] = useState('all');
   const [subsystem, setSubsystem] = useState('all');
   const [dateRange, setDateRange] = useState('last30');
@@ -764,7 +766,7 @@ function AuditLogPanel({ prefilterUserId }: { prefilterUserId?: string }) {
           <h2 className="text-2xl font-bold">Audit Log</h2>
           <p className="text-muted-foreground">System activity and security events</p>
         </div>
-        <Button onClick={handleExportCSV} className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground">
+        <Button onClick={handleExportCSV} disabled={!canExport('audit_logs')} className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground">
           <Download className="h-4 w-4 mr-2" />
           Export CSV
         </Button>
@@ -895,6 +897,8 @@ function AuditLogPanel({ prefilterUserId }: { prefilterUserId?: string }) {
 
 // ─── Access Control Content ───────────────────────────────────────────────────
 
+// ─── Change Password Panel ────────────────────────────────────────────────────
+
 const AC_SUBSYSTEM_LABELS: Record<string, string> = SUBSYSTEM_LABELS;
 const AC_SUBSYSTEM_KEYS = Object.keys(AC_SUBSYSTEM_LABELS);
 
@@ -903,8 +907,6 @@ type Permission = { farm_id: string; role_id: string; subsystem: string; can_vie
 function getPermission(permissions: Permission[], roleId: string, subsystem: string): Permission | undefined {
   return permissions.find((p) => p.role_id === roleId && p.subsystem === subsystem);
 }
-
-// ─── Change Password Panel ────────────────────────────────────────────────────
 
 function ChangePasswordPanel() {
   const { toast } = useToast();
@@ -1236,7 +1238,7 @@ export function Settings() {
   const [auditUserId, setAuditUserId] = useState<string | undefined>();
   const { signOut } = useAuth();
   const { theme } = useTheme();
-  const { isAdmin } = usePermissions();
+  const { canView } = usePermissions();
 
   useEffect(() => {
     const nextPanel = (searchParams.get('panel') as Panel | null) ?? 'profile';
@@ -1259,7 +1261,7 @@ export function Settings() {
         { id: 'change-password' as Panel, label: 'Change Password', icon: Key },
       ],
     },
-    ...(isAdmin ? [
+    ...(canView('access_control') ? [
       {
         title: 'Users',
         items: [
@@ -1267,6 +1269,8 @@ export function Settings() {
           { id: 'access-control' as Panel, label: 'Access Control', icon: Shield },
         ],
       },
+    ] : []),
+    ...(canView('audit_logs') ? [
       {
         title: 'Security',
         items: [
@@ -1332,9 +1336,9 @@ export function Settings() {
           {panel === 'profile' && <ProfilePanel />}
           {panel === 'theme' && <ThemePanel />}
           {panel === 'change-password' && <ChangePasswordPanel />}
-          {panel === 'list-users' && isAdmin && <UsersPanel onViewAuditLog={handleNavAuditLog} />}
-          {panel === 'audit-log' && isAdmin && <AuditLogPanel prefilterUserId={auditUserId} />}
-          {panel === 'access-control' && isAdmin && <AccessControlContent />}
+          {panel === 'list-users' && canView('access_control') && <UsersPanel onViewAuditLog={handleNavAuditLog} />}
+          {panel === 'audit-log' && canView('audit_logs') && <AuditLogPanel prefilterUserId={auditUserId} />}
+          {panel === 'access-control' && canView('access_control') && <AccessControlPanel />}
         </main>
       </div>
     </DashboardLayout>
@@ -1346,7 +1350,7 @@ export function Settings() {
 export function AccessControl() {
   return (
     <DashboardLayout>
-      <AccessControlContent />
+      <AccessControlPanel />
     </DashboardLayout>
   );
 }

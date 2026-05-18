@@ -56,12 +56,15 @@ export function requireRole(...roles: string[]) {
   };
 }
 
-export function requirePermission(subsystem: string, action: 'view' | 'create' | 'edit' | 'delete') {
+export function requirePermission(
+  subsystem: string,
+  action: 'view' | 'create' | 'edit' | 'delete' | 'approve' | 'export',
+) {
   return async (req: Request, res: Response, next: NextFunction) => {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required', code: 'AUTH_REQUIRED' });
     }
-    // Admins bypass all CRUD permission checks
+    // Admins bypass all permission checks.
     if (isAdminRole(req.user.roleName)) return next();
 
     try {
@@ -71,7 +74,9 @@ export function requirePermission(subsystem: string, action: 'view' | 'create' |
         action === 'view'   ? p?.canView   :
         action === 'create' ? p?.canCreate :
         action === 'edit'   ? p?.canEdit   :
-        p?.canDelete;
+        action === 'delete' ? p?.canDelete :
+        action === 'approve' ? p?.canApprove :
+        p?.canExport;
       if (!allowed) {
         return res.status(403).json({ error: 'Permission denied', code: 'FORBIDDEN' });
       }

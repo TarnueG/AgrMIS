@@ -91,8 +91,8 @@ const INTERNAL_MENU: Array<MenuLeaf | MenuGroup> = [
   { title: 'Finance / Accounting', icon: DollarSign, path: '/finance', subsystem: 'finance' },
   { title: 'Reports / Analytics', icon: BarChart3, path: '/reports', subsystem: 'reports' },
   { title: 'Settings', icon: Settings, path: '/settings', subsystem: 'settings' },
-  { title: 'Access Control', icon: Shield, path: '/access-control', subsystem: 'settings', adminOnly: true },
-  { title: 'Audit Logs', icon: ClipboardList, path: '/settings?panel=audit-log', subsystem: 'settings', adminOnly: true },
+  { title: 'Access Control', icon: Shield, path: '/access-control', subsystem: 'access_control' },
+  { title: 'Audit Logs', icon: ClipboardList, path: '/settings?panel=audit-log', subsystem: 'audit_logs' },
 ];
 
 const CUSTOMER_MENU: MenuLeaf[] = [

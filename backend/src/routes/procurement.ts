@@ -184,6 +184,18 @@ router.post('/showcase', async (req, res) => {
 });
 
 router.patch('/showcase/:id', async (req, res) => {
+  if (req.body?.status && ['approved', 'rejected', 'ordered', 'partially_received', 'received'].includes(req.body.status)) {
+    const permissionCheck = requirePermission('procurement', 'approve');
+    let blocked = false;
+    await permissionCheck(req, res, () => undefined);
+    if (res.headersSent) {
+      blocked = true;
+    }
+    if (blocked) {
+      return;
+    }
+  }
+
   const parsed = showcaseProcurementUpdateSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
@@ -255,6 +267,16 @@ router.patch('/showcase/:id', async (req, res) => {
 });
 
 router.post('/showcase/:id/receive', async (req, res) => {
+  const permissionCheck = requirePermission('procurement', 'approve');
+  let blocked = false;
+  await permissionCheck(req, res, () => undefined);
+  if (res.headersSent) {
+    blocked = true;
+  }
+  if (blocked) {
+    return;
+  }
+
   try {
     const result = await prisma.$transaction(async (tx) => {
       const rows = await tx.$queryRawUnsafe<any[]>(

@@ -49,7 +49,7 @@ const App = () => (
             <Route path="/" element={<HomeRedirect />} />
             <Route path="/auth" element={<Auth />} />
 
-            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/dashboard" element={<ProtectedRoute subsystem="dashboard"><Dashboard /></ProtectedRoute>} />
             <Route path="/customer" element={<ProtectedRoute><CustomerPortal /></ProtectedRoute>} />
             <Route path="/inventory" element={<ProtectedRoute subsystem="inventory"><Inventory /></ProtectedRoute>} />
             <Route path="/customers" element={<ProtectedRoute subsystem="crm"><Customers /></ProtectedRoute>} />
@@ -65,7 +65,7 @@ const App = () => (
             <Route path="/marketing" element={<ProtectedRoute subsystem="marketing"><Marketing /></ProtectedRoute>} />
             <Route path="/sales-order-points" element={<ProtectedRoute subsystem="sales_order_points"><SalesOrderPoints /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute subsystem="settings"><Settings /></ProtectedRoute>} />
-            <Route path="/access-control" element={<ProtectedRoute subsystem="settings"><AccessControl /></ProtectedRoute>} />
+            <Route path="/access-control" element={<ProtectedRoute subsystem="access_control"><AccessControl /></ProtectedRoute>} />
 
             <Route path="*" element={<NotFound />} />
           </Routes>

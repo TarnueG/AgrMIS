@@ -2,56 +2,20 @@ import { useQuery } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { useAuth } from './useAuth';
 import { isAdminRole, normalizeRole } from '@/lib/roles';
-
-export interface SubsystemAccess {
-  canView: boolean;
-  canCreate: boolean;
-  canEdit: boolean;
-  canDelete: boolean;
-}
+import {
+  ACCESS_CONTROL_SUBSYSTEMS,
+  FULL_ACCESS,
+  NO_ACCESS,
+  VIEW_ONLY_ACCESS,
+  type SubsystemAccess,
+} from '@/lib/accessControl';
 
 interface PermissionsResponse {
   role: string;
   permissions: Record<string, SubsystemAccess>;
 }
 
-const FULL_ACCESS: SubsystemAccess = {
-  canView: true,
-  canCreate: true,
-  canEdit: true,
-  canDelete: true,
-};
-
-const VIEW_ONLY_ACCESS: SubsystemAccess = {
-  canView: true,
-  canCreate: false,
-  canEdit: false,
-  canDelete: false,
-};
-
-const NO_ACCESS: SubsystemAccess = {
-  canView: false,
-  canCreate: false,
-  canEdit: false,
-  canDelete: false,
-};
-
-const ALL_SUBSYSTEMS = [
-  'dashboard',
-  'inventory',
-  'procurement',
-  'crm',
-  'marketing',
-  'sales_order_points',
-  'production',
-  'livestock',
-  'finance',
-  'reports',
-  'human_capital',
-  'machinery',
-  'land_parcels',
-  'settings',
-] as const;
+const ALL_SUBSYSTEMS = ACCESS_CONTROL_SUBSYSTEMS.map((subsystem) => subsystem.key);
 
 const buildPermissionMap = (
   overrides: Partial<Record<(typeof ALL_SUBSYSTEMS)[number], SubsystemAccess>>
@@ -85,6 +49,20 @@ const DEFAULT_ROLE_PERMISSIONS: Record<string, Record<string, SubsystemAccess>> 
     human_capital: FULL_ACCESS,
     machinery: FULL_ACCESS,
     land_parcels: FULL_ACCESS,
+    settings: VIEW_ONLY_ACCESS,
+  }),
+  inventory_manager: buildPermissionMap({
+    dashboard: VIEW_ONLY_ACCESS,
+    inventory: FULL_ACCESS,
+    procurement: { ...VIEW_ONLY_ACCESS, canApprove: true, canExport: true },
+    reports: { ...VIEW_ONLY_ACCESS, canExport: true },
+    settings: VIEW_ONLY_ACCESS,
+  }),
+  procurement_officer: buildPermissionMap({
+    dashboard: VIEW_ONLY_ACCESS,
+    inventory: VIEW_ONLY_ACCESS,
+    procurement: FULL_ACCESS,
+    reports: { ...VIEW_ONLY_ACCESS, canExport: true },
     settings: VIEW_ONLY_ACCESS,
   }),
   sales_customer_officer: buildPermissionMap({
@@ -143,11 +121,8 @@ const DEFAULT_ROLE_PERMISSIONS: Record<string, Record<string, SubsystemAccess>> 
     settings: VIEW_ONLY_ACCESS,
   }),
   customer: buildPermissionMap({
-    dashboard: VIEW_ONLY_ACCESS,
     sales_order_points: FULL_ACCESS,
     marketing: VIEW_ONLY_ACCESS,
-    crm: VIEW_ONLY_ACCESS,
-    inventory: VIEW_ONLY_ACCESS,
     settings: VIEW_ONLY_ACCESS,
   }),
 };
@@ -185,6 +160,12 @@ export function usePermissions() {
   const canDelete = (subsystem: string): boolean =>
     isAdmin || (perms[subsystem]?.canDelete ?? false);
 
+  const canApprove = (subsystem: string): boolean =>
+    isAdmin || (perms[subsystem]?.canApprove ?? false);
+
+  const canExport = (subsystem: string): boolean =>
+    isAdmin || (perms[subsystem]?.canExport ?? false);
+
   return {
     permissions: perms,
     role,
@@ -193,6 +174,8 @@ export function usePermissions() {
     canCreate,
     canEdit,
     canDelete,
+    canApprove,
+    canExport,
     isLoading,
     isError,
   };

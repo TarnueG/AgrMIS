@@ -40,6 +40,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
+import { usePermissions } from '@/hooks/usePermissions';
 import api from '@/lib/api';
 
 type InventoryItem = {
@@ -269,6 +270,7 @@ function DashboardKpi({
 
 export default function Procurement() {
   const { toast } = useToast();
+  const { canApprove, canCreate } = usePermissions();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -627,7 +629,7 @@ export default function Procurement() {
           <div className="flex flex-col gap-2 sm:flex-row">
             <Dialog open={isSupplierOpen} onOpenChange={setIsSupplierOpen}>
               <DialogTrigger asChild>
-                <Button variant="outline" className="w-full sm:w-auto">
+                <Button variant="outline" className="w-full sm:w-auto" disabled={!canCreate('procurement')}>
                   <UserPlus className="mr-2 h-4 w-4" />
                   Add Supplier
                 </Button>
@@ -679,7 +681,7 @@ export default function Procurement() {
                     <Label>Notes</Label>
                     <Textarea value={supplierForm.notes} onChange={(e) => setSupplierForm({ ...supplierForm, notes: e.target.value })} />
                   </div>
-                  <Button type="submit" className="w-full gradient-primary" disabled={addSupplierMutation.isPending}>
+                  <Button type="submit" className="w-full gradient-primary" disabled={addSupplierMutation.isPending || !canCreate('procurement')}>
                     Add Supplier
                   </Button>
                 </form>
@@ -688,7 +690,7 @@ export default function Procurement() {
 
             <Dialog open={isRequestOpen} onOpenChange={setIsRequestOpen}>
               <DialogTrigger asChild>
-                <Button className="gradient-primary w-full sm:w-auto">
+                <Button className="gradient-primary w-full sm:w-auto" disabled={!canCreate('procurement')}>
                   <Plus className="mr-2 h-4 w-4" />
                   Create Request
                 </Button>
@@ -792,7 +794,7 @@ export default function Procurement() {
                     <Label>Notes</Label>
                     <Textarea value={requestForm.notes} onChange={(e) => setRequestForm({ ...requestForm, notes: e.target.value })} />
                   </div>
-                  <Button type="submit" className="w-full gradient-primary" disabled={requestMutation.isPending}>
+                  <Button type="submit" className="w-full gradient-primary" disabled={requestMutation.isPending || !canCreate('procurement')}>
                     Create Request
                   </Button>
                 </form>
@@ -910,10 +912,10 @@ export default function Procurement() {
                         <div className="flex justify-end gap-2">
                           {row.status === 'pending' && (
                             <>
-                              <Button variant="outline" size="sm" onClick={() => approveMutation.mutate(row)} disabled={approveMutation.isPending}>
+                              <Button variant="outline" size="sm" onClick={() => approveMutation.mutate(row)} disabled={approveMutation.isPending || !canApprove('procurement')}>
                                 Approve
                               </Button>
-                              <Button variant="outline" size="sm" onClick={() => { setRejectingRow(row); setRejectionReason(row.rejection_reason || ''); }}>
+                              <Button variant="outline" size="sm" onClick={() => { setRejectingRow(row); setRejectionReason(row.rejection_reason || ''); }} disabled={!canApprove('procurement')}>
                                 Reject
                               </Button>
                             </>
@@ -926,6 +928,7 @@ export default function Procurement() {
                                 setReceivingRow(row);
                                 setReceiptForm({ received_quantity: row.outstandingQuantity });
                               }}
+                              disabled={!canApprove('procurement')}
                             >
                               Receive Stock
                             </Button>
@@ -983,6 +986,7 @@ export default function Procurement() {
                               setReceivingRow(row);
                               setReceiptForm({ received_quantity: row.outstandingQuantity });
                             }}
+                            disabled={!canApprove('procurement')}
                           >
                             <PackagePlus className="mr-2 h-4 w-4" />
                             Receive
@@ -1148,7 +1152,7 @@ export default function Procurement() {
           </Card>
         </div>
 
-        <Dialog open={!!rejectingRow} onOpenChange={(open) => { if (!open) { setRejectingRow(null); setRejectionReason(''); } }}>
+        <Dialog open={canApprove('procurement') && !!rejectingRow} onOpenChange={(open) => { if (!open) { setRejectingRow(null); setRejectionReason(''); } }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Reject Purchase Request</DialogTitle>
@@ -1173,7 +1177,7 @@ export default function Procurement() {
           </DialogContent>
         </Dialog>
 
-        <Dialog open={!!receivingRow} onOpenChange={(open) => { if (!open) { setReceivingRow(null); setReceiptForm({ received_quantity: 0 }); } }}>
+        <Dialog open={canApprove('procurement') && !!receivingRow} onOpenChange={(open) => { if (!open) { setReceivingRow(null); setReceiptForm({ received_quantity: 0 }); } }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Receive Stock</DialogTitle>

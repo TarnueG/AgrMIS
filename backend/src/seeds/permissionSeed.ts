@@ -1,119 +1,10 @@
 import prisma from '../lib/prisma';
 import { clearPermissionCache } from '../lib/permissions';
+import { DEFAULT_ROLE_DEFINITIONS, VALID_ROLE_NAMES } from '../lib/accessControlConfig';
 
 const DEFAULT_FARM_ID = '00000000-0000-0000-0000-000000000001';
 
-type Perm = { view: boolean; create: boolean; edit: boolean; delete: boolean };
-
-const V: Perm = { view: true, create: false, edit: false, delete: false };
-const F: Perm = { view: true, create: true, edit: true, delete: true };
-const N: Perm = { view: false, create: false, edit: false, delete: false };
-
-interface RoleDef {
-  name: string;
-  description: string;
-  subsystems: Record<string, Perm>;
-}
-
-const ROLES: RoleDef[] = [
-  {
-    name: 'super_admin',
-    description: 'Full unrestricted AMIS access',
-    subsystems: {},
-  },
-  {
-    name: 'admin',
-    description: 'Legacy full unrestricted AMIS access',
-    subsystems: {},
-  },
-  {
-    name: 'farm_manager',
-    description: 'Farm-wide operational management across core modules',
-    subsystems: {
-      dashboard: F, inventory: F, procurement: F, crm: F, marketing: F,
-      sales_order_points: F, production: F, livestock: F, finance: F,
-      reports: F, human_capital: F, machinery: F, land_parcels: F, settings: V,
-    },
-  },
-  {
-    name: 'field_supervisor',
-    description: 'Field team supervision and daily operations logging',
-    subsystems: {
-      dashboard: V, human_capital: V, production: V, settings: V,
-      inventory: N, procurement: N, crm: N, marketing: N,
-      sales_order_points: N, livestock: N, finance: N,
-      reports: N, machinery: N, land_parcels: N,
-    },
-  },
-  {
-    name: 'asset_manager',
-    description: 'Farm asset and equipment management',
-    subsystems: {
-      dashboard: V, machinery: F, land_parcels: F, settings: V,
-      inventory: N, procurement: N, crm: N, marketing: N,
-      sales_order_points: N, production: N, livestock: N,
-      finance: N, reports: N, human_capital: N,
-    },
-  },
-  {
-    name: 'production_manager',
-    description: 'Production operations across all sectors',
-    subsystems: {
-      dashboard: V, production: F, livestock: F, inventory: V,
-      human_capital: V, machinery: V, land_parcels: V, reports: V, settings: V,
-      procurement: N, crm: N, marketing: N, sales_order_points: N, finance: N,
-    },
-  },
-  {
-    name: 'accountant',
-    description: 'Financial management and reporting',
-    subsystems: {
-      dashboard: V, finance: F, reports: V, inventory: V, procurement: V, settings: V,
-      crm: N, marketing: N, sales_order_points: N, production: N,
-      livestock: N, human_capital: N, machinery: N, land_parcels: N,
-    },
-  },
-  {
-    name: 'sales_customer_officer',
-    description: 'Sales, distribution, customer, and order management',
-    subsystems: {
-      dashboard: V, crm: F, marketing: F, sales_order_points: F,
-      reports: V, settings: V,
-      procurement: N, production: N, livestock: N, finance: N,
-      human_capital: N, machinery: N, land_parcels: N, inventory: N,
-    },
-  },
-  {
-    name: 'marketing_manager',
-    description: 'Legacy marketing and customer operations role',
-    subsystems: {
-      dashboard: V, marketing: F, crm: F, sales_order_points: F,
-      inventory: V, reports: V, settings: V,
-      procurement: N, production: N, livestock: N, finance: N,
-      human_capital: N, machinery: N, land_parcels: N,
-    },
-  },
-  {
-    name: 'human_resource',
-    description: 'Human capital and workforce management',
-    subsystems: {
-      dashboard: V, human_capital: F, production: V, reports: V, settings: V,
-      inventory: N, procurement: N, crm: N, marketing: N,
-      sales_order_points: N, livestock: N, finance: N, machinery: N, land_parcels: N,
-    },
-  },
-  {
-    name: 'customer',
-    description: 'Customer portal access only',
-    subsystems: {
-      dashboard: N, sales_order_points: F, marketing: V, settings: V,
-      procurement: N, production: N, livestock: N, finance: N,
-      reports: N, human_capital: N, machinery: N, land_parcels: N, crm: N, inventory: N,
-    },
-  },
-];
-
-export const VALID_ROLE_NAMES = new Set(ROLES.map((role) => role.name));
+const ROLES = DEFAULT_ROLE_DEFINITIONS;
 
 const ROLE_RENAMES: Record<string, string> = {
   accounting: 'accountant',
@@ -145,20 +36,24 @@ export async function seedPermissions(): Promise<void> {
         await (prisma as any).subsystem_permissions.upsert({
           where: { farm_id_role_id_subsystem: { farm_id: farm.id, role_id: role.id, subsystem } },
           update: {
-            can_view: perm.view,
-            can_create: perm.create,
-            can_edit: perm.edit,
-            can_delete: perm.delete,
+            can_view: perm.canView,
+            can_create: perm.canCreate,
+            can_edit: perm.canEdit,
+            can_delete: perm.canDelete,
+            can_approve: perm.canApprove,
+            can_export: perm.canExport,
             updated_at: new Date(),
           },
           create: {
             farm_id: farm.id,
             role_id: role.id,
             subsystem,
-            can_view: perm.view,
-            can_create: perm.create,
-            can_edit: perm.edit,
-            can_delete: perm.delete,
+            can_view: perm.canView,
+            can_create: perm.canCreate,
+            can_edit: perm.canEdit,
+            can_delete: perm.canDelete,
+            can_approve: perm.canApprove,
+            can_export: perm.canExport,
           },
         });
       }
