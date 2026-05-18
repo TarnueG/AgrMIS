@@ -504,7 +504,7 @@ router.get('/summary', async (req, res) => {
     const downtimeChart = Object.entries(downtimeByAsset).map(([assetId, hours]) => ({
       asset:
         assets.find((asset) => asset.id === assetId)?.name ?? 'Unknown asset',
-      hours: Number(hours.toFixed(2)),
+      hours: Number(toNumber(hours).toFixed(2)),
     }));
 
     const maintenanceCostTrend = Array.from({ length: 6 }).map((_, index) => {

@@ -20,7 +20,10 @@ export type AuditEventType =
   | 'labor_task_created'
   | 'labor_task_updated'
   | 'payroll_paid'
-  | 'leave_updated';
+  | 'leave_updated'
+  | 'finance_transaction_created'
+  | 'finance_transaction_updated'
+  | 'finance_exported';
 
 interface AuditPayload {
   actorUserId?: string | null;

@@ -1169,7 +1169,7 @@ async function ensureEmployeesAndHr() {
       status: 'assigned',
     },
     {
-      employee_id: null,
+      employee_id: productionSupervisor.id,
       task_title: 'Inspect fish pond water level',
       description: 'Verify water loss and note any inlet blockage before feeding window.',
       sector: 'aquaculture',
@@ -1244,31 +1244,35 @@ async function ensureEmployeesAndHr() {
     { supervisor_id: productionSupervisor.id, employee_id: livestockAttendant.id, notes: 'Livestock feed issue coordination' },
   ];
 
-  for (const link of supervisorLinks) {
-    const existingLink = await prismaAny.supervisor_assignments.findFirst({
-      where: {
-        farm_id: FARM_ID,
-        supervisor_id: link.supervisor_id,
-        employee_id: link.employee_id,
-        released_at: null,
-      },
-    });
-    if (existingLink) {
-      await prismaAny.supervisor_assignments.update({
-        where: { id: existingLink.id },
-        data: { notes: link.notes, assigned_by: USERS.farmManager.userId },
-      });
-    } else {
-      await prismaAny.supervisor_assignments.create({
-        data: {
+  try {
+    for (const link of supervisorLinks) {
+      const existingLink = await prismaAny.supervisor_assignments.findFirst({
+        where: {
           farm_id: FARM_ID,
           supervisor_id: link.supervisor_id,
           employee_id: link.employee_id,
-          assigned_by: USERS.farmManager.userId,
-          notes: link.notes,
+          released_at: null,
         },
       });
+      if (existingLink) {
+        await prismaAny.supervisor_assignments.update({
+          where: { id: existingLink.id },
+          data: { notes: link.notes, assigned_by: USERS.farmManager.userId },
+        });
+      } else {
+        await prismaAny.supervisor_assignments.create({
+          data: {
+            farm_id: FARM_ID,
+            supervisor_id: link.supervisor_id,
+            employee_id: link.employee_id,
+            assigned_by: USERS.farmManager.userId,
+            notes: link.notes,
+          },
+        });
+      }
     }
+  } catch {
+    // Optional table in some local snapshots.
   }
 
   const leaveSeeds = [
@@ -1298,39 +1302,43 @@ async function ensureEmployeesAndHr() {
     },
   ];
 
-  for (const leave of leaveSeeds) {
-    const existingLeave = await prismaAny.leave_requests.findFirst({
-      where: {
-        farm_id: FARM_ID,
-        employee_id: leave.employee_id,
-        leave_type: leave.leave_type,
-        start_date: leave.start_date,
-        end_date: leave.end_date,
-      },
-    });
-    if (existingLeave) {
-      await prismaAny.leave_requests.update({
-        where: { id: existingLeave.id },
-        data: {
-          approval_status: leave.approval_status,
-          notes: leave.notes,
-          updated_at: new Date(),
-        },
-      });
-    } else {
-      await prismaAny.leave_requests.create({
-        data: {
+  try {
+    for (const leave of leaveSeeds) {
+      const existingLeave = await prismaAny.leave_requests.findFirst({
+        where: {
           farm_id: FARM_ID,
           employee_id: leave.employee_id,
           leave_type: leave.leave_type,
           start_date: leave.start_date,
           end_date: leave.end_date,
-          approval_status: leave.approval_status,
-          notes: leave.notes,
-          created_by: USERS.farmManager.userId,
         },
       });
+      if (existingLeave) {
+        await prismaAny.leave_requests.update({
+          where: { id: existingLeave.id },
+          data: {
+            approval_status: leave.approval_status,
+            notes: leave.notes,
+            updated_at: new Date(),
+          },
+        });
+      } else {
+        await prismaAny.leave_requests.create({
+          data: {
+            farm_id: FARM_ID,
+            employee_id: leave.employee_id,
+            leave_type: leave.leave_type,
+            start_date: leave.start_date,
+            end_date: leave.end_date,
+            approval_status: leave.approval_status,
+            notes: leave.notes,
+            created_by: USERS.farmManager.userId,
+          },
+        });
+      }
     }
+  } catch {
+    // Optional table in some local snapshots.
   }
 
   const contractor = await prismaAny.contractors.findFirst({
@@ -1448,45 +1456,593 @@ async function ensureEmployeesAndHr() {
 }
 
 async function ensureAssetsAndLand() {
-  const asset = await prisma.assets.findFirst({
-    where: { farm_id: FARM_ID, name: 'John Deere 5075E Tractor', deleted_at: null },
-  }) ?? await prisma.assets.create({
-    data: {
+  const operators = await prisma.employees.findMany({
+    where: {
       farm_id: FARM_ID,
+      deleted_at: null,
+      full_name: {
+        in: [
+          'Farm Manager',
+          'Abigail Swen',
+          'Moses Kpadeh',
+          'Ruth Zayzay',
+          'Daniel Kormah',
+          'Martha Dennis',
+          'James Kollie',
+          'Peter Wolo',
+        ],
+      },
+    },
+    select: { id: true, full_name: true },
+  });
+  const employeeByName = new Map(operators.map((employee) => [employee.full_name, employee.id]));
+
+  async function ensureAsset(data: any) {
+    const existing = await prisma.assets.findFirst({
+      where: { farm_id: FARM_ID, name: data.name, deleted_at: null },
+    });
+    if (existing) {
+      return prisma.assets.update({
+        where: { id: existing.id },
+        data: { ...data, updated_at: new Date() },
+      });
+    }
+    return prisma.assets.create({ data });
+  }
+
+  const assets = [
+    {
+      asset_code: 'AST-TRC-001',
       name: 'John Deere 5075E Tractor',
       asset_type: 'equipment',
-      category: 'Field Machinery',
+      category: 'tractor',
       manufacturer: 'John Deere',
       model: '5075E',
       serial_number: 'JD5075E-2026-001',
       purchase_date: todayMinus(320),
       purchase_cost: 28500,
-      location: 'Machinery Yard',
-      assigned_to: USERS.farmManager.employeeId,
-      status: 'operational',
-      next_service_date: todayPlus(21),
-      notes: 'Primary tractor for land preparation and transport.',
+      current_value: 25200,
+      location: 'North Field A',
+      assigned_to: employeeByName.get('Abigail Swen') ?? USERS.farmManager.employeeId,
+      condition: 'good',
+      status: 'active',
+      last_service_date: todayMinus(21),
+      next_service_date: todayPlus(9),
+      warranty_expiry_date: todayPlus(400),
+      notes: 'Primary field tractor for ploughing, harrowing, and trailer haulage.',
     },
-  });
+    {
+      asset_code: 'AST-VEH-002',
+      name: 'Massey Ferguson Field Truck',
+      asset_type: 'vehicle',
+      category: 'vehicle',
+      manufacturer: 'Massey Ferguson',
+      model: 'MF Utility 4x4',
+      serial_number: 'MF-TRK-2104',
+      purchase_date: todayMinus(510),
+      purchase_cost: 19400,
+      current_value: 16100,
+      location: 'Input Warehouse Dock',
+      assigned_to: employeeByName.get('Martha Dennis') ?? null,
+      condition: 'good',
+      status: 'operational',
+      last_service_date: todayMinus(35),
+      next_service_date: todayPlus(6),
+      warranty_expiry_date: todayPlus(220),
+      notes: 'Used for seed, feed, and spare part transport between warehouse and plots.',
+    },
+    {
+      asset_code: 'AST-TIL-003',
+      name: 'Kubota Power Tiller',
+      asset_type: 'equipment',
+      category: 'tractor',
+      manufacturer: 'Kubota',
+      model: 'RT140DI',
+      serial_number: 'KB-RT140-887',
+      purchase_date: todayMinus(240),
+      purchase_cost: 7300,
+      current_value: 6400,
+      location: 'Vegetable Nursery Zone',
+      assigned_to: employeeByName.get('James Kollie') ?? null,
+      condition: 'fair',
+      status: 'under_maintenance',
+      last_service_date: todayMinus(68),
+      next_service_date: todayMinus(3),
+      warranty_expiry_date: todayPlus(180),
+      notes: 'Two-wheel tiller used in vegetable blocks and nursery beds.',
+    },
+    {
+      asset_code: 'AST-GEN-004',
+      name: 'Cold Room Generator',
+      asset_type: 'equipment',
+      category: 'generator',
+      manufacturer: 'Perkins',
+      model: 'P22D',
+      serial_number: 'GEN-COLD-22',
+      purchase_date: todayMinus(620),
+      purchase_cost: 12600,
+      current_value: 9800,
+      location: 'Cold Room Plant House',
+      assigned_to: employeeByName.get('Daniel Kormah') ?? null,
+      condition: 'good',
+      status: 'operational',
+      last_service_date: todayMinus(18),
+      next_service_date: todayPlus(14),
+      warranty_expiry_date: todayPlus(120),
+      notes: 'Backup power for cold room and vaccine refrigeration loads.',
+    },
+    {
+      asset_code: 'AST-IRR-005',
+      name: 'Irrigation Pump',
+      asset_type: 'equipment',
+      category: 'irrigation',
+      manufacturer: 'AquaFlow',
+      model: '300HP Transfer',
+      serial_number: 'IRR-300-51',
+      purchase_date: todayMinus(410),
+      purchase_cost: 8800,
+      current_value: 7200,
+      location: 'South Irrigation Block',
+      assigned_to: employeeByName.get('Ruth Zayzay') ?? null,
+      condition: 'critical',
+      status: 'decommissioned',
+      last_service_date: todayMinus(82),
+      next_service_date: todayMinus(10),
+      warranty_expiry_date: todayMinus(45),
+      notes: 'Primary transfer pump currently shut down after seal and bearing failure.',
+    },
+    {
+      asset_code: 'AST-MIX-006',
+      name: 'Feed Mixer',
+      asset_type: 'equipment',
+      category: 'tool',
+      manufacturer: 'AgriBlend',
+      model: 'FM-150',
+      serial_number: 'FM-150-114',
+      purchase_date: todayMinus(300),
+      purchase_cost: 5300,
+      current_value: 4400,
+      location: 'Livestock Feed Mill',
+      assigned_to: employeeByName.get('Peter Wolo') ?? null,
+      condition: 'good',
+      status: 'operational',
+      last_service_date: todayMinus(15),
+      next_service_date: todayPlus(20),
+      warranty_expiry_date: todayPlus(260),
+      notes: 'Batch mixer for poultry and pig feed formulation.',
+    },
+    {
+      asset_code: 'AST-STO-007',
+      name: 'Cold Storage Unit',
+      asset_type: 'infrastructure',
+      category: 'storage',
+      manufacturer: 'PolarFresh',
+      model: 'CSU-12T',
+      serial_number: 'COLD-STORE-12',
+      purchase_date: todayMinus(720),
+      purchase_cost: 36400,
+      current_value: 29100,
+      location: 'Postharvest Compound',
+      assigned_to: employeeByName.get('Daniel Kormah') ?? null,
+      condition: 'fair',
+      status: 'operational',
+      last_service_date: todayMinus(41),
+      next_service_date: todayPlus(4),
+      warranty_expiry_date: todayPlus(75),
+      notes: 'Main produce cold room with monitored compressor runtime.',
+    },
+    {
+      asset_code: 'AST-TOL-008',
+      name: 'Weighing Scale',
+      asset_type: 'tool',
+      category: 'tool',
+      manufacturer: 'Cardinal',
+      model: 'CK-500',
+      serial_number: 'SCL-500-202',
+      purchase_date: todayMinus(170),
+      purchase_cost: 950,
+      current_value: 770,
+      location: 'Sales Dispatch Bay',
+      assigned_to: employeeByName.get('Martha Dennis') ?? null,
+      condition: 'excellent',
+      status: 'operational',
+      last_service_date: todayMinus(10),
+      next_service_date: todayPlus(30),
+      warranty_expiry_date: todayPlus(330),
+      notes: 'Used for outbound produce weighing and bag verification.',
+    },
+    {
+      asset_code: 'AST-SPR-009',
+      name: 'Sprayer',
+      asset_type: 'equipment',
+      category: 'tool',
+      manufacturer: 'FieldMaster',
+      model: 'BoomJet 600',
+      serial_number: 'SPR-600-09',
+      purchase_date: todayMinus(365),
+      purchase_cost: 4700,
+      current_value: 3920,
+      location: 'Chemical Store',
+      assigned_to: null,
+      condition: 'fair',
+      status: 'sold',
+      last_service_date: todayMinus(115),
+      next_service_date: todayMinus(50),
+      warranty_expiry_date: todayMinus(20),
+      notes: 'Disposed after replacing with a higher-capacity boom sprayer.',
+    },
+  ];
 
-  const maintenance = await prisma.asset_maintenance_logs.findFirst({
-    where: { asset_id: asset.id, description: 'Quarterly service and filter replacement' },
-  });
-  if (!maintenance) {
-    await prisma.asset_maintenance_logs.create({
-      data: {
+  const createdAssets = new Map<string, any>();
+  for (const asset of assets) {
+    const saved = await ensureAsset({
+      farm_id: FARM_ID,
+      ...asset,
+    });
+    createdAssets.set(saved.name, saved);
+  }
+
+  const assetSchedules = [
+    {
+      assetName: 'John Deere 5075E Tractor',
+      service_type: '250-hour engine service',
+      due_date: todayPlus(9),
+      priority: 'high',
+      technician_name: 'Daniel Kormah',
+      estimated_cost: 480,
+      status: 'scheduled',
+      notes: 'Engine oil, hydraulic filter, and front axle inspection.',
+    },
+    {
+      assetName: 'Massey Ferguson Field Truck',
+      service_type: 'Brake and suspension inspection',
+      due_date: todayPlus(6),
+      priority: 'normal',
+      technician_name: 'Workshop contractor',
+      estimated_cost: 260,
+      status: 'scheduled',
+      notes: 'Prepare for field-to-market haulage cycle.',
+    },
+    {
+      assetName: 'Kubota Power Tiller',
+      service_type: 'Clutch overhaul',
+      due_date: todayMinus(3),
+      priority: 'urgent',
+      technician_name: 'Daniel Kormah',
+      estimated_cost: 620,
+      status: 'scheduled',
+      notes: 'Overdue. Unit should remain in workshop until torque test passes.',
+    },
+    {
+      assetName: 'Cold Room Generator',
+      service_type: 'Generator load-bank test',
+      due_date: todayPlus(14),
+      priority: 'normal',
+      technician_name: 'PowerSystems Ltd',
+      estimated_cost: 390,
+      status: 'scheduled',
+      notes: 'Quarterly backup power reliability check.',
+    },
+    {
+      assetName: 'Irrigation Pump',
+      service_type: 'Pump seal replacement',
+      due_date: todayMinus(10),
+      priority: 'urgent',
+      technician_name: 'AquaFlow Service Crew',
+      estimated_cost: 980,
+      status: 'overdue',
+      notes: 'Critical irrigation pump unavailable until rebuild is finished.',
+    },
+    {
+      assetName: 'Cold Storage Unit',
+      service_type: 'Compressor preventive service',
+      due_date: todayPlus(4),
+      priority: 'high',
+      technician_name: 'Daniel Kormah',
+      estimated_cost: 520,
+      status: 'scheduled',
+      notes: 'Check refrigerant pressure and evaporator fan vibration.',
+    },
+  ];
+
+  for (const schedule of assetSchedules) {
+    const asset = createdAssets.get(schedule.assetName);
+    if (!asset) continue;
+    const existing = await prismaAny.asset_maintenance_schedules.findFirst({
+      where: {
+        farm_id: FARM_ID,
         asset_id: asset.id,
-        performed_by: USERS.superAdmin.userId,
-        maintenance_type: 'scheduled',
-        description: 'Quarterly service and filter replacement',
-        cost: 420,
-        service_provider: 'FarmParts Service Center',
-        maintenance_date: todayMinus(12),
-        next_service_date: todayPlus(21),
-        downtime_hours: 4,
-        outcome: 'Returned to service',
+        service_type: schedule.service_type,
+        due_date: schedule.due_date,
       },
     });
+    if (existing) {
+      await prismaAny.asset_maintenance_schedules.update({
+        where: { id: existing.id },
+        data: { ...schedule, asset_id: asset.id, updated_at: new Date() },
+      });
+    } else {
+      await prismaAny.asset_maintenance_schedules.create({
+        data: {
+          farm_id: FARM_ID,
+          asset_id: asset.id,
+          created_by: USERS.farmManager.userId,
+          ...schedule,
+        },
+      });
+    }
+  }
+
+  const workOrders = [
+    {
+      work_order_number: 'MWO-DEMO-001',
+      assetName: 'Kubota Power Tiller',
+      title: 'Clutch slipping during bed preparation',
+      description: 'Operator reported poor engagement and vibration under load.',
+      planned_start_date: todayMinus(2),
+      planned_end_date: todayPlus(1),
+      priority: 'urgent',
+      requested_by_employee_id: employeeByName.get('James Kollie') ?? null,
+      assigned_technician: 'Daniel Kormah',
+      issue_type: 'Drivetrain repair',
+      estimated_cost: 640,
+      actual_cost: null,
+      status: 'in progress',
+      actual_outputs: { downtimeHours: 9, partsUsed: ['Clutch plate kit'] },
+    },
+    {
+      work_order_number: 'MWO-DEMO-002',
+      assetName: 'Irrigation Pump',
+      title: 'Mechanical seal leak and bearing noise',
+      description: 'Pump shut down after pressure loss in the south irrigation block.',
+      planned_start_date: todayMinus(5),
+      planned_end_date: todayMinus(1),
+      priority: 'urgent',
+      requested_by_employee_id: employeeByName.get('Ruth Zayzay') ?? null,
+      assigned_technician: 'AquaFlow Service Crew',
+      issue_type: 'Seal replacement',
+      estimated_cost: 980,
+      actual_cost: null,
+      status: 'waiting parts',
+      actual_outputs: { downtimeHours: 18, partsUsed: ['Mechanical seal', 'Bearing set'] },
+    },
+    {
+      work_order_number: 'MWO-DEMO-003',
+      assetName: 'Cold Storage Unit',
+      title: 'Evaporator fan preventive service',
+      description: 'PM order raised before peak harvest storage week.',
+      planned_start_date: todayPlus(1),
+      planned_end_date: todayPlus(4),
+      priority: 'high',
+      requested_by_employee_id: employeeByName.get('Daniel Kormah') ?? null,
+      assigned_technician: 'Daniel Kormah',
+      issue_type: 'Preventive maintenance',
+      estimated_cost: 540,
+      actual_cost: null,
+      status: 'assigned',
+      actual_outputs: { downtimeHours: 0, partsUsed: [] },
+    },
+    {
+      work_order_number: 'MWO-DEMO-004',
+      assetName: 'Cold Room Generator',
+      title: 'Starter relay replacement',
+      description: 'Generator hard-start issue resolved before cold chain inspection.',
+      planned_start_date: todayMinus(16),
+      planned_end_date: todayMinus(14),
+      priority: 'normal',
+      requested_by_employee_id: employeeByName.get('Daniel Kormah') ?? null,
+      assigned_technician: 'PowerSystems Ltd',
+      issue_type: 'Electrical repair',
+      estimated_cost: 310,
+      actual_cost: 295,
+      status: 'completed',
+      completed_at: todayMinus(14),
+      actual_end_time: todayMinus(14),
+      actual_outputs: { downtimeHours: 3, partsUsed: ['Starter relay'] },
+    },
+  ];
+
+  for (const order of workOrders) {
+    const asset = createdAssets.get(order.assetName);
+    if (!asset) continue;
+    const existing = await prisma.work_orders.findFirst({
+      where: { farm_id: FARM_ID, work_order_number: order.work_order_number },
+    });
+    const payload = {
+      farm_id: FARM_ID,
+      asset_id: asset.id,
+      title: order.title,
+      description: order.description,
+      planned_start_date: order.planned_start_date,
+      planned_end_date: order.planned_end_date,
+      priority: order.priority,
+      requested_by_employee_id: order.requested_by_employee_id,
+      assigned_technician: order.assigned_technician,
+      issue_type: order.issue_type,
+      estimated_cost: order.estimated_cost,
+      actual_cost: order.actual_cost,
+      completed_at: order.completed_at ?? null,
+      actual_end_time: order.actual_end_time ?? null,
+      status: order.status,
+      planned_inputs: { module: 'machinery' },
+      actual_outputs: order.actual_outputs,
+      created_by: USERS.farmManager.userId,
+    } as any;
+    if (existing) {
+      await prisma.work_orders.update({
+        where: { id: existing.id },
+        data: { ...payload, updated_at: new Date() },
+      });
+    } else {
+      await prisma.work_orders.create({
+        data: {
+          work_order_number: order.work_order_number,
+          ...payload,
+        } as any,
+      });
+    }
+  }
+
+  const maintenanceLogs = [
+    {
+      assetName: 'John Deere 5075E Tractor',
+      description: 'Quarterly service and filter replacement',
+      maintenance_type: 'scheduled',
+      cost: 420,
+      service_provider: 'FarmParts Service Center',
+      maintenance_date: todayMinus(12),
+      next_service_date: todayPlus(21),
+      downtime_hours: 4,
+      outcome: 'Returned to service',
+    },
+    {
+      assetName: 'Feed Mixer',
+      description: 'Paddle alignment and gearbox oil change',
+      maintenance_type: 'inspection',
+      cost: 180,
+      service_provider: 'Internal workshop',
+      maintenance_date: todayMinus(15),
+      next_service_date: todayPlus(20),
+      downtime_hours: 2,
+      outcome: 'Mixer cleared for feed batching.',
+    },
+  ];
+
+  for (const log of maintenanceLogs) {
+    const asset = createdAssets.get(log.assetName);
+    if (!asset) continue;
+    const existing = await prisma.asset_maintenance_logs.findFirst({
+      where: { asset_id: asset.id, description: log.description, maintenance_date: log.maintenance_date },
+    });
+    if (!existing) {
+      await prisma.asset_maintenance_logs.create({
+        data: {
+          asset_id: asset.id,
+          performed_by: USERS.superAdmin.userId,
+          ...log,
+        },
+      });
+    }
+  }
+
+  const repairSeeds = [
+    {
+      assetName: 'Cold Room Generator',
+      issue: 'Starter relay failure',
+      repair_action: 'Replaced starter relay and tested standby startup cycle.',
+      parts_used: ['Starter relay', 'Terminal lug set'],
+      downtime_hours: 3,
+      cost: 295,
+      completed_by: 'PowerSystems Ltd',
+      completed_date: todayMinus(14),
+      notes: 'Generator returned to automatic standby mode.',
+      work_order_number: 'MWO-DEMO-004',
+    },
+    {
+      assetName: 'Massey Ferguson Field Truck',
+      issue: 'Rear tire puncture and rim check',
+      repair_action: 'Patched tube, reseated rim, and checked lug torque.',
+      parts_used: ['Tube patch kit'],
+      downtime_hours: 1.5,
+      cost: 70,
+      completed_by: 'Workshop attendant',
+      completed_date: todayMinus(7),
+      notes: 'Truck released for inbound fertilizer collection.',
+      work_order_number: null,
+    },
+  ];
+
+  for (const repair of repairSeeds) {
+    const asset = createdAssets.get(repair.assetName);
+    if (!asset) continue;
+    const linkedOrder = repair.work_order_number
+      ? await prisma.work_orders.findFirst({ where: { farm_id: FARM_ID, work_order_number: repair.work_order_number } })
+      : null;
+    const existing = await prismaAny.repair_records.findFirst({
+      where: { farm_id: FARM_ID, asset_id: asset.id, issue: repair.issue, completed_date: repair.completed_date },
+    });
+    if (!existing) {
+      await prismaAny.repair_records.create({
+        data: {
+          farm_id: FARM_ID,
+          asset_id: asset.id,
+          work_order_id: linkedOrder?.id ?? null,
+          ...repair,
+        },
+      });
+    }
+  }
+
+  const usageSeeds = [
+    {
+      assetName: 'John Deere 5075E Tractor',
+      used_by: employeeByName.get('Abigail Swen') ?? USERS.farmManager.employeeId,
+      purpose: 'Land preparation',
+      sector: 'Crop production',
+      activity: 'Disc harrow pass on North Field A',
+      start_time: new Date(new Date().setHours(7, 0, 0, 0)),
+      end_time: null,
+      hours_used: null,
+      fuel_cost: null,
+      location: 'North Field A',
+      notes: 'Open dispatch for this morning field pass.',
+    },
+    {
+      assetName: 'Massey Ferguson Field Truck',
+      used_by: employeeByName.get('Martha Dennis') ?? USERS.farmManager.employeeId,
+      purpose: 'Warehouse transfer',
+      sector: 'Logistics',
+      activity: 'Delivered seed pallets to staging area',
+      start_time: new Date(new Date().setDate(new Date().getDate() - 1)),
+      end_time: new Date(new Date().setDate(new Date().getDate() - 1)),
+      hours_used: 3.5,
+      fuel_cost: 42,
+      location: 'Input Warehouse Dock',
+      notes: 'Completed inbound store movement.',
+    },
+    {
+      assetName: 'Feed Mixer',
+      used_by: employeeByName.get('Peter Wolo') ?? USERS.farmManager.employeeId,
+      purpose: 'Feed production',
+      sector: 'Livestock',
+      activity: 'Mixed broiler starter ration',
+      start_time: new Date(new Date().setDate(new Date().getDate() - 2)),
+      end_time: new Date(new Date().setDate(new Date().getDate() - 2)),
+      hours_used: 2.2,
+      fuel_cost: 18,
+      location: 'Livestock Feed Mill',
+      notes: 'Batch mix aligned with poultry feeding plan.',
+    },
+    {
+      assetName: 'Cold Room Generator',
+      used_by: employeeByName.get('Daniel Kormah') ?? USERS.farmManager.employeeId,
+      purpose: 'Cold room backup test',
+      sector: 'Postharvest',
+      activity: '30-minute load test',
+      start_time: new Date(new Date().setDate(new Date().getDate() - 5)),
+      end_time: new Date(new Date().setDate(new Date().getDate() - 5)),
+      hours_used: 0.5,
+      fuel_cost: 12,
+      location: 'Cold Room Plant House',
+      notes: 'Routine standby verification.',
+    },
+  ];
+
+  for (const usage of usageSeeds) {
+    const asset = createdAssets.get(usage.assetName);
+    if (!asset || !usage.used_by) continue;
+    const existing = await prisma.asset_usage_logs.findFirst({
+      where: { asset_id: asset.id, purpose: usage.purpose, location: usage.location, notes: usage.notes },
+    });
+    if (!existing) {
+      await prisma.asset_usage_logs.create({
+        data: {
+          asset_id: asset.id,
+          authorized_by: USERS.farmManager.userId,
+          ...usage,
+        },
+      });
+    }
   }
 
   const equipmentRequest = await prismaAny.equipment_requests.findFirst({
@@ -2629,7 +3185,7 @@ async function ensureManagerCoverage() {
     }
   }
 
-  const workOrderSeeds = [
+  const productionWorkOrderSeeds = [
     { work_order_number: 'MWO-240001', asset_name: 'Kubota Power Tiller', title: 'Starter motor relay replacement', issue_type: 'Electrical repair', description: 'Tiller failed to crank during morning nursery dispatch.', planned_start_date: todayMinus(1), planned_end_date: todayPlus(1), priority: 'urgent', requested_by_name: 'Olivia Freeman', assigned_technician: 'Daniel Kormah', estimated_cost: 145, actual_cost: null, status: 'in progress' },
     { work_order_number: 'MWO-240002', asset_name: 'Weighing Scale', title: 'Display board fault diagnosis', issue_type: 'Calibration repair', description: 'Loading bay scale display flickers and loses tare settings.', planned_start_date: todayMinus(4), planned_end_date: todayMinus(1), priority: 'high', requested_by_name: 'Martha Dennis', assigned_technician: 'ScalePro Field Team', estimated_cost: 210, actual_cost: 210, status: 'completed' },
     { work_order_number: 'MWO-240003', asset_name: 'Cold Storage Unit', title: 'Door seal inspection', issue_type: 'Preventive service', description: 'Seal wear observed during night temperature review.', planned_start_date: todayPlus(1), planned_end_date: todayPlus(3), priority: 'normal', requested_by_name: 'Farm Manager', assigned_technician: 'CoolChain Service', estimated_cost: 185, actual_cost: null, status: 'assigned' },
@@ -2639,7 +3195,7 @@ async function ensureManagerCoverage() {
   ];
 
   const workOrdersByNumber = new Map<string, any>();
-  for (const seed of workOrderSeeds) {
+  for (const seed of productionWorkOrderSeeds) {
     const asset = assetsByName.get(seed.asset_name);
     const requestedEmployee = employeesByName.get(seed.requested_by_name);
     if (!asset) continue;
@@ -4551,6 +5107,148 @@ async function ensureFrontendShowcaseData() {
   }
 }
 
+async function ensureFinanceEntries() {
+  async function ensureAccount(account_code: string, name: string, account_type: string) {
+    const existing = await prismaAny.financial_accounts.findFirst({
+      where: { farm_id: FARM_ID, account_code },
+    });
+    if (existing) {
+      return prismaAny.financial_accounts.update({
+        where: { id: existing.id },
+        data: { name, account_type, is_active: true },
+      });
+    }
+    return prismaAny.financial_accounts.create({
+      data: {
+        farm_id: FARM_ID,
+        account_code,
+        name,
+        account_type,
+        is_active: true,
+      },
+    });
+  }
+
+  const [cashAccount, receivableAccount, payableAccount, revenueAccount, expenseAccount] = await Promise.all([
+    ensureAccount('AST-CASH', 'Farm Operating Cash', 'asset'),
+    ensureAccount('AST-AR', 'Accounts Receivable', 'asset'),
+    ensureAccount('LIA-AP', 'Accounts Payable', 'liability'),
+    ensureAccount('REV-OTHER', 'Other Operating Income', 'revenue'),
+    ensureAccount('EXP-OTHER', 'Other Operating Expense', 'expense'),
+  ]);
+
+  const manualEntries = [
+    {
+      reference: 'FIN-DEMO-001',
+      entry_date: todayMinus(11),
+      description: 'Packaging material expense\n@@finance-meta:{"transactionType":"expense","vendor":"PackRight Supplies","category":"packaging","linkedModule":"manual","amount":420,"paymentMethod":"bank transfer","paymentStatus":"paid","dueDate":"2026-05-07","paidAt":"2026-05-07","receiptUrl":"https://example.local/receipts/packaging-001.pdf","notes":"Rice sacks, labels, and sealing tape","sector":"Finished Goods / Processing"}',
+      total_debit: 420,
+      total_credit: 420,
+      debit_account_id: expenseAccount.id,
+      credit_account_id: cashAccount.id,
+    },
+    {
+      reference: 'FIN-DEMO-002',
+      entry_date: todayMinus(9),
+      description: 'Farm utility expense\n@@finance-meta:{"transactionType":"expense","vendor":"Liberia Utilities Corp","category":"utilities","linkedModule":"manual","amount":310,"paymentMethod":"cash","paymentStatus":"paid","dueDate":"2026-05-09","paidAt":"2026-05-09","receiptUrl":"https://example.local/receipts/utilities-001.pdf","notes":"Cold room electricity and office power","sector":"Finished Goods / Processing"}',
+      total_debit: 310,
+      total_credit: 310,
+      debit_account_id: expenseAccount.id,
+      credit_account_id: cashAccount.id,
+    },
+    {
+      reference: 'FIN-DEMO-003',
+      entry_date: todayMinus(6),
+      description: 'Transport and delivery expense\n@@finance-meta:{"transactionType":"expense","vendor":"Port Haulage Services","category":"transport","linkedModule":"distribution","amount":260,"paymentMethod":"mobile money","paymentStatus":"paid","dueDate":"2026-05-12","paidAt":"2026-05-12","receiptUrl":"https://example.local/receipts/transport-001.pdf","notes":"Market delivery run and cargo handling","sector":"Logistics / Distribution"}',
+      total_debit: 260,
+      total_credit: 260,
+      debit_account_id: expenseAccount.id,
+      credit_account_id: cashAccount.id,
+    },
+    {
+      reference: 'FIN-DEMO-004',
+      entry_date: todayMinus(4),
+      description: 'Agronomy consulting income\n@@finance-meta:{"transactionType":"income","customer":"Green Plate Restaurants","sourceOrder":"CONS-AGRO-01","productService":"Agronomy advisory service","amount":540,"paymentMethod":"bank transfer","paymentStatus":"partially paid","dueDate":"2026-05-20","paidAt":null,"linkedModule":"manual","linkedRecordId":null,"receiptUrl":"https://example.local/receipts/agronomy-001.pdf","notes":"Soil fertility and crop planning advisory","sector":"Crop Production"}',
+      total_debit: 540,
+      total_credit: 540,
+      debit_account_id: receivableAccount.id,
+      credit_account_id: revenueAccount.id,
+    },
+    {
+      reference: 'FIN-DEMO-005',
+      entry_date: todayMinus(2),
+      description: 'Cold room storage income\n@@finance-meta:{"transactionType":"income","customer":"Sunrise Community Stores","sourceOrder":"COLD-LEASE-01","productService":"Short-term cold storage rental","amount":380,"paymentMethod":"cash","paymentStatus":"paid","dueDate":"2026-05-16","paidAt":"2026-05-16","linkedModule":"manual","linkedRecordId":null,"receiptUrl":"https://example.local/receipts/storage-001.pdf","notes":"Three-day produce holding charge","sector":"Finished Goods / Processing"}',
+      total_debit: 380,
+      total_credit: 380,
+      debit_account_id: cashAccount.id,
+      credit_account_id: revenueAccount.id,
+    },
+    {
+      reference: 'FIN-DEMO-006',
+      entry_date: todayMinus(1),
+      description: 'Veterinary chemical expense\n@@finance-meta:{"transactionType":"expense","vendor":"AgroChem Inputs Ltd","category":"chemical","linkedModule":"manual","amount":215,"paymentMethod":"credit","paymentStatus":"overdue","dueDate":"2026-05-15","paidAt":null,"receiptUrl":"https://example.local/receipts/chemical-001.pdf","notes":"Disinfectant and dip chemical top-up","sector":"Livestock"}',
+      total_debit: 215,
+      total_credit: 215,
+      debit_account_id: expenseAccount.id,
+      credit_account_id: payableAccount.id,
+    },
+  ];
+
+  for (const entry of manualEntries) {
+    const existing = await prismaAny.journal_entries.findFirst({
+      where: { farm_id: FARM_ID, reference: entry.reference, source_module: 'finance' },
+    });
+
+    const saved = existing
+      ? await prismaAny.journal_entries.update({
+          where: { id: existing.id },
+          data: {
+            created_by: USERS.farmManager.userId,
+            farm_id: FARM_ID,
+            entry_date: entry.entry_date,
+            description: entry.description,
+            total_debit: entry.total_debit,
+            total_credit: entry.total_credit,
+            source_module: 'finance',
+            status: 'posted',
+          },
+        })
+      : await prismaAny.journal_entries.create({
+          data: {
+            farm_id: FARM_ID,
+            created_by: USERS.farmManager.userId,
+            entry_date: entry.entry_date,
+            reference: entry.reference,
+            source_module: 'finance',
+            description: entry.description,
+            total_debit: entry.total_debit,
+            total_credit: entry.total_credit,
+            status: 'posted',
+          },
+        });
+
+    await prismaAny.journal_entry_lines.deleteMany({ where: { journal_entry_id: saved.id } });
+    await prismaAny.journal_entry_lines.createMany({
+      data: [
+        {
+          journal_entry_id: saved.id,
+          account_id: entry.debit_account_id,
+          debit_amount: entry.total_debit,
+          credit_amount: 0,
+          description: entry.reference,
+        },
+        {
+          journal_entry_id: saved.id,
+          account_id: entry.credit_account_id,
+          debit_amount: 0,
+          credit_amount: entry.total_credit,
+          description: entry.reference,
+        },
+      ],
+    });
+  }
+}
+
 async function main() {
   await ensureFarm();
   await upsertEmployeeUser(USERS.superAdmin);
@@ -4567,6 +5265,7 @@ async function main() {
   await ensureAssetsAndLand();
   await ensureProductionAndProcurementRequests();
   await ensureManagerCoverage();
+  await ensureFinanceEntries();
   await ensureSalesCommandCenter();
   await ensureLivestock();
   await ensureFrontendTables();
