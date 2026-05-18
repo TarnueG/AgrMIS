@@ -9,6 +9,7 @@ const statusColors: Record<string, string> = {
   pending: 'bg-warning/20 text-warning border-warning/30',
   in_production: 'bg-info/20 text-info border-info/30',
   quality_check: 'bg-accent/20 text-accent border-accent/30',
+  ready_for_dispatch: 'bg-primary/20 text-primary border-primary/30',
   completed: 'bg-success/20 text-success border-success/30',
   rejected: 'bg-destructive/20 text-destructive border-destructive/30',
 };

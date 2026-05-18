@@ -2289,6 +2289,350 @@ async function ensureManagerCoverage() {
   }
 }
 
+async function ensureSalesCommandCenter() {
+  const customerRows = await prisma.customers.findMany({
+    where: { farm_id: FARM_ID, deleted_at: null },
+    select: { id: true, name: true },
+  });
+  const customerMap = new Map(customerRows.map((customer) => [customer.name, customer.id]));
+
+  const stockItems = await prisma.stock_items.findMany({
+    where: { farm_id: FARM_ID, deleted_at: null },
+    select: { id: true, sku: true, name: true },
+  });
+  const stockBySku = new Map(stockItems.map((item) => [item.sku ?? '', item]));
+
+  const contractSeeds = [
+    {
+      contract_number: 'AGR-CON-001',
+      customer_name: 'Atlantic Export Traders',
+      contract_type: 'supply',
+      start_date: todayMinus(60),
+      end_date: todayPlus(120),
+      total_value: 18500,
+      status: 'active',
+      terms: 'Quarterly packaged rice and maize seed fulfillment.',
+    },
+    {
+      contract_number: 'AGR-CON-002',
+      customer_name: 'Harvest Foods Market',
+      contract_type: 'supply',
+      start_date: todayMinus(20),
+      end_date: todayPlus(90),
+      total_value: 9200,
+      status: 'active',
+      terms: 'Retail staple replenishment with staged dispatches.',
+    },
+  ];
+
+  for (const seed of contractSeeds) {
+    const customerId = customerMap.get(seed.customer_name);
+    if (!customerId) continue;
+
+    const existing = await prisma.contracts.findFirst({
+      where: { farm_id: FARM_ID, contract_number: seed.contract_number },
+    });
+
+    if (existing) {
+      await prisma.contracts.update({
+        where: { id: existing.id },
+        data: {
+          customer_id: customerId,
+          contract_type: seed.contract_type,
+          start_date: seed.start_date,
+          end_date: seed.end_date,
+          total_value: seed.total_value,
+          status: seed.status,
+          terms: seed.terms,
+          updated_at: new Date(),
+        } as any,
+      });
+    } else {
+      await prisma.contracts.create({
+        data: {
+          farm_id: FARM_ID,
+          customer_id: customerId,
+          created_by: USERS.salesOfficer.userId,
+          contract_number: seed.contract_number,
+          contract_type: seed.contract_type,
+          start_date: seed.start_date,
+          end_date: seed.end_date,
+          total_value: seed.total_value,
+          status: seed.status,
+          terms: seed.terms,
+        } as any,
+      });
+    }
+  }
+
+  const salesOrders = [
+    {
+      order_number: 'SO-DEMO-001',
+      customer_name: 'Harvest Foods Market',
+      status: 'delivered',
+      payment_status: 'paid',
+      order_date: todayMinus(21),
+      delivery_date: todayMinus(16),
+      subtotal: 2400,
+      tax_amount: 120,
+      total_amount: 2520,
+      notes: '[[type:direct_sale]] Packaged rice delivery completed for retail chain.',
+      item: { stock_item_id: stockBySku.get('RICE-FG-5KG')?.id, quantity: 60, unit_price: 42, line_total: 2520 },
+    },
+    {
+      order_number: 'SO-DEMO-002',
+      customer_name: 'Atlantic Export Traders',
+      status: 'confirmed',
+      payment_status: 'unpaid',
+      order_date: todayMinus(12),
+      delivery_date: todayPlus(4),
+      subtotal: 860,
+      tax_amount: 0,
+      total_amount: 860,
+      notes: '[[type:production_order]] Fertilizer order in production queue.',
+      item: { stock_item_id: stockBySku.get('FERT-UREA-4600')?.id, quantity: 100, unit_price: 8.6, line_total: 860 },
+    },
+    {
+      order_number: 'SO-DEMO-003',
+      customer_name: 'Sunrise Community Stores',
+      status: 'packed',
+      payment_status: 'paid',
+      order_date: todayMinus(7),
+      delivery_date: todayPlus(1),
+      subtotal: 1296,
+      tax_amount: 64.8,
+      total_amount: 1360.8,
+      notes: '[[type:direct_sale]] Rice restock queued for morning dispatch.',
+      item: { stock_item_id: stockBySku.get('RICE-FG-5KG')?.id, quantity: 24, unit_price: 54, line_total: 1296 },
+    },
+    {
+      order_number: 'SO-DEMO-004',
+      customer_name: 'Green Plate Restaurants',
+      status: 'confirmed',
+      payment_status: 'partial',
+      order_date: todayMinus(4),
+      delivery_date: todayPlus(2),
+      subtotal: 540,
+      tax_amount: 0,
+      total_amount: 540,
+      notes: '[[type:production_order]] Seed order bundled with agronomy support request.',
+      item: { stock_item_id: stockBySku.get('SEED-MAIZE-350')?.id, quantity: 10, unit_price: 54, line_total: 540 },
+    },
+    {
+      order_number: 'SO-DEMO-005',
+      customer_name: 'River Port Commodities',
+      status: 'delivered',
+      payment_status: 'paid',
+      order_date: todayMinus(16),
+      delivery_date: todayMinus(10),
+      subtotal: 1720,
+      tax_amount: 0,
+      total_amount: 1720,
+      notes: '[[type:contract]] Contract AGR-CON-001 bulk fertilizer dispatch completed.',
+      item: { stock_item_id: stockBySku.get('FERT-UREA-4600')?.id, quantity: 200, unit_price: 8.6, line_total: 1720 },
+    },
+    {
+      order_number: 'SO-DEMO-006',
+      customer_name: 'Harvest Foods Market',
+      status: 'pending',
+      payment_status: 'unpaid',
+      order_date: todayMinus(1),
+      delivery_date: todayPlus(6),
+      subtotal: 1320,
+      tax_amount: 0,
+      total_amount: 1320,
+      notes: '[[type:direct_sale]] Mixed feed and rice order awaiting approval.',
+      items: [
+        { stock_item_id: stockBySku.get('RICE-FG-5KG')?.id, quantity: 20, unit_price: 42, line_total: 840 },
+        { stock_item_id: stockBySku.get('FEED-FISH-32')?.id, quantity: 20, unit_price: 24, line_total: 480 },
+      ],
+    },
+    {
+      order_number: 'SO-DEMO-007',
+      customer_name: 'Demo Customer',
+      status: 'dispatched',
+      payment_status: 'partial',
+      order_date: todayMinus(3),
+      delivery_date: todayPlus(1),
+      subtotal: 342,
+      tax_amount: 0,
+      total_amount: 342,
+      notes: '[[type:direct_sale]] Harvest crate and packaging dispatch in transit.',
+      item: { stock_item_id: stockBySku.get('TOOLS-CRATE-2026')?.id, quantity: 38, unit_price: 9, line_total: 342 },
+    },
+    {
+      order_number: 'SO-DEMO-008',
+      customer_name: 'Atlantic Export Traders',
+      status: 'cancelled',
+      payment_status: 'unpaid',
+      order_date: todayMinus(2),
+      delivery_date: todayPlus(7),
+      subtotal: 702,
+      tax_amount: 0,
+      total_amount: 702,
+      notes: '[[type:contract]] Contract AGR-CON-001 fungicide order cancelled after spec change.',
+      item: { stock_item_id: stockBySku.get('CHEM-COPPER-5L')?.id, quantity: 18, unit_price: 39, line_total: 702 },
+    },
+  ];
+
+  for (const order of salesOrders) {
+    const customerId = customerMap.get(order.customer_name);
+    if (!customerId) continue;
+
+    let existing = await prisma.sales_orders.findFirst({
+      where: { farm_id: FARM_ID, order_number: order.order_number },
+    });
+
+    if (existing) {
+      existing = await prisma.sales_orders.update({
+        where: { id: existing.id },
+        data: {
+          customer_id: customerId,
+          updated_by: USERS.salesOfficer.userId,
+          order_date: order.order_date,
+          delivery_date: order.delivery_date,
+          status: order.status,
+          payment_status: order.payment_status,
+          subtotal: order.subtotal,
+          tax_amount: order.tax_amount,
+          total_amount: order.total_amount,
+          notes: order.notes,
+        },
+      });
+    } else {
+      existing = await prisma.sales_orders.create({
+        data: {
+          farm_id: FARM_ID,
+          customer_id: customerId,
+          created_by: USERS.salesOfficer.userId,
+          updated_by: USERS.salesOfficer.userId,
+          order_number: order.order_number,
+          order_date: order.order_date,
+          delivery_date: order.delivery_date,
+          status: order.status,
+          payment_status: order.payment_status,
+          subtotal: order.subtotal,
+          tax_amount: order.tax_amount,
+          total_amount: order.total_amount,
+          notes: order.notes,
+        },
+      });
+    }
+
+    const items = 'items' in order ? order.items : [order.item];
+    for (const item of items) {
+      if (!item?.stock_item_id) continue;
+      const existingItem = await prisma.sales_order_items.findFirst({
+        where: { sales_order_id: existing.id, stock_item_id: item.stock_item_id },
+      });
+
+      if (existingItem) {
+        await prisma.sales_order_items.update({
+          where: { id: existingItem.id },
+          data: {
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            line_total: item.line_total,
+          },
+        });
+      } else {
+        await prisma.sales_order_items.create({
+          data: {
+            sales_order_id: existing.id,
+            stock_item_id: item.stock_item_id,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            line_total: item.line_total,
+          },
+        });
+      }
+    }
+  }
+
+  const distributionSeeds = [
+    {
+      order_number: 'SO-DEMO-001',
+      dispatch_date: todayMinus(17),
+      delivery_status: 'delivered',
+      destination: 'Paynesville wholesale market',
+      driver_name: 'Samuel Dixon',
+      vehicle_ref: 'TRK-01',
+      recipient_name: 'Harvest Foods Receiving',
+      notes: 'Rice pallets delivered in full with signed receipt.',
+    },
+    {
+      order_number: 'SO-DEMO-003',
+      dispatch_date: todayMinus(1),
+      delivery_status: 'ready_for_dispatch',
+      destination: 'Benson Street retail cluster',
+      driver_name: 'Martha Dennis',
+      vehicle_ref: 'VAN-03',
+      recipient_name: 'Sunrise Store Dispatch Desk',
+      notes: 'Loaded and staged for first-run route.',
+    },
+    {
+      order_number: 'SO-DEMO-005',
+      dispatch_date: todayMinus(10),
+      delivery_status: 'delivered',
+      destination: 'Port logistics enclave',
+      driver_name: 'Peter Sumo',
+      vehicle_ref: 'TRK-02',
+      recipient_name: 'River Port Receiving Team',
+      notes: 'Bulk fertilizer delivered under contract AGR-CON-001.',
+    },
+    {
+      order_number: 'SO-DEMO-007',
+      dispatch_date: todayMinus(0),
+      delivery_status: 'in_transit',
+      destination: 'Monrovia retail district',
+      driver_name: 'Internal Dispatch Team',
+      vehicle_ref: 'AMIS-DELIVERY',
+      recipient_name: 'Demo Customer',
+      notes: 'Crates and packaging accessories on active route.',
+    },
+  ];
+
+  for (const seed of distributionSeeds) {
+    const order = await prisma.sales_orders.findFirst({
+      where: { farm_id: FARM_ID, order_number: seed.order_number },
+    });
+    if (!order) continue;
+
+    const existing = await prisma.distribution_logs.findFirst({
+      where: { sales_order_id: order.id, notes: seed.notes },
+    });
+
+    if (existing) {
+      await prisma.distribution_logs.update({
+        where: { id: existing.id },
+        data: {
+          dispatch_date: seed.dispatch_date,
+          delivery_status: seed.delivery_status,
+          destination: seed.destination,
+          driver_name: seed.driver_name,
+          vehicle_ref: seed.vehicle_ref,
+          recipient_name: seed.recipient_name,
+          notes: seed.notes,
+        },
+      });
+    } else {
+      await prisma.distribution_logs.create({
+        data: {
+          sales_order_id: order.id,
+          dispatched_by: USERS.salesOfficer.userId,
+          dispatch_date: seed.dispatch_date,
+          delivery_status: seed.delivery_status,
+          destination: seed.destination,
+          driver_name: seed.driver_name,
+          vehicle_ref: seed.vehicle_ref,
+          recipient_name: seed.recipient_name,
+          notes: seed.notes,
+        },
+      });
+    }
+  }
+}
+
 async function ensureLivestock() {
   await prisma.$executeRawUnsafe(`
     INSERT INTO pigs (farm_id, pig_id, breed, gender, status, pen_number, date_recorded, created_by)
@@ -3089,6 +3433,7 @@ async function main() {
   await ensureAssetsAndLand();
   await ensureProductionAndProcurementRequests();
   await ensureManagerCoverage();
+  await ensureSalesCommandCenter();
   await ensureLivestock();
   await ensureFrontendTables();
   await ensureFrontendShowcaseData();

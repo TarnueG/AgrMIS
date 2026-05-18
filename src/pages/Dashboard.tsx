@@ -47,6 +47,7 @@ function InternalDashboard() {
         inventoryItems,
         procurementOrders,
         productionBatches,
+        salesOrders,
         marketingOrders,
         customers,
         employees,
@@ -56,6 +57,7 @@ function InternalDashboard() {
         canView('inventory') ? api.get<any[]>('/inventory/items').catch(() => []) : Promise.resolve([]),
         canView('procurement') ? api.get<any[]>('/procurement/purchase-orders').catch(() => []) : Promise.resolve([]),
         canView('production') ? api.get<any[]>('/inventory/prod-batches').catch(() => []) : Promise.resolve([]),
+        canView('sales_order_points') ? api.get<any[]>('/sales/orders').catch(() => []) : Promise.resolve([]),
         canView('sales_order_points') || canView('marketing') ? api.get<any[]>('/marketing/orders').catch(() => []) : Promise.resolve([]),
         canView('crm') ? api.get<any[]>('/sales/customers').catch(() => []) : Promise.resolve([]),
         canView('human_capital') ? api.get<any[]>('/hr/employees').catch(() => []) : Promise.resolve([]),
@@ -82,8 +84,8 @@ function InternalDashboard() {
         0
       );
 
-      const activeSalesOrders = (marketingOrders as any[]).filter((order) =>
-        !['completed', 'delivered', 'cancelled'].includes(String(order.status || '').toLowerCase())
+      const activeSalesOrders = ([...(salesOrders as any[]), ...(marketingOrders as any[])]).filter((order) =>
+        !['completed', 'delivered', 'cancelled', 'rejected'].includes(String(order.status || '').toLowerCase())
       ).length;
 
       const customerCount = (customers as any[]).filter((customer) => customer.is_active !== false).length;
@@ -95,10 +97,15 @@ function InternalDashboard() {
         return new Date(asset.next_service_date) <= now;
       }).length;
 
-      const financeSummary = (marketingOrders as any[]).reduce((sum, order) => {
-        if (!['completed', 'delivered'].includes(String(order.status || '').toLowerCase())) return sum;
-        return sum + Number(order.amount || order.total_amount || 0);
-      }, 0);
+      const financeSummary =
+        (marketingOrders as any[]).reduce((sum, order) => {
+          if (!['completed', 'delivered'].includes(String(order.status || '').toLowerCase())) return sum;
+          return sum + Number(order.amount || order.total_amount || 0);
+        }, 0) +
+        (salesOrders as any[]).reduce((sum, order) => {
+          if (!['completed', 'delivered'].includes(String(order.status || '').toLowerCase())) return sum;
+          return sum + Number(order.total_amount || 0);
+        }, 0);
 
       return {
         inventoryValue,
