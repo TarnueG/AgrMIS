@@ -3,6 +3,7 @@ import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
+import { logAuditEvent } from '../lib/audit';
 
 const router = Router();
 const prismaAny = prisma as any;
@@ -561,6 +562,21 @@ router.post('/batches', async (req, res) => {
       return batch;
     });
 
+    await logAuditEvent({
+      req,
+      eventType: 'create',
+      subsystem: 'production',
+      description: `Created production batch ${result.batch_number}`,
+      recordType: 'production_batch',
+      recordId: result.id,
+      recordLabel: result.batch_number,
+      severity: 'info',
+      afterValue: {
+        status: result.status,
+        plannedQuantity: Number(result.planned_quantity || result.quantity || 0),
+        sector: result.sector,
+      },
+    });
     res.status(201).json(result);
   } catch {
     res.status(500).json({ error: 'Failed to create production batch', code: 'DB_ERROR' });
@@ -575,6 +591,10 @@ router.patch('/batches/:id', async (req, res) => {
 
   const data = parsed.data;
   try {
+    const existing = await prismaAny.inventory_production_batches.findUnique({ where: { id: req.params.id } });
+    if (!existing) {
+      return res.status(404).json({ error: 'Batch not found', code: 'NOT_FOUND' });
+    }
     const batch = await prismaAny.inventory_production_batches.update({
       where: { id: req.params.id },
       data: {
@@ -589,6 +609,18 @@ router.patch('/batches/:id', async (req, res) => {
       },
     });
 
+    await logAuditEvent({
+      req,
+      eventType: data.status && data.status !== formatProductionStatus(existing.status) ? 'status_change' : 'update',
+      subsystem: 'production',
+      description: `Updated production batch ${batch.batch_number}`,
+      recordType: 'production_batch',
+      recordId: batch.id,
+      recordLabel: batch.batch_number,
+      severity: 'info',
+      beforeValue: existing,
+      afterValue: batch,
+    });
     res.json(batch);
   } catch (error: any) {
     if (error?.code === 'P2025') {
@@ -653,10 +685,22 @@ router.post('/batches/:id/consume', async (req, res) => {
         });
       }
 
-      return transaction;
+      return { transaction, batch, stockItem, currentQuantity, nextQuantity };
     });
 
-    res.status(201).json(result);
+    await logAuditEvent({
+      req,
+      eventType: 'stock_movement',
+      subsystem: 'production',
+      description: `Consumed ${data.quantityUsed} ${result.stockItem.unit_of_measure || ''} of ${result.stockItem.name} for ${result.batch.batch_number}`.trim(),
+      recordType: 'production_batch',
+      recordId: result.batch.id,
+      recordLabel: result.batch.batch_number,
+      severity: 'info',
+      beforeValue: { quantity: result.currentQuantity },
+      afterValue: { quantity: result.nextQuantity, stockItem: result.stockItem.name, consumed: data.quantityUsed },
+    });
+    res.status(201).json(result.transaction);
   } catch (error: any) {
     if (error?.code === 'NOT_FOUND') return res.status(404).json({ error: 'Batch not found', code: 'NOT_FOUND' });
     if (error?.code === 'INPUT_NOT_FOUND') return res.status(404).json({ error: 'Input item not found', code: 'INPUT_NOT_FOUND' });
@@ -784,10 +828,30 @@ router.post('/batches/:id/quality-check', async (req, res) => {
         });
       }
 
-      return updatedBatch;
+      return { updatedBatch, request };
     });
 
-    res.status(201).json(result);
+    await logAuditEvent({
+      req,
+      eventType: data.result === 'passed' ? 'approve' : data.result === 'failed' ? 'reject' : 'status_change',
+      subsystem: 'production',
+      description: `Quality check ${data.result} for ${result.updatedBatch.batch_number}`,
+      recordType: 'production_batch',
+      recordId: result.updatedBatch.id,
+      recordLabel: result.updatedBatch.batch_number,
+      severity: data.result === 'failed' ? 'critical' : data.result === 'rework' ? 'warning' : 'info',
+      afterValue: {
+        status: result.updatedBatch.status,
+        producedQuantity: data.producedQuantity,
+        wasteQuantity: data.wasteQuantity,
+        requestId: result.request.id,
+      },
+      metadata: {
+        result: data.result,
+        failureReason: data.failureReason ?? null,
+      },
+    });
+    res.status(201).json(result.updatedBatch);
   } catch (error: any) {
     if (error?.code === 'NOT_FOUND') return res.status(404).json({ error: 'Batch not found', code: 'NOT_FOUND' });
     if (error?.code === 'REQ_NOT_FOUND') return res.status(404).json({ error: 'Production request not found', code: 'NOT_FOUND' });

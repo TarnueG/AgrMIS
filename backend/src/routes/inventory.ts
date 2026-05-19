@@ -3,6 +3,7 @@ import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
+import { clientInfo, logAuditEvent } from '../lib/audit';
 
 const router = Router();
 router.use(requireAuth);
@@ -114,6 +115,21 @@ router.post('/items', async (req, res) => {
       }
       return item;
     });
+    await logAuditEvent({
+      req,
+      eventType: 'create',
+      subsystem: 'inventory',
+      description: `Created inventory item ${result.name}`,
+      recordType: 'stock_item',
+      recordId: result.id,
+      recordLabel: result.name,
+      severity: 'info',
+      afterValue: {
+        name: result.name,
+        quantity: Number(result.current_quantity || 0),
+        reorderThreshold: Number(result.reorder_threshold || 0),
+      },
+    });
     res.status(201).json(result);
   } catch (err: any) {
     if (err.code === 'P2002') return res.status(400).json({ error: 'SKU already exists', code: 'SKU_CONFLICT' });
@@ -128,6 +144,22 @@ router.patch('/items/:id', async (req, res) => {
   }
   const d = parsed.data;
   try {
+    const existing = await prisma.stock_items.findUnique({
+      where: { id: req.params.id, deleted_at: null },
+      select: {
+        id: true,
+        name: true,
+        category_id: true,
+        unit_of_measure: true,
+        unit_of_measure_id: true,
+        reorder_threshold: true,
+        unit_cost: true,
+        storage_location: true,
+        description: true,
+        sku: true,
+      },
+    });
+    if (!existing) return res.status(404).json({ error: 'Item not found', code: 'NOT_FOUND' });
     const item = await prisma.stock_items.update({
       where: { id: req.params.id, deleted_at: null },
       data: {
@@ -147,6 +179,27 @@ router.patch('/items/:id', async (req, res) => {
         units_of_measure: { select: { id: true, name: true, symbol: true } },
       },
     });
+    await logAuditEvent({
+      req,
+      eventType: 'update',
+      subsystem: 'inventory',
+      description: `Updated inventory item ${item.name}`,
+      recordType: 'stock_item',
+      recordId: item.id,
+      recordLabel: item.name,
+      severity: 'info',
+      beforeValue: existing,
+      afterValue: {
+        name: item.name,
+        categoryId: item.category_id,
+        unitOfMeasure: item.unit_of_measure,
+        reorderThreshold: Number(item.reorder_threshold || 0),
+        unitCost: Number(item.unit_cost || 0),
+        storageLocation: item.storage_location,
+        description: item.description,
+        sku: item.sku,
+      },
+    });
     res.json(item);
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Item not found', code: 'NOT_FOUND' });
@@ -157,9 +210,25 @@ router.patch('/items/:id', async (req, res) => {
 
 router.delete('/items/:id', async (req, res) => {
   try {
+    const existing = await prisma.stock_items.findUnique({
+      where: { id: req.params.id, deleted_at: null },
+      select: { id: true, name: true, current_quantity: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'Item not found', code: 'NOT_FOUND' });
     await prisma.stock_items.update({
       where: { id: req.params.id, deleted_at: null },
       data: { deleted_at: new Date() },
+    });
+    await logAuditEvent({
+      req,
+      eventType: 'delete',
+      subsystem: 'inventory',
+      description: `Deleted inventory item ${existing.name}`,
+      recordType: 'stock_item',
+      recordId: existing.id,
+      recordLabel: existing.name,
+      severity: 'warning',
+      beforeValue: existing,
     });
     res.status(204).end();
   } catch (err: any) {
@@ -229,6 +298,27 @@ router.post('/items/:id/transactions', async (req, res) => {
         data: { current_quantity: qtyAfter, updated_at: new Date() },
       }),
     ]);
+
+    const { ip, userAgent } = clientInfo(req);
+    await logAuditEvent({
+      actorUserId: req.user!.userId,
+      eventType: 'stock_movement',
+      subsystem: 'inventory',
+      description: `${transactionType} inventory movement for ${item.name}`,
+      recordType: 'stock_item',
+      recordId: item.id,
+      recordLabel: item.name,
+      severity: transactionType === 'waste' ? 'warning' : 'info',
+      beforeValue: { quantity: qtyBefore },
+      afterValue: { quantity: qtyAfter, transactionType, movementQuantity: quantity },
+      ipAddress: ip,
+      userAgent,
+      metadata: {
+        quantity,
+        movementType: transactionType,
+        notes: notes ?? null,
+      },
+    });
 
     res.status(201).json(txn);
   } catch {

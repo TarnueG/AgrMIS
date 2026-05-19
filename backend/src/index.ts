@@ -55,6 +55,7 @@ app.use('/api/v1/finance', financeRouter);
 app.use('/api/v1/reports', reportsRouter);
 app.use('/api/v1/profile', profileRouter);
 app.use('/api/v1/access-control', accessControlRouter);
+app.use('/api/v1/audit', auditLogRouter);
 app.use('/api/v1/audit-log', auditLogRouter);
 
 app.get('/api/v1/health', (_req, res) => res.json({ status: 'ok' }));

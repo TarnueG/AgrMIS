@@ -3,6 +3,7 @@ import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
+import { logAuditEvent } from '../lib/audit';
 
 const router = Router();
 router.use(requireAuth);
@@ -177,6 +178,17 @@ router.post('/showcase', async (req, res) => {
       d.expected_date ? new Date(d.expected_date) : null,
       d.notes ?? null,
     );
+    await logAuditEvent({
+      req,
+      eventType: 'create',
+      subsystem: 'procurement',
+      description: `Created procurement request for ${d.item_name}`,
+      recordType: 'procurement_request',
+      recordId: rows[0].id,
+      recordLabel: d.item_name,
+      severity: 'info',
+      afterValue: rows[0],
+    });
     res.status(201).json(rows[0]);
   } catch {
     res.status(500).json({ error: 'Failed to create showcase procurement record', code: 'DB_ERROR' });
@@ -259,8 +271,25 @@ router.patch('/showcase/:id', async (req, res) => {
       poNumber ?? null,
       approvedAt ?? null,
     );
-
-    res.json(updatedRows[0]);
+    const updated = updatedRows[0];
+    await logAuditEvent({
+      req,
+      eventType:
+        nextStatus === 'approved' ? 'approve'
+        : nextStatus === 'rejected' ? 'reject'
+        : nextStatus !== existing.status ? 'status_change'
+        : 'update',
+      subsystem: 'procurement',
+      description: `Updated procurement request ${updated.item_name}`,
+      recordType: 'procurement_request',
+      recordId: updated.id,
+      recordLabel: updated.item_name,
+      severity: nextStatus === 'rejected' ? 'warning' : 'info',
+      beforeValue: existing,
+      afterValue: updated,
+      metadata: { previousStatus: existing.status, nextStatus },
+    });
+    res.json(updated);
   } catch {
     res.status(500).json({ error: 'Failed to update procurement record', code: 'DB_ERROR' });
   }
@@ -388,6 +417,21 @@ router.post('/showcase/:id/receive', async (req, res) => {
       return updatedRows[0];
     });
 
+    await logAuditEvent({
+      req,
+      eventType: 'stock_movement',
+      subsystem: 'procurement',
+      description: `Received stock for procurement ${result.item_name}`,
+      recordType: 'procurement_request',
+      recordId: result.id,
+      recordLabel: result.item_name,
+      severity: 'info',
+      afterValue: {
+        status: result.status,
+        receivedQuantity: Number(result.received_quantity || 0),
+        inventoryId: result.inventory_id,
+      },
+    });
     res.json(result);
   } catch (error: any) {
     if (error?.code === 'NOT_FOUND') {
@@ -455,6 +499,17 @@ router.post('/purchase-orders', async (req, res) => {
       } as any,
       include: { suppliers: { select: { name: true } } },
     });
+    await logAuditEvent({
+      req,
+      eventType: 'create',
+      subsystem: 'procurement',
+      description: `Created purchase order ${po.po_number}`,
+      recordType: 'purchase_order',
+      recordId: po.id,
+      recordLabel: po.po_number,
+      severity: 'info',
+      afterValue: mapPO(po),
+    });
     res.status(201).json(mapPO(po));
   } catch {
     res.status(500).json({ error: 'Failed to create purchase order', code: 'DB_ERROR' });
@@ -468,6 +523,11 @@ router.patch('/purchase-orders/:id', async (req, res) => {
     return res.status(400).json({ error: 'Invalid status', code: 'VALIDATION_ERROR' });
   }
   try {
+    const existing = await prisma.purchase_orders.findUnique({
+      where: { id: req.params.id },
+      include: { suppliers: { select: { name: true } } },
+    });
+    if (!existing) return res.status(404).json({ error: 'Purchase order not found', code: 'NOT_FOUND' });
     const po = await prisma.purchase_orders.update({
       where: { id: req.params.id },
       data: {
@@ -477,6 +537,22 @@ router.patch('/purchase-orders/:id', async (req, res) => {
       },
       include: { suppliers: { select: { name: true } } },
     });
+    await logAuditEvent({
+      req,
+      eventType:
+        status === 'approved' ? 'approve'
+        : status === 'cancelled' ? 'delete'
+        : status && status !== existing.status ? 'status_change'
+        : 'update',
+      subsystem: 'procurement',
+      description: `Updated purchase order ${po.po_number}`,
+      recordType: 'purchase_order',
+      recordId: po.id,
+      recordLabel: po.po_number,
+      severity: status === 'cancelled' ? 'warning' : 'info',
+      beforeValue: mapPO(existing),
+      afterValue: mapPO(po),
+    });
     res.json(mapPO(po));
   } catch {
     res.status(500).json({ error: 'Failed to update purchase order', code: 'DB_ERROR' });
@@ -485,9 +561,26 @@ router.patch('/purchase-orders/:id', async (req, res) => {
 
 router.delete('/purchase-orders/:id', async (req, res) => {
   try {
+    const existing = await prisma.purchase_orders.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, po_number: true, status: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'Purchase order not found', code: 'NOT_FOUND' });
     await prisma.purchase_orders.update({
       where: { id: req.params.id },
       data: { status: 'cancelled' },
+    });
+    await logAuditEvent({
+      req,
+      eventType: 'delete',
+      subsystem: 'procurement',
+      description: `Cancelled purchase order ${existing.po_number}`,
+      recordType: 'purchase_order',
+      recordId: existing.id,
+      recordLabel: existing.po_number,
+      severity: 'warning',
+      beforeValue: existing,
+      afterValue: { status: 'cancelled' },
     });
     res.status(204).end();
   } catch {

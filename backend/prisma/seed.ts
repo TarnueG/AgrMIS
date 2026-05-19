@@ -5249,6 +5249,165 @@ async function ensureFinanceEntries() {
   }
 }
 
+async function ensureAuditEvents() {
+  const auditSeeds = [
+    {
+      eventType: 'failed_login',
+      subsystem: 'settings',
+      description: 'Failed login attempt for manager@agritech.local',
+      occurredAt: todayMinus(0),
+      actorUserId: null,
+      metadata: {
+        severity: 'security',
+        actorName: 'Unknown user',
+        actorRole: null,
+        recordType: 'session',
+        recordId: 'LOGIN-ATTEMPT-1',
+        recordLabel: 'Manager account login',
+        seedKey: 'audit-failed-login',
+      },
+      ipAddress: '10.10.0.51',
+      userAgent: 'Mozilla/5.0 Chrome/124',
+    },
+    {
+      eventType: 'login',
+      subsystem: 'settings',
+      description: 'Farm Manager logged in',
+      occurredAt: todayMinus(0),
+      actorUserId: USERS.farmManager.userId,
+      metadata: { severity: 'info', actorName: USERS.farmManager.fullName, actorRole: USERS.farmManager.role, recordType: 'session', recordId: 'SESSION-001', recordLabel: 'Farm Manager session', seedKey: 'audit-login-success' },
+      ipAddress: '10.10.0.12',
+      userAgent: 'Mozilla/5.0 Chrome/124',
+    },
+    {
+      eventType: 'permission_change',
+      subsystem: 'settings',
+      description: 'Permissions updated for Sales Customer Officer',
+      occurredAt: todayMinus(1),
+      actorUserId: USERS.superAdmin.userId,
+      metadata: {
+        severity: 'security',
+        actorName: USERS.superAdmin.fullName,
+        actorRole: USERS.superAdmin.role,
+        recordType: 'role_permission',
+        recordId: 'sales_customer_officer',
+        recordLabel: 'Sales Customer Officer permissions',
+        beforeValue: { reports: 'view' },
+        afterValue: { reports: 'export' },
+        seedKey: 'audit-permission-change',
+      },
+      ipAddress: '10.10.0.10',
+      userAgent: 'Mozilla/5.0 Edge/124',
+    },
+    {
+      eventType: 'approve',
+      subsystem: 'procurement',
+      description: 'Procurement approved for Floating Fish Feed 32% Protein',
+      occurredAt: todayMinus(2),
+      actorUserId: USERS.farmManager.userId,
+      metadata: { severity: 'info', actorName: USERS.farmManager.fullName, actorRole: USERS.farmManager.role, recordType: 'procurement_request', recordId: 'PR-DEMO-002', recordLabel: 'Floating Fish Feed order', seedKey: 'audit-procurement-approved' },
+      ipAddress: '10.10.0.12',
+      userAgent: 'Mozilla/5.0 Chrome/124',
+    },
+    {
+      eventType: 'stock_movement',
+      subsystem: 'inventory',
+      description: 'Stock received for Hybrid Maize Seed - FAO 350',
+      occurredAt: todayMinus(2),
+      actorUserId: USERS.superAdmin.userId,
+      metadata: {
+        severity: 'info',
+        actorName: USERS.superAdmin.fullName,
+        actorRole: USERS.superAdmin.role,
+        recordType: 'stock_item',
+        recordId: 'SEED-MAIZE-350',
+        recordLabel: 'Hybrid Maize Seed - FAO 350',
+        beforeValue: { quantity: 160 },
+        afterValue: { quantity: 420, received: 260 },
+        seedKey: 'audit-stock-received',
+      },
+      ipAddress: '10.10.0.10',
+      userAgent: 'Mozilla/5.0 Chrome/124',
+    },
+    {
+      eventType: 'status_change',
+      subsystem: 'sales_order_points',
+      description: 'Sales order completed for Sunrise Community Stores',
+      occurredAt: todayMinus(3),
+      actorUserId: USERS.salesOfficer.userId,
+      metadata: { severity: 'info', actorName: USERS.salesOfficer.fullName, actorRole: USERS.salesOfficer.role, recordType: 'sales_order', recordId: 'SO-DEMO-101', recordLabel: 'Sunrise Community Stores order', beforeValue: { status: 'ready_for_dispatch' }, afterValue: { status: 'completed' }, seedKey: 'audit-sales-completed' },
+      ipAddress: '10.10.0.22',
+      userAgent: 'Mozilla/5.0 Firefox/126',
+    },
+    {
+      eventType: 'approve',
+      subsystem: 'production',
+      description: 'Production batch passed quality check',
+      occurredAt: todayMinus(4),
+      actorUserId: USERS.farmManager.userId,
+      metadata: { severity: 'info', actorName: USERS.farmManager.fullName, actorRole: USERS.farmManager.role, recordType: 'production_batch', recordId: 'PB-24051201', recordLabel: 'PB-24051201', beforeValue: { status: 'quality_check' }, afterValue: { status: 'passed' }, seedKey: 'audit-production-passed' },
+      ipAddress: '10.10.0.12',
+      userAgent: 'Mozilla/5.0 Chrome/124',
+    },
+    {
+      eventType: 'payment_recorded',
+      subsystem: 'human_capital',
+      description: 'Payroll paid for April labor cycle',
+      occurredAt: todayMinus(5),
+      actorUserId: USERS.superAdmin.userId,
+      metadata: { severity: 'info', actorName: USERS.superAdmin.fullName, actorRole: USERS.superAdmin.role, recordType: 'payroll_run', recordId: 'PAY-APR-2026', recordLabel: 'April 2026 payroll', seedKey: 'audit-payroll-paid' },
+      ipAddress: '10.10.0.10',
+      userAgent: 'Mozilla/5.0 Safari/17.4',
+    },
+    {
+      eventType: 'status_change',
+      subsystem: 'machinery',
+      description: 'Asset maintenance completed for Tractor Unit 03',
+      occurredAt: todayMinus(6),
+      actorUserId: USERS.farmManager.userId,
+      metadata: { severity: 'warning', actorName: USERS.farmManager.fullName, actorRole: USERS.farmManager.role, recordType: 'work_order', recordId: 'WO-TR-003', recordLabel: 'Tractor Unit 03 maintenance', beforeValue: { status: 'in_progress' }, afterValue: { status: 'completed' }, seedKey: 'audit-maintenance-complete' },
+      ipAddress: '10.10.0.12',
+      userAgent: 'Mozilla/5.0 Chrome/124',
+    },
+    {
+      eventType: 'export',
+      subsystem: 'reports',
+      description: 'Security and audit report exported',
+      occurredAt: todayMinus(6),
+      actorUserId: USERS.superAdmin.userId,
+      metadata: { severity: 'critical', actorName: USERS.superAdmin.fullName, actorRole: USERS.superAdmin.role, recordType: 'report', recordId: 'security-audit', recordLabel: 'Security & Audit Report', seedKey: 'audit-report-export' },
+      ipAddress: '10.10.0.10',
+      userAgent: 'Mozilla/5.0 Edge/124',
+    },
+  ];
+
+  for (const seed of auditSeeds) {
+    const existing = await prismaAny.audit_events.findFirst({
+      where: {
+        description: seed.description,
+        event_type: seed.eventType,
+      },
+      select: { id: true },
+    });
+
+    if (existing) continue;
+
+    await prismaAny.audit_events.create({
+      data: {
+        occurred_at: seed.occurredAt,
+        actor_user_id: seed.actorUserId,
+        event_type: seed.eventType,
+        subsystem: seed.subsystem,
+        action: seed.eventType,
+        description: seed.description,
+        ip_address: seed.ipAddress,
+        user_agent: seed.userAgent,
+        metadata: seed.metadata,
+      },
+    });
+  }
+}
+
 async function main() {
   await ensureFarm();
   await upsertEmployeeUser(USERS.superAdmin);
@@ -5266,6 +5425,7 @@ async function main() {
   await ensureProductionAndProcurementRequests();
   await ensureManagerCoverage();
   await ensureFinanceEntries();
+  await ensureAuditEvents();
   await ensureSalesCommandCenter();
   await ensureLivestock();
   await ensureFrontendTables();

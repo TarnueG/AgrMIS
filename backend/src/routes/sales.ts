@@ -384,6 +384,22 @@ router.post('/orders', async (req, res) => {
       return created;
     });
 
+    await logAuditEvent({
+      req,
+      eventType: 'create',
+      subsystem: 'sales_order_points',
+      description: `Created sales order ${order.order_number}`,
+      recordType: 'sales_order',
+      recordId: order.id,
+      recordLabel: order.order_number,
+      severity: 'info',
+      afterValue: {
+        status: order.status,
+        paymentStatus: order.payment_status,
+        customer: order.customers?.name ?? null,
+        totalAmount: Number(order.total_amount || 0),
+      },
+    });
     res.status(201).json(mapOrder(order));
   } catch {
     res.status(500).json({ error: 'Failed to create order', code: 'DB_ERROR' });
@@ -529,6 +545,30 @@ router.patch('/orders/:id', async (req, res) => {
       return updated;
     });
 
+    const nextUiStatus = DB_TO_UI[order.status] ?? order.status;
+    await logAuditEvent({
+      req,
+      eventType:
+        paymentStatus && paymentStatus !== existing.payment_status ? 'payment_recorded'
+        : status && status !== (DB_TO_UI[previousDbStatus] ?? previousDbStatus) ? 'status_change'
+        : 'update',
+      subsystem: 'sales_order_points',
+      description: `Updated sales order ${order.order_number}`,
+      recordType: 'sales_order',
+      recordId: order.id,
+      recordLabel: order.order_number,
+      severity: nextUiStatus === 'rejected' ? 'warning' : 'info',
+      beforeValue: {
+        status: DB_TO_UI[existing.status] ?? existing.status,
+        paymentStatus: existing.payment_status,
+        deliveryDate: existing.delivery_date,
+      },
+      afterValue: {
+        status: nextUiStatus,
+        paymentStatus: order.payment_status,
+        deliveryDate: order.delivery_date,
+      },
+    });
     res.json(mapOrder(order));
   } catch {
     res.status(500).json({ error: 'Failed to update order', code: 'DB_ERROR' });
@@ -537,9 +577,26 @@ router.patch('/orders/:id', async (req, res) => {
 
 router.delete('/orders/:id', async (req, res) => {
   try {
+    const existing = await prisma.sales_orders.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, order_number: true, status: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'Order not found', code: 'NOT_FOUND' });
     await prisma.sales_orders.update({
       where: { id: req.params.id },
       data: { status: 'cancelled', updated_by: req.user!.userId },
+    });
+    await logAuditEvent({
+      req,
+      eventType: 'delete',
+      subsystem: 'sales_order_points',
+      description: `Cancelled sales order ${existing.order_number}`,
+      recordType: 'sales_order',
+      recordId: existing.id,
+      recordLabel: existing.order_number,
+      severity: 'warning',
+      beforeValue: existing,
+      afterValue: { status: 'cancelled' },
     });
     res.status(204).end();
   } catch {

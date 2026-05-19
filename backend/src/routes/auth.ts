@@ -302,7 +302,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
     const { ip, userAgent } = clientInfo(req);
     logAuditEvent({
       actorUserId: req.user!.userId,
-      eventType: 'settings_changed',
+      eventType: 'password_change',
       subsystem: 'settings',
       description: 'Password changed',
       ipAddress: ip,

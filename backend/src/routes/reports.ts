@@ -375,7 +375,7 @@ async function buildReportsData(farmId: string | undefined, filters: ReportFilte
     });
   }
 
-  for (const event of (auditEvents as any[]).filter((row) => ['login_failed', 'failed_authorization'].includes(row.event_type)).slice(0, 4)) {
+  for (const event of (auditEvents as any[]).filter((row) => ['login_failed', 'failed_authorization', 'failed_login', 'permission_change'].includes(row.event_type)).slice(0, 4)) {
     alerts.push({
       id: event.id,
       severity: 'high',
@@ -537,7 +537,7 @@ async function buildReportsData(farmId: string | undefined, filters: ReportFilte
     { key: 'workforce-payroll', title: 'Workforce & Payroll Report', description: 'Attendance, task delivery, payroll cost, and worker productivity.', metric: `${Number(laborCost.toFixed(2))} labor cost`, lastGenerated: new Date().toISOString(), exportType: 'workforce-payroll' },
     { key: 'asset-maintenance', title: 'Asset Maintenance Report', description: 'Downtime, work orders, maintenance schedule exposure, and cost.', metric: `${Number(maintenanceCost.toFixed(2))} maintenance`, lastGenerated: new Date().toISOString(), exportType: 'asset-maintenance' },
     { key: 'finance-profitability', title: 'Finance & Profitability Report', description: 'Income, expenses, receivables, payables, and net profitability.', metric: `${Number(finance.summary.netProfit.toFixed(2))} net profit`, lastGenerated: new Date().toISOString(), exportType: 'finance-profitability' },
-    { key: 'security-audit', title: 'Security & Audit Report', description: 'Failed logins, authorization issues, and export audit trail.', metric: `${(auditEvents as any[]).filter((row) => ['login_failed', 'failed_authorization'].includes(row.event_type)).length} security events`, lastGenerated: new Date().toISOString(), exportType: 'security-audit' },
+    { key: 'security-audit', title: 'Security & Audit Report', description: 'Failed logins, authorization issues, and export audit trail.', metric: `${(auditEvents as any[]).filter((row) => ['login_failed', 'failed_authorization', 'failed_login', 'permission_change'].includes(row.event_type)).length} security events`, lastGenerated: new Date().toISOString(), exportType: 'security-audit' },
   ];
 
   return {
@@ -645,8 +645,8 @@ async function buildReportsData(farmId: string | undefined, filters: ReportFilte
         title: 'Security & Audit Report',
         summary: 'Suspicious access events and reporting export trail.',
         keyFindings: [
-          `${(auditEvents as any[]).filter((row) => ['login_failed', 'failed_authorization'].includes(row.event_type)).length} failed or suspicious access events recorded.`,
-          `${(auditEvents as any[]).filter((row) => ['finance_exported', 'report_exported'].includes(row.event_type)).length} export audit events recorded.`,
+          `${(auditEvents as any[]).filter((row) => ['login_failed', 'failed_authorization', 'failed_login', 'permission_change'].includes(row.event_type)).length} failed or suspicious access events recorded.`,
+          `${(auditEvents as any[]).filter((row) => ['finance_exported', 'report_exported', 'export'].includes(row.event_type)).length} export audit events recorded.`,
         ],
         tablePreview: (auditEvents as any[]).slice(0, 8).map((row) => ({ occurredAt: row.occurred_at, eventType: row.event_type, subsystem: row.subsystem, description: row.description })),
       },

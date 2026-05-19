@@ -14,6 +14,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { usePermissions } from '@/hooks/usePermissions';
 import { AccessControlContent as AccessControlPanel } from '@/components/settings/AccessControlContent';
+import { AuditLogPanel as SecurityAuditLogPanel } from '@/components/settings/AuditLogPanel';
 import {
   User, Edit2, LogOut, Sun, Moon, Shield, Check,
   Camera, Briefcase, Building2, Calendar, Mail, Hash,
@@ -1337,7 +1338,7 @@ export function Settings() {
           {panel === 'theme' && <ThemePanel />}
           {panel === 'change-password' && <ChangePasswordPanel />}
           {panel === 'list-users' && canView('access_control') && <UsersPanel onViewAuditLog={handleNavAuditLog} />}
-          {panel === 'audit-log' && canView('audit_logs') && <AuditLogPanel prefilterUserId={auditUserId} />}
+          {panel === 'audit-log' && canView('audit_logs') && <SecurityAuditLogPanel prefilterUserId={auditUserId} />}
           {panel === 'access-control' && canView('access_control') && <AccessControlPanel />}
         </main>
       </div>
