@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 import { logAuditEvent } from '../lib/audit';
+import { receiveProcurementFlow } from '../services/procurementService';
 
 const router = Router();
 router.use(requireAuth);
@@ -307,130 +308,12 @@ router.post('/showcase/:id/receive', async (req, res) => {
   }
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const rows = await tx.$queryRawUnsafe<any[]>(
-        `SELECT * FROM public.procurement WHERE id = $1::uuid LIMIT 1`,
-        req.params.id,
-      );
-
-      if (!rows.length) {
-        throw Object.assign(new Error('Procurement record not found'), { code: 'NOT_FOUND' });
-      }
-
-      const row = rows[0];
-      if (row.status === 'rejected') {
-        throw Object.assign(new Error('Rejected procurement cannot be received'), { code: 'INVALID_STATUS' });
-      }
-      if (row.status === 'received') {
-        throw Object.assign(new Error('Procurement already received'), { code: 'ALREADY_RECEIVED' });
-      }
-
-      const requestedQuantity = Number(row.quantity || 0);
-      const alreadyReceived = Number(row.received_quantity || 0);
-      const requestedReceiptQuantity = Number(req.body?.received_quantity ?? 0);
-      const receiptQuantity = requestedReceiptQuantity > 0 ? requestedReceiptQuantity : requestedQuantity - alreadyReceived;
-      if (receiptQuantity <= 0) {
-        throw Object.assign(new Error('Receipt quantity must be greater than zero'), { code: 'INVALID_QTY' });
-      }
-      if (alreadyReceived + receiptQuantity > requestedQuantity) {
-        throw Object.assign(new Error('Receipt quantity exceeds outstanding quantity'), { code: 'INVALID_QTY' });
-      }
-
-      let inventoryRows = row.inventory_id
-        ? await tx.$queryRawUnsafe<any[]>(`SELECT * FROM public.inventory WHERE id = $1::uuid LIMIT 1`, row.inventory_id)
-        : [];
-
-      if (!inventoryRows.length) {
-        inventoryRows = await tx.$queryRawUnsafe<any[]>(
-          `SELECT * FROM public.inventory WHERE LOWER(item_name) = LOWER($1) LIMIT 1`,
-          row.item_name,
-        );
-      }
-
-      let inventoryItem = inventoryRows[0];
-
-      if (!inventoryItem) {
-        const created = await tx.$queryRawUnsafe<any[]>(
-          `INSERT INTO public.inventory (
-             item_name, category, quantity, unit_cost, supplier_id, notes
-           )
-           VALUES ($1, 'supplies', 0, $2, $3::uuid, 'Created automatically from procurement receipt.')
-           RETURNING *`,
-          row.item_name,
-          Number(row.unit_price || 0),
-          row.supplier_id ?? null,
-        );
-        inventoryItem = created[0];
-      }
-
-      const nextQuantity = Number(inventoryItem.quantity || 0) + receiptQuantity;
-      const nextReceivedQuantity = alreadyReceived + receiptQuantity;
-      const nextStatus = nextReceivedQuantity >= requestedQuantity ? 'received' : 'partially_received';
-
-      await tx.$executeRawUnsafe(
-        `UPDATE public.inventory
-         SET quantity = $2,
-             unit_cost = $3,
-             supplier_id = COALESCE($4::uuid, supplier_id),
-             updated_at = NOW()
-         WHERE id = $1::uuid`,
-        inventoryItem.id,
-        nextQuantity,
-        Number(row.unit_price || inventoryItem.unit_cost || 0),
-        row.supplier_id ?? null,
-      );
-
-      const receivedAt = new Date();
-
-      await tx.$executeRawUnsafe(
-        `INSERT INTO public.inventory_movements (
-           inventory_id, movement_type, quantity, unit_cost, source_module, reference_id, movement_date, notes
-         )
-         VALUES ($1::uuid, 'received', $2, $3, 'procurement', $4::uuid, $5, $6)`,
-        inventoryItem.id,
-        receiptQuantity,
-        Number(row.unit_price || 0),
-        row.id,
-        receivedAt,
-        `Procurement receipt for ${row.item_name}`,
-      );
-
-      const updatedRows = await tx.$queryRawUnsafe<any[]>(
-        `UPDATE public.procurement
-         SET status = $2,
-             received_quantity = $3,
-             po_number = COALESCE(po_number, $4),
-             approved_at = COALESCE(approved_at, NOW()),
-             received_at = $5,
-             inventory_id = $6::uuid,
-             updated_at = NOW()
-         WHERE id = $1::uuid
-         RETURNING *`,
-        row.id,
-        nextStatus,
-        nextReceivedQuantity,
-        row.po_number ?? `PO-${Date.now()}`,
-        receivedAt,
-        inventoryItem.id,
-      );
-
-      return updatedRows[0];
-    });
-
-    await logAuditEvent({
+    const result = await receiveProcurementFlow({
+      procurementId: req.params.id,
+      receivedQuantity: Number(req.body?.received_quantity ?? 0) || undefined,
+      actorUserId: req.user!.userId,
+      farmId: req.user!.farmId ?? undefined,
       req,
-      eventType: 'stock_movement',
-      subsystem: 'procurement',
-      description: `Received stock for procurement ${result.item_name}`,
-      recordType: 'procurement_request',
-      recordId: result.id,
-      recordLabel: result.item_name,
-      severity: 'info',
-      afterValue: {
-        status: result.status,
-        receivedQuantity: Number(result.received_quantity || 0),
-        inventoryId: result.inventory_id,
-      },
     });
     res.json(result);
   } catch (error: any) {

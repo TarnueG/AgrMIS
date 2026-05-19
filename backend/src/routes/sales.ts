@@ -5,6 +5,7 @@ import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 import { logAuditEvent, clientInfo } from '../lib/audit';
 import { deactivateUser, reactivateUser, findLinkedUserId } from '../lib/userStatus';
+import { cancelSalesOrderFlow, createSalesOrderFlow, updateSalesOrderFlow } from '../services/salesService';
 
 const router = Router();
 router.use(requireAuth);
@@ -314,94 +315,16 @@ router.post('/orders', async (req, res) => {
   const data = parsed.data;
 
   try {
-    const stockItem = await prisma.stock_items.findUnique({ where: { id: data.stockItemId } });
-    if (!stockItem) return res.status(404).json({ error: 'Product not found', code: 'NOT_FOUND' });
-
-    const quantity = Number(data.quantity);
-    const unitPrice = Number(data.unitPrice ?? stockItem.unit_cost ?? 0);
-    const totalAmount = quantity * unitPrice;
-    const availableQuantity = Number(stockItem.current_quantity || 0) - Number(stockItem.reserved_quantity || 0);
-    const requiresProduction = data.productionRequired === true || availableQuantity < quantity;
-    const initialStatus = requiresProduction ? 'confirmed' : 'pending';
-    const orderNumber = `SO-${Date.now()}`;
-
-    const order = await prisma.$transaction(async (tx) => {
-      if (!requiresProduction) {
-        await tx.stock_items.update({
-          where: { id: stockItem.id },
-          data: {
-            reserved_quantity: Number(stockItem.reserved_quantity || 0) + quantity,
-            updated_at: new Date(),
-          },
-        });
-      } else {
-        await (tx as any).inventory_production_requests.create({
-          data: {
-            farm_id: req.user!.farmId,
-            product_name: stockItem.name,
-            quantity,
-            quantity_unit: stockItem.unit_of_measure,
-            location: stockItem.storage_location ?? 'Production queue',
-            order_type: 'Make-to-Order',
-            link_order: orderNumber,
-            status: 'pending',
-            stock_item_id: stockItem.id,
-          },
-        });
-      }
-
-      const created = await tx.sales_orders.create({
-        data: {
-          farm_id: req.user!.farmId,
-          customer_id: data.customerId,
-          created_by: req.user!.userId,
-          updated_by: req.user!.userId,
-          order_number: orderNumber,
-          delivery_date: data.deliveryDate ? new Date(data.deliveryDate) : undefined,
-          status: initialStatus,
-          payment_status: data.paymentStatus,
-          payment_method: data.paymentMethod ?? null,
-          subtotal: totalAmount,
-          total_amount: totalAmount,
-          notes: serializeOrderNotes(data.orderType, data.notes),
-          sales_order_items: {
-            create: {
-              stock_item_id: stockItem.id,
-              quantity,
-              unit_price: unitPrice,
-              line_total: totalAmount,
-            },
-          },
-        },
-        include: {
-          customers: { select: { name: true } },
-          sales_order_items: {
-            include: { stock_items: { include: { item_categories: { select: { name: true } } } } },
-          },
-        },
-      });
-
-      return created;
-    });
-
-    await logAuditEvent({
+    const order = await createSalesOrderFlow({
+      data,
+      actorUserId: req.user!.userId,
+      farmId: req.user!.farmId ?? undefined,
       req,
-      eventType: 'create',
-      subsystem: 'sales_order_points',
-      description: `Created sales order ${order.order_number}`,
-      recordType: 'sales_order',
-      recordId: order.id,
-      recordLabel: order.order_number,
-      severity: 'info',
-      afterValue: {
-        status: order.status,
-        paymentStatus: order.payment_status,
-        customer: order.customers?.name ?? null,
-        totalAmount: Number(order.total_amount || 0),
-      },
     });
     res.status(201).json(mapOrder(order));
-  } catch {
+  } catch (error: any) {
+    if (error?.code === 'NOT_FOUND') return res.status(404).json({ error: 'Product not found', code: 'NOT_FOUND' });
+    if (error?.code === 'INSUFFICIENT_STOCK') return res.status(400).json({ error: 'Insufficient stock to reserve this order', code: 'INSUFFICIENT_STOCK' });
     res.status(500).json({ error: 'Failed to create order', code: 'DB_ERROR' });
   }
 });
@@ -410,196 +333,36 @@ router.patch('/orders/:id', async (req, res) => {
   const { status, notes, deliveryDate, paymentStatus, dispatchDate, deliveryStatus, destination, driverName, vehicleRef, recipientName } = req.body;
 
   try {
-    const existing = await prisma.sales_orders.findUnique({
-      where: { id: req.params.id },
-      include: {
-        customers: { select: { name: true } },
-        sales_order_items: {
-          include: { stock_items: { include: { item_categories: { select: { name: true } } } } },
-        },
-        distribution_logs: true,
-      },
-    });
-    if (!existing) return res.status(404).json({ error: 'Order not found', code: 'NOT_FOUND' });
-
-    const nextDbStatus = status ? (UI_TO_DB[status] ?? status) : existing.status;
-    const previousDbStatus = existing.status;
-    const { orderType } = parseOrderMeta(existing.notes);
-
-    const order = await prisma.$transaction(async (tx) => {
-      for (const item of existing.sales_order_items) {
-        const stockItem = item.stock_items;
-        const quantity = Number(item.quantity || 0);
-        const currentQuantity = Number(stockItem.current_quantity || 0);
-        const reservedQuantity = Number(stockItem.reserved_quantity || 0);
-
-        if (previousDbStatus !== 'delivered' && nextDbStatus === 'delivered') {
-          const nextReserved = Math.max(reservedQuantity - Math.min(reservedQuantity, quantity), 0);
-          const nextCurrent = Math.max(currentQuantity - quantity, 0);
-
-          await tx.stock_items.update({
-            where: { id: stockItem.id },
-            data: {
-              current_quantity: nextCurrent,
-              reserved_quantity: nextReserved,
-              updated_at: new Date(),
-            },
-          });
-
-          await tx.stock_transactions.create({
-            data: {
-              stock_item_id: stockItem.id,
-              performed_by: req.user!.userId,
-              transaction_type: 'sale',
-              quantity,
-              quantity_before: currentQuantity,
-              quantity_after: nextCurrent,
-              reference_id: existing.id,
-              reference_table: 'sales_orders',
-              source_module: 'sales',
-              notes: `Completed sales order ${existing.order_number}`,
-            },
-          });
-        }
-
-        if (
-          previousDbStatus !== 'cancelled' &&
-          previousDbStatus !== 'delivered' &&
-          nextDbStatus === 'cancelled' &&
-          reservedQuantity > 0
-        ) {
-          const releaseQty = Math.min(reservedQuantity, quantity);
-          await tx.stock_items.update({
-            where: { id: stockItem.id },
-            data: {
-              reserved_quantity: Math.max(reservedQuantity - releaseQty, 0),
-              updated_at: new Date(),
-            },
-          });
-
-          await tx.stock_transactions.create({
-            data: {
-              stock_item_id: stockItem.id,
-              performed_by: req.user!.userId,
-              transaction_type: 'release',
-              quantity: releaseQty,
-              quantity_before: reservedQuantity,
-              quantity_after: Math.max(reservedQuantity - releaseQty, 0),
-              reference_id: existing.id,
-              reference_table: 'sales_orders',
-              source_module: 'sales',
-              notes: `Released reserved stock for ${existing.order_number}`,
-            },
-          });
-        }
-
-        if (
-          previousDbStatus === 'confirmed' &&
-          nextDbStatus === 'dispatched' &&
-          reservedQuantity < quantity &&
-          currentQuantity - reservedQuantity >= quantity
-        ) {
-          await tx.stock_items.update({
-            where: { id: stockItem.id },
-            data: {
-              reserved_quantity: reservedQuantity + quantity,
-              updated_at: new Date(),
-            },
-          });
-        }
-      }
-
-      if ((nextDbStatus === 'dispatched' || nextDbStatus === 'delivered') && !existing.distribution_logs.length) {
-        await tx.distribution_logs.create({
-          data: {
-            sales_order_id: existing.id,
-            dispatched_by: req.user!.userId,
-            dispatch_date: dispatchDate ? new Date(dispatchDate) : new Date(),
-            delivery_status: deliveryStatus ?? (nextDbStatus === 'delivered' ? 'delivered' : 'in_transit'),
-            destination: destination ?? existing.customers?.name ?? null,
-            driver_name: driverName ?? 'Internal Dispatch Team',
-            vehicle_ref: vehicleRef ?? 'AMIS-DELIVERY',
-            recipient_name: recipientName ?? existing.customers?.name ?? null,
-            notes: notes ?? existing.notes ?? null,
-          },
-        });
-      }
-
-      const updated = await tx.sales_orders.update({
-        where: { id: req.params.id },
-        data: {
-          updated_by: req.user!.userId,
-          status: nextDbStatus,
-          ...(notes !== undefined && { notes: serializeOrderNotes(orderType, notes) }),
-          ...(deliveryDate && { delivery_date: new Date(deliveryDate) }),
-          ...(paymentStatus && { payment_status: paymentStatus }),
-        },
-        include: {
-          customers: { select: { name: true } },
-          sales_order_items: {
-            include: { stock_items: { include: { item_categories: { select: { name: true } } } } },
-          },
-        },
-      });
-
-      return updated;
-    });
-
-    const nextUiStatus = DB_TO_UI[order.status] ?? order.status;
-    await logAuditEvent({
+    const order = await updateSalesOrderFlow({
+      orderId: req.params.id,
+      patch: { status, notes, deliveryDate, paymentStatus, dispatchDate, deliveryStatus, destination, driverName, vehicleRef, recipientName },
+      actorUserId: req.user!.userId,
+      farmId: req.user!.farmId ?? undefined,
       req,
-      eventType:
-        paymentStatus && paymentStatus !== existing.payment_status ? 'payment_recorded'
-        : status && status !== (DB_TO_UI[previousDbStatus] ?? previousDbStatus) ? 'status_change'
-        : 'update',
-      subsystem: 'sales_order_points',
-      description: `Updated sales order ${order.order_number}`,
-      recordType: 'sales_order',
-      recordId: order.id,
-      recordLabel: order.order_number,
-      severity: nextUiStatus === 'rejected' ? 'warning' : 'info',
-      beforeValue: {
-        status: DB_TO_UI[existing.status] ?? existing.status,
-        paymentStatus: existing.payment_status,
-        deliveryDate: existing.delivery_date,
-      },
-      afterValue: {
-        status: nextUiStatus,
-        paymentStatus: order.payment_status,
-        deliveryDate: order.delivery_date,
-      },
     });
     res.json(mapOrder(order));
-  } catch {
+  } catch (error: any) {
+    if (error?.code === 'NOT_FOUND') return res.status(404).json({ error: 'Order not found', code: 'NOT_FOUND' });
+    if (error?.code === 'INSUFFICIENT_RESERVED_STOCK') {
+      return res.status(400).json({ error: 'Cannot complete sales order without available reserved stock', code: 'INSUFFICIENT_RESERVED_STOCK' });
+    }
+    if (error?.code === 'INSUFFICIENT_STOCK') {
+      return res.status(400).json({ error: 'Insufficient stock for this sales order transition', code: 'INSUFFICIENT_STOCK' });
+    }
     res.status(500).json({ error: 'Failed to update order', code: 'DB_ERROR' });
   }
 });
 
 router.delete('/orders/:id', async (req, res) => {
   try {
-    const existing = await prisma.sales_orders.findUnique({
-      where: { id: req.params.id },
-      select: { id: true, order_number: true, status: true },
-    });
-    if (!existing) return res.status(404).json({ error: 'Order not found', code: 'NOT_FOUND' });
-    await prisma.sales_orders.update({
-      where: { id: req.params.id },
-      data: { status: 'cancelled', updated_by: req.user!.userId },
-    });
-    await logAuditEvent({
+    await cancelSalesOrderFlow({
+      orderId: req.params.id,
+      actorUserId: req.user!.userId,
       req,
-      eventType: 'delete',
-      subsystem: 'sales_order_points',
-      description: `Cancelled sales order ${existing.order_number}`,
-      recordType: 'sales_order',
-      recordId: existing.id,
-      recordLabel: existing.order_number,
-      severity: 'warning',
-      beforeValue: existing,
-      afterValue: { status: 'cancelled' },
     });
     res.status(204).end();
-  } catch {
+  } catch (error: any) {
+    if (error?.code === 'NOT_FOUND') return res.status(404).json({ error: 'Order not found', code: 'NOT_FOUND' });
     res.status(500).json({ error: 'Failed to delete order', code: 'DB_ERROR' });
   }
 });

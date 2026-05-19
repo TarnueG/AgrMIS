@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { clientInfo, logAuditEvent } from '../lib/audit';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
+import { completeMaintenanceScheduleFlow } from '../services/assetService';
 
 const router = Router();
 const prismaAny = prisma as any;
@@ -643,64 +644,15 @@ router.patch('/maintenance/:id/complete', async (req, res) => {
   }
 
   const data = parsed.data;
-  const completedAt = data.completedDate ? new Date(data.completedDate) : new Date();
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const schedule = await (tx as any).asset_maintenance_schedules.findUnique({ where: { id: req.params.id } });
-      if (!schedule) throw Object.assign(new Error('Schedule not found'), { code: 'NOT_FOUND' });
-
-      const asset = await tx.assets.findUnique({ where: { id: schedule.asset_id } });
-      if (!asset) throw Object.assign(new Error('Asset not found'), { code: 'ASSET_NOT_FOUND' });
-
-      const log = await tx.asset_maintenance_logs.create({
-        data: {
-          asset_id: schedule.asset_id,
-          performed_by: req.user!.userId,
-          maintenance_type: 'scheduled',
-          description: schedule.service_type,
-          cost: data.actualCost ?? schedule.estimated_cost ?? null,
-          service_provider: data.serviceProvider ?? schedule.technician_name ?? null,
-          maintenance_date: startOfDay(completedAt),
-          next_service_date: data.nextServiceDate ? startOfDay(data.nextServiceDate) : null,
-          downtime_hours: data.downtimeHours ?? null,
-          outcome: data.outcome ?? schedule.notes ?? null,
-        },
-      });
-
-      await (tx as any).asset_maintenance_schedules.update({
-        where: { id: schedule.id },
-        data: {
-          status: 'completed',
-          completed_at: completedAt,
-          updated_at: new Date(),
-        },
-      });
-
-      await tx.assets.update({
-        where: { id: schedule.asset_id },
-        data: {
-          last_service_date: startOfDay(completedAt),
-          next_service_date: data.nextServiceDate ? startOfDay(data.nextServiceDate) : null,
-          condition: data.condition ?? asset.condition,
-          status: 'operational',
-          updated_at: new Date(),
-        },
-      });
-
-      return { schedule, asset, log };
+    const log = await completeMaintenanceScheduleFlow({
+      scheduleId: req.params.id,
+      data,
+      actorUserId: req.user!.userId,
+      farmId: req.user!.farmId ?? undefined,
+      req,
     });
-
-    await auditAssetStatusChange(req, result.asset.id, result.asset.status, 'operational');
-    if ((data.actualCost ?? 0) > 0) {
-      await ensureJournalExpense(
-        req.user!.farmId ?? undefined,
-        req.user!.userId,
-        result.log.id,
-        data.actualCost ?? 0,
-        `Maintenance completed for ${result.asset.name}`,
-      );
-    }
-    res.json(result.log);
+    res.json(log);
   } catch (error: any) {
     if (error?.code === 'NOT_FOUND') return res.status(404).json({ error: 'Maintenance schedule not found', code: 'NOT_FOUND' });
     if (error?.code === 'ASSET_NOT_FOUND') return res.status(404).json({ error: 'Asset not found', code: 'NOT_FOUND' });

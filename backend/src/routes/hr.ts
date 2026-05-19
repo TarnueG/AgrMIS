@@ -5,6 +5,7 @@ import { logAuditEvent, clientInfo } from '../lib/audit';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 import { deactivateUser, reactivateUser } from '../lib/userStatus';
+import { payPayrollFlow } from '../services/hrService';
 
 const router = Router();
 router.use(requireAuth);
@@ -1248,22 +1249,32 @@ router.post('/wages/send-for-payment', async (req, res) => {
 
 router.patch('/payroll/:id/pay', async (req, res) => {
   try {
-    const result = await payPayrollRecord(req.params.id, req.user!.farmId ?? undefined, req.user!.userId, req);
-    if ('error' in result) return res.status(result.code === 'NOT_FOUND' ? 404 : 400).json(result);
-    const { updated } = result;
+    const updated = await payPayrollFlow({
+      wageId: req.params.id,
+      farmId: req.user!.farmId ?? undefined,
+      actorUserId: req.user!.userId,
+      req,
+    });
     res.json({ ...updated, message: 'Payment Successful' });
-  } catch {
+  } catch (error: any) {
+    if (error?.code === 'NOT_FOUND') return res.status(404).json({ error: 'Wage record not found', code: 'NOT_FOUND' });
+    if (error?.code === 'DUPLICATE') return res.status(400).json({ error: 'Payroll already paid', code: 'DUPLICATE' });
     res.status(500).json({ error: 'Failed to process payment', code: 'DB_ERROR' });
   }
 });
 
 router.patch('/wages/:id/pay', async (req, res) => {
   try {
-    const result = await payPayrollRecord(req.params.id, req.user!.farmId ?? undefined, req.user!.userId, req);
-    if ('error' in result) return res.status(result.code === 'NOT_FOUND' ? 404 : 400).json(result);
-    const { updated } = result;
+    const updated = await payPayrollFlow({
+      wageId: req.params.id,
+      farmId: req.user!.farmId ?? undefined,
+      actorUserId: req.user!.userId,
+      req,
+    });
     res.json({ ...updated, message: 'Payment Successful' });
-  } catch {
+  } catch (error: any) {
+    if (error?.code === 'NOT_FOUND') return res.status(404).json({ error: 'Wage record not found', code: 'NOT_FOUND' });
+    if (error?.code === 'DUPLICATE') return res.status(400).json({ error: 'Payroll already paid', code: 'DUPLICATE' });
     res.status(500).json({ error: 'Failed to process payment', code: 'DB_ERROR' });
   }
 });

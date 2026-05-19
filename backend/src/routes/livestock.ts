@@ -3,6 +3,8 @@ import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
+import { recordAuditEvent } from '../services/auditService';
+import { consumeStock } from '../services/inventoryService';
 
 const router = Router();
 
@@ -140,40 +142,18 @@ async function postInventoryUsage(tx: any, {
   referenceId: string | null;
   notes: string;
 }) {
-  const item = await tx.stock_items.findFirst({
-    where: { id: stockItemId, deleted_at: null },
+  const movementType = transactionType === 'feed_usage' ? 'LIVESTOCK_USAGE' : 'MEDICINE_USAGE';
+  const result = await consumeStock(tx, {
+    stockItemId,
+    performedBy: userId,
+    quantity,
+    sourceModule: 'livestock',
+    movementType,
+    referenceId,
+    referenceTable,
+    notes,
   });
-  if (!item) {
-    throw Object.assign(new Error('Inventory item not found'), { code: 'INVENTORY_NOT_FOUND' });
-  }
-
-  const before = toNumber(item.current_quantity);
-  const after = before - quantity;
-  if (after < 0) {
-    throw Object.assign(new Error('Insufficient stock'), { code: 'STOCK_LOW' });
-  }
-
-  await tx.stock_items.update({
-    where: { id: stockItemId },
-    data: { current_quantity: after, updated_at: new Date() },
-  });
-
-  await tx.stock_transactions.create({
-    data: {
-      stock_item_id: stockItemId,
-      performed_by: userId,
-      transaction_type: transactionType,
-      quantity,
-      quantity_before: before,
-      quantity_after: after,
-      reference_id: referenceId,
-      reference_table: referenceTable,
-      source_module: 'livestock',
-      notes,
-    },
-  });
-
-  return item;
+  return result.item;
 }
 
 async function getFarmOpsHealthLogs(farmId: string) {
@@ -854,7 +834,19 @@ router.post('/health-logs', async (req, res) => {
 
       return rows[0];
     });
-
+    await recordAuditEvent({
+      actorUserId: userId,
+      eventType: 'update',
+      subsystem: 'livestock',
+      description: `Health event recorded for ${d.reference_code || d.reference_kind}`,
+      recordType: 'farm_ops_health_log',
+      recordId: result.id,
+      recordLabel: d.reference_code || d.issue,
+      metadata: {
+        medicineStockItemId: d.inventory_stock_item_id ?? null,
+        quantityUsed: d.inventory_quantity_used ?? 0,
+      },
+    });
     res.status(201).json(result);
   } catch (error: any) {
     if (error?.code === 'INVENTORY_NOT_FOUND') return res.status(404).json({ error: 'Inventory item not found', code: 'NOT_FOUND' });
@@ -900,6 +892,20 @@ router.post('/feed-usage', async (req, res) => {
         RETURNING *
       `;
       return rows[0];
+    });
+    await recordAuditEvent({
+      actorUserId: userId,
+      eventType: 'stock_movement',
+      subsystem: 'livestock',
+      description: `Feed usage recorded for ${d.group_name}`,
+      recordType: 'farm_ops_feed_usage_log',
+      recordId: result.id,
+      recordLabel: d.group_name,
+      metadata: {
+        feedStockItemId: d.feed_stock_item_id ?? null,
+        quantityUsed: d.quantity_used,
+        unit: d.unit,
+      },
     });
     res.status(201).json(result);
   } catch (error: any) {
@@ -1029,6 +1035,21 @@ router.post('/mortality', async (req, res) => {
         RETURNING *
       `;
       return inserted;
+    });
+    await recordAuditEvent({
+      actorUserId: userId,
+      eventType: 'status_change',
+      subsystem: 'livestock',
+      description: `Mortality recorded for ${d.livestock_type}`,
+      recordType: 'mortality_record',
+      recordId: rows[0].id,
+      recordLabel: d.record_id || d.pen_or_location || d.livestock_type,
+      severity: 'critical',
+      metadata: {
+        livestockType: d.livestock_type,
+        quantity: d.quantity,
+        cause: d.cause_of_death ?? null,
+      },
     });
     res.status(201).json(rows[0]);
   } catch {

@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 import { logAuditEvent } from '../lib/audit';
+import { consumeProductionInputFlow, createProductionBatchFlow, qualityCheckProductionFlow, updateProductionBatchFlow } from '../services/productionService';
 
 const router = Router();
 const prismaAny = prisma as any;
@@ -487,95 +488,11 @@ router.post('/batches', async (req, res) => {
 
   const data = parsed.data;
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const txAny = tx as any;
-      const salesOrder = data.linkedSalesOrderId
-        ? await tx.sales_orders.findUnique({
-            where: { id: data.linkedSalesOrderId },
-            include: { customers: { select: { name: true } } },
-          })
-        : null;
-
-      let request = data.linkedSalesOrderId
-        ? await txAny.inventory_production_requests.findFirst({
-            where: {
-              farm_id: req.user!.farmId ?? undefined,
-              sales_order_id: data.linkedSalesOrderId,
-              product_name: data.productName,
-            },
-          })
-        : null;
-
-      const requestPayload = {
-        farm_id: req.user!.farmId,
-        product_name: data.productName,
-        quantity: data.plannedQuantity,
-        quantity_unit: data.unit,
-        location: data.location ?? null,
-        order_type: data.linkedSalesOrderId ? 'Make-to-Order' : 'Manual Batch',
-        link_order: salesOrder?.order_number || 'Manual Planning',
-        status: 'accepted',
-        stock_item_id: data.stockItemId ?? null,
-        sales_order_id: data.linkedSalesOrderId ?? null,
-        notes: data.notes ?? null,
-        due_date: data.expectedCompletion ? new Date(data.expectedCompletion) : null,
-        updated_at: new Date(),
-      };
-
-      if (request) {
-        request = await txAny.inventory_production_requests.update({
-          where: { id: request.id },
-          data: requestPayload,
-        });
-      } else {
-        request = await txAny.inventory_production_requests.create({
-          data: requestPayload,
-        });
-      }
-
-      const batch = await txAny.inventory_production_batches.create({
-        data: {
-          farm_id: req.user!.farmId,
-          request_id: request.id,
-          batch_number: `PB-${Date.now().toString().slice(-8)}`,
-          quantity: data.plannedQuantity,
-          status: 'pending',
-          sector: data.sector,
-          linked_sales_order_id: data.linkedSalesOrderId ?? null,
-          planned_quantity: data.plannedQuantity,
-          produced_quantity: 0,
-          waste_quantity: 0,
-          quantity_unit: data.unit,
-          start_date: data.startDate ? new Date(data.startDate) : new Date(),
-          expected_completion: data.expectedCompletion ? new Date(data.expectedCompletion) : null,
-          notes: data.notes ?? null,
-        },
-      });
-
-      if (salesOrder && ['pending', 'confirmed'].includes(salesOrder.status)) {
-        await tx.sales_orders.update({
-          where: { id: salesOrder.id },
-          data: { status: 'confirmed', updated_by: req.user!.userId, updated_at: new Date() },
-        });
-      }
-
-      return batch;
-    });
-
-    await logAuditEvent({
+    const result = await createProductionBatchFlow({
+      data,
+      actorUserId: req.user!.userId,
+      farmId: req.user!.farmId ?? undefined,
       req,
-      eventType: 'create',
-      subsystem: 'production',
-      description: `Created production batch ${result.batch_number}`,
-      recordType: 'production_batch',
-      recordId: result.id,
-      recordLabel: result.batch_number,
-      severity: 'info',
-      afterValue: {
-        status: result.status,
-        plannedQuantity: Number(result.planned_quantity || result.quantity || 0),
-        sector: result.sector,
-      },
     });
     res.status(201).json(result);
   } catch {
@@ -591,39 +508,15 @@ router.patch('/batches/:id', async (req, res) => {
 
   const data = parsed.data;
   try {
-    const existing = await prismaAny.inventory_production_batches.findUnique({ where: { id: req.params.id } });
-    if (!existing) {
-      return res.status(404).json({ error: 'Batch not found', code: 'NOT_FOUND' });
-    }
-    const batch = await prismaAny.inventory_production_batches.update({
-      where: { id: req.params.id },
-      data: {
-        ...(data.status !== undefined && { status: toDbBatchStatus(data.status) }),
-        ...(data.plannedQuantity !== undefined && { planned_quantity: data.plannedQuantity }),
-        ...(data.producedQuantity !== undefined && { produced_quantity: data.producedQuantity }),
-        ...(data.wasteQuantity !== undefined && { waste_quantity: data.wasteQuantity }),
-        ...(data.startDate !== undefined && { start_date: data.startDate ? new Date(data.startDate) : null }),
-        ...(data.expectedCompletion !== undefined && { expected_completion: data.expectedCompletion ? new Date(data.expectedCompletion) : null }),
-        ...(data.notes !== undefined && { notes: data.notes }),
-        updated_at: new Date(),
-      },
-    });
-
-    await logAuditEvent({
+    const batch = await updateProductionBatchFlow({
+      batchId: req.params.id,
+      data,
+      actorUserId: req.user!.userId,
       req,
-      eventType: data.status && data.status !== formatProductionStatus(existing.status) ? 'status_change' : 'update',
-      subsystem: 'production',
-      description: `Updated production batch ${batch.batch_number}`,
-      recordType: 'production_batch',
-      recordId: batch.id,
-      recordLabel: batch.batch_number,
-      severity: 'info',
-      beforeValue: existing,
-      afterValue: batch,
     });
     res.json(batch);
   } catch (error: any) {
-    if (error?.code === 'P2025') {
+    if (error?.code === 'P2025' || error?.code === 'NOT_FOUND') {
       return res.status(404).json({ error: 'Batch not found', code: 'NOT_FOUND' });
     }
     res.status(500).json({ error: 'Failed to update production batch', code: 'DB_ERROR' });
@@ -638,73 +531,17 @@ router.post('/batches/:id/consume', async (req, res) => {
 
   const data = parsed.data;
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const batch = await prismaAny.inventory_production_batches.findUnique({ where: { id: req.params.id } });
-      if (!batch) throw Object.assign(new Error('Batch not found'), { code: 'NOT_FOUND' });
-
-      const stockItem = await tx.stock_items.findFirst({
-        where: { id: data.stockItemId, deleted_at: null },
-      });
-      if (!stockItem) throw Object.assign(new Error('Input item not found'), { code: 'INPUT_NOT_FOUND' });
-
-      const currentQuantity = toNumber(stockItem.current_quantity);
-      if (currentQuantity < data.quantityUsed) {
-        throw Object.assign(new Error('Insufficient stock'), { code: 'STOCK_LOW' });
-      }
-
-      const nextQuantity = currentQuantity - data.quantityUsed;
-      await tx.stock_items.update({
-        where: { id: stockItem.id },
-        data: { current_quantity: nextQuantity, updated_at: new Date() },
-      });
-
-      const transaction = await tx.stock_transactions.create({
-        data: {
-          stock_item_id: stockItem.id,
-          performed_by: req.user!.userId,
-          transaction_type: 'production_consumption',
-          quantity: data.quantityUsed,
-          quantity_before: currentQuantity,
-          quantity_after: nextQuantity,
-          reference_id: batch.id,
-          reference_table: 'inventory_production_batches',
-          source_module: 'production',
-          notes: data.notes ?? `Consumed by ${batch.batch_number}`,
-          transacted_at: data.usedAt ? new Date(data.usedAt) : new Date(),
-        },
-      });
-
-      if ((batch.status || 'pending') === 'pending') {
-        await prismaAny.inventory_production_batches.update({
-          where: { id: batch.id },
-          data: {
-            status: 'in_progress',
-            start_date: batch.start_date ?? new Date(),
-            updated_at: new Date(),
-          },
-        });
-      }
-
-      return { transaction, batch, stockItem, currentQuantity, nextQuantity };
-    });
-
-    await logAuditEvent({
+    const transaction = await consumeProductionInputFlow({
+      batchId: req.params.id,
+      data,
+      actorUserId: req.user!.userId,
       req,
-      eventType: 'stock_movement',
-      subsystem: 'production',
-      description: `Consumed ${data.quantityUsed} ${result.stockItem.unit_of_measure || ''} of ${result.stockItem.name} for ${result.batch.batch_number}`.trim(),
-      recordType: 'production_batch',
-      recordId: result.batch.id,
-      recordLabel: result.batch.batch_number,
-      severity: 'info',
-      beforeValue: { quantity: result.currentQuantity },
-      afterValue: { quantity: result.nextQuantity, stockItem: result.stockItem.name, consumed: data.quantityUsed },
     });
-    res.status(201).json(result.transaction);
+    res.status(201).json(transaction);
   } catch (error: any) {
     if (error?.code === 'NOT_FOUND') return res.status(404).json({ error: 'Batch not found', code: 'NOT_FOUND' });
     if (error?.code === 'INPUT_NOT_FOUND') return res.status(404).json({ error: 'Input item not found', code: 'INPUT_NOT_FOUND' });
-    if (error?.code === 'STOCK_LOW') return res.status(400).json({ error: 'Insufficient stock for consumption', code: 'STOCK_LOW' });
+    if (error?.code === 'STOCK_LOW' || error?.code === 'INSUFFICIENT_STOCK') return res.status(400).json({ error: 'Insufficient stock for consumption', code: 'STOCK_LOW' });
     res.status(500).json({ error: 'Failed to consume production inputs', code: 'DB_ERROR' });
   }
 });
@@ -717,141 +554,14 @@ router.post('/batches/:id/quality-check', async (req, res) => {
 
   const data = parsed.data;
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      const batch = await prismaAny.inventory_production_batches.findUnique({ where: { id: req.params.id } });
-      if (!batch) throw Object.assign(new Error('Batch not found'), { code: 'NOT_FOUND' });
-
-      const request = await prismaAny.inventory_production_requests.findUnique({ where: { id: batch.request_id } });
-      if (!request) throw Object.assign(new Error('Request not found'), { code: 'REQ_NOT_FOUND' });
-
-      await tx.quality_checks.create({
-        data: {
-          farm_id: req.user!.farmId,
-          checked_by: req.user!.userId,
-          check_date: data.checkedAt ? new Date(data.checkedAt) : new Date(),
-          grade: data.result === 'passed' ? 'A' : data.result === 'rework' ? 'B' : 'C',
-          passed: data.result === 'passed',
-          notes: data.notes ?? data.failureReason ?? null,
-          stock_item_id: request.stock_item_id ?? null,
-          sales_order_id: batch.linked_sales_order_id || request.sales_order_id || null,
-          parameters: {
-            batchId: batch.id,
-            batchNumber: batch.batch_number,
-            productName: request.product_name,
-            result: data.result,
-            producedQuantity: data.producedQuantity,
-            wasteQuantity: data.wasteQuantity,
-            failureReason: data.failureReason ?? null,
-          },
-        },
-      });
-
-      let status = 'quality_check';
-      if (data.result === 'passed') status = 'passed';
-      if (data.result === 'rework') status = 'rework';
-      if (data.result === 'failed') status = 'declined';
-
-      const updatedBatch = await prismaAny.inventory_production_batches.update({
-        where: { id: batch.id },
-        data: {
-          status: toDbBatchStatus(status),
-          produced_quantity: data.producedQuantity,
-          waste_quantity: data.wasteQuantity,
-          actual_completion: data.result === 'rework' ? null : (data.checkedAt ? new Date(data.checkedAt) : new Date()),
-          failure_reason: data.result === 'failed' ? data.failureReason ?? data.notes ?? 'Quality check failed' : null,
-          notes: data.notes ?? batch.notes ?? null,
-          passed_to_inventory: data.result === 'passed' ? true : false,
-          updated_at: new Date(),
-        },
-      });
-
-      if (data.result === 'passed') {
-        const stockItem = await ensureOutputStockItem(tx, {
-          farmId: req.user!.farmId,
-          userId: req.user!.userId,
-          request,
-          batch: updatedBatch,
-        });
-
-        const before = toNumber(stockItem.current_quantity);
-        const after = before + data.producedQuantity;
-        await tx.stock_items.update({
-          where: { id: stockItem.id },
-          data: { current_quantity: after, updated_at: new Date() },
-        });
-
-        await tx.stock_transactions.create({
-          data: {
-            stock_item_id: stockItem.id,
-            performed_by: req.user!.userId,
-            transaction_type: 'production_output',
-            quantity: data.producedQuantity,
-            quantity_before: before,
-            quantity_after: after,
-            reference_id: batch.id,
-            reference_table: 'inventory_production_batches',
-            source_module: 'production',
-            notes: `Finished output from ${batch.batch_number}`,
-            transacted_at: data.checkedAt ? new Date(data.checkedAt) : new Date(),
-          },
-        });
-
-        await prismaAny.inventory_production_requests.update({
-          where: { id: request.id },
-          data: {
-            status: 'passed',
-            stock_item_id: stockItem.id,
-            updated_at: new Date(),
-          },
-        });
-
-        const salesOrderId = batch.linked_sales_order_id || request.sales_order_id;
-        if (salesOrderId) {
-          await tx.sales_orders.update({
-            where: { id: salesOrderId },
-            data: { status: 'packed', updated_by: req.user!.userId, updated_at: new Date() },
-          }).catch(() => null);
-        }
-      } else if (data.result === 'failed') {
-        await prismaAny.inventory_production_requests.update({
-          where: { id: request.id },
-          data: {
-            status: 'cancelled',
-            rejection_reason: data.failureReason ?? data.notes ?? 'Quality check failed',
-            updated_at: new Date(),
-          },
-        });
-      } else {
-        await prismaAny.inventory_production_requests.update({
-          where: { id: request.id },
-          data: { status: 'accepted', updated_at: new Date() },
-        });
-      }
-
-      return { updatedBatch, request };
-    });
-
-    await logAuditEvent({
+    const updatedBatch = await qualityCheckProductionFlow({
+      batchId: req.params.id,
+      data,
+      actorUserId: req.user!.userId,
+      farmId: req.user!.farmId ?? undefined,
       req,
-      eventType: data.result === 'passed' ? 'approve' : data.result === 'failed' ? 'reject' : 'status_change',
-      subsystem: 'production',
-      description: `Quality check ${data.result} for ${result.updatedBatch.batch_number}`,
-      recordType: 'production_batch',
-      recordId: result.updatedBatch.id,
-      recordLabel: result.updatedBatch.batch_number,
-      severity: data.result === 'failed' ? 'critical' : data.result === 'rework' ? 'warning' : 'info',
-      afterValue: {
-        status: result.updatedBatch.status,
-        producedQuantity: data.producedQuantity,
-        wasteQuantity: data.wasteQuantity,
-        requestId: result.request.id,
-      },
-      metadata: {
-        result: data.result,
-        failureReason: data.failureReason ?? null,
-      },
     });
-    res.status(201).json(result.updatedBatch);
+    res.status(201).json(updatedBatch);
   } catch (error: any) {
     if (error?.code === 'NOT_FOUND') return res.status(404).json({ error: 'Batch not found', code: 'NOT_FOUND' });
     if (error?.code === 'REQ_NOT_FOUND') return res.status(404).json({ error: 'Production request not found', code: 'NOT_FOUND' });
