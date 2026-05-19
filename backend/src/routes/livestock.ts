@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
+import { endOfMonth, hasStatus, normalizeStatus, startOfMonth, toNumber } from '../lib/summary';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 import { recordAuditEvent } from '../services/auditService';
@@ -21,18 +22,9 @@ function within24h(createdAt: Date | string) {
   return Date.now() - new Date(createdAt).getTime() < 24 * HOUR_MS;
 }
 
-function toNumber(value: unknown) {
-  return Number(value ?? 0);
-}
-
 function formatDateString(value: string | Date | null | undefined) {
   if (!value) return null;
   return new Date(value);
-}
-
-function startOfMonth() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1);
 }
 
 const pigSchema = z.object({
@@ -335,10 +327,17 @@ router.get('/command-center', async (req, res) => {
       };
     });
 
-    const monthStart = startOfMonth().getTime();
-    const mortalityThisMonth = mortality.filter((row) => new Date(row.date_recorded).getTime() >= monthStart)
+    const monthStart = startOfMonth();
+    const monthEnd = endOfMonth();
+    const mortalityThisMonth = mortality.filter((row) => {
+      const time = new Date(row.date_recorded).getTime();
+      return time >= monthStart.getTime() && time <= monthEnd.getTime();
+    })
       .reduce((sum, row) => sum + Number(row.quantity || 1), 0);
-    const feedConsumedThisMonth = feedUsageLogs.filter((row) => new Date(row.log_date).getTime() >= monthStart)
+    const feedConsumedThisMonth = feedUsageLogs.filter((row) => {
+      const time = new Date(row.log_date).getTime();
+      return time >= monthStart.getTime() && time <= monthEnd.getTime();
+    })
       .reduce((sum, row) => sum + Number(row.quantity_used || 0), 0);
     const upcomingHealthChecks = healthLogs.filter((row) => {
       if (!row.next_check_date) return false;
@@ -346,25 +345,80 @@ router.get('/command-center', async (req, res) => {
       return date >= Date.now() && date <= Date.now() + 14 * 24 * HOUR_MS;
     }).length;
 
-    const sickAnimals = animalRows.filter((row) => ['sick', 'under_treatment', 'quarantine'].includes(String(row.healthStatus).toLowerCase())).length;
+    const sickAnimals =
+      pigs.filter((row) => hasStatus(row.status, 'sick', 'under_treatment', 'quarantine')).length +
+      cattle.filter((row) => hasStatus(row.status, 'sick', 'under_treatment', 'quarantine')).length +
+      birds.filter((row) => {
+        const latestHealth = latestHealthByKey.get(`bird:${row.batch_number}`);
+        return hasStatus(latestHealth?.recovery_status, 'sick', 'under_treatment', 'quarantine');
+      }).reduce((sum, row) => sum + Number(row.number_of_birds || 0), 0) +
+      pondRows.filter((row) => hasStatus(row.status, 'monitoring', 'under_treatment', 'sick')).reduce((sum, row) => sum + Number(row.currentEstimate || 0), 0);
     const totalAnimals = pigs.length + cattle.length + birds.reduce((sum, row) => sum + Number(row.number_of_birds || 0), 0) + ponds.reduce((sum, row) => sum + Number(row.current_fish_count || 0), 0);
-    const healthyAnimals = Math.max(totalAnimals - sickAnimals - mortalityThisMonth, 0);
+    const healthyAnimals = Math.max(totalAnimals - sickAnimals, 0);
+    const monthBuckets = Array.from({ length: 6 }, (_, index) => {
+      const bucketDate = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1 + index * 5);
+      return {
+        label: new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(bucketDate),
+        feed: 0,
+        mortality: 0,
+      };
+    });
+
+    for (const row of feedUsageLogs) {
+      const rowTime = new Date(row.log_date).getTime();
+      monthBuckets.forEach((bucket, index) => {
+        const bucketDate = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1 + index * 5);
+        if (Math.abs(bucketDate.getTime() - rowTime) < 5 * 24 * HOUR_MS) bucket.feed += Number(row.quantity_used || 0);
+      });
+    }
+
+    for (const row of mortality) {
+      const rowTime = new Date(row.date_recorded).getTime();
+      monthBuckets.forEach((bucket, index) => {
+        const bucketDate = new Date(monthStart.getFullYear(), monthStart.getMonth(), 1 + index * 5);
+        if (Math.abs(bucketDate.getTime() - rowTime) < 5 * 24 * HOUR_MS) bucket.mortality += Number(row.quantity || 1);
+      });
+    }
+
+    const summary = {
+      totalAnimals,
+      pigs: pigs.length,
+      cattle: cattle.length,
+      birds: birds.reduce((sum, row) => sum + Number(row.number_of_birds || 0), 0),
+      poultryBirds: birds.reduce((sum, row) => sum + Number(row.number_of_birds || 0), 0),
+      fishPonds: ponds.length,
+      healthyAnimals,
+      healthy: healthyAnimals,
+      sickAnimals,
+      sickUnderTreatment: sickAnimals,
+      mortalityThisMonth,
+      feedConsumedThisMonth,
+      upcomingHealthChecks,
+    };
 
     res.json({
-      summary: {
-        totalAnimals,
-        pigs: pigs.length,
-        cattle: cattle.length,
-        birds: birds.reduce((sum, row) => sum + Number(row.number_of_birds || 0), 0),
-        fishPonds: ponds.length,
-        healthyAnimals,
-        sickAnimals,
-        mortalityThisMonth,
-        feedConsumedThisMonth,
-        upcomingHealthChecks,
-      },
+      summary,
       animalRegister: animalRows,
       fishPonds: pondRows,
+      charts: {
+        speciesCounts: [
+          { name: 'Pigs', value: summary.pigs },
+          { name: 'Cattle', value: summary.cattle },
+          { name: 'Birds', value: summary.birds },
+          { name: 'Pond Fish', value: pondRows.reduce((sum, row) => sum + Number(row.currentEstimate || 0), 0) },
+        ],
+        healthStatuses: [
+          { name: 'Healthy', value: summary.healthyAnimals },
+          { name: 'Sick / Treatment', value: summary.sickAnimals },
+          { name: 'Mortality This Month', value: summary.mortalityThisMonth },
+        ],
+        feedAndMortalityTrend: monthBuckets,
+        pondComparison: pondRows.map((pond) => ({
+          name: pond.pondId,
+          stocked: pond.stockingQuantity,
+          estimate: pond.currentEstimate,
+        })),
+      },
       healthLogs: healthLogs.map((row) => ({
         id: row.id,
         recordId: row.reference_code || row.reference_id,
@@ -411,6 +465,21 @@ router.get('/command-center', async (req, res) => {
     });
   } catch {
     res.status(500).json({ error: 'Failed to fetch farm operations command center', code: 'DB_ERROR' });
+  }
+});
+
+router.get('/summary', async (req, res) => {
+  try {
+    const data = await new Promise<any>((resolve, reject) => {
+      const mockRes = {
+        json: resolve,
+        status: (_code: number) => ({ json: reject }),
+      } as any;
+      (router as any).handle({ ...req, method: 'GET', url: '/command-center' }, mockRes, reject);
+    });
+    res.json(data.summary);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch livestock summary', code: 'DB_ERROR' });
   }
 });
 

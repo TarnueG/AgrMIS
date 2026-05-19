@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { formatDistanceToNowStrict } from 'date-fns';
 import {
   AlertTriangle,
@@ -19,6 +19,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import api, { getAccessToken } from '@/lib/api';
+import { refreshModuleData } from '@/lib/module-refresh';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
@@ -203,6 +204,7 @@ function prettyJson(value: unknown) {
 export function AuditLogPanel({ prefilterUserId }: { prefilterUserId?: string }) {
   const { toast } = useToast();
   const { canExport } = usePermissions();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [eventType, setEventType] = useState<(typeof EVENT_OPTIONS)[number]>('all');
   const [subsystem, setSubsystem] = useState('all');
@@ -274,6 +276,7 @@ export function AuditLogPanel({ prefilterUserId }: { prefilterUserId?: string })
       link.download = 'audit-log.csv';
       link.click();
       URL.revokeObjectURL(url);
+      await refreshModuleData(queryClient, [['audit-summary'], ['audit-events'], ['audit-suspicious']]);
     } catch {
       toast({ title: 'Export failed', variant: 'destructive' });
     }

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { clientInfo, logAuditEvent } from '../lib/audit';
+import { endOfMonth, hasStatus, normalizeStatus, startOfDay, toNumber } from '../lib/summary';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 
@@ -106,12 +107,6 @@ type LedgerRow = {
   sourceKind: string;
 };
 
-function startOfDay(value?: string | Date) {
-  const date = value ? new Date(value) : new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
-
 function endOfDay(value?: string | Date) {
   const date = value ? new Date(value) : new Date();
   date.setHours(23, 59, 59, 999);
@@ -124,20 +119,15 @@ function addDays(value: Date, days: number) {
   return next;
 }
 
-function toNumber(value: unknown) {
-  if (value == null) return 0;
-  if (typeof value === 'number') return value;
-  return Number(value);
-}
-
 function formatMonth(value: Date) {
   return value.toLocaleString('en-US', { month: 'short' });
 }
 
 function normalizePaymentStatus(status?: string | null, dueDate?: string | Date | null): LedgerRow['paymentStatus'] {
-  const raw = String(status ?? '').toLowerCase();
+  const raw = normalizeStatus(status);
   if (raw === 'paid') return 'paid';
-  if (raw === 'partial' || raw === 'partially paid') return 'partially paid';
+  if (raw === 'partial' || raw === 'partially_paid') return 'partially paid';
+  if (raw === 'overdue') return 'overdue';
   const due = dueDate ? new Date(dueDate) : null;
   if (due && startOfDay(due).getTime() < startOfDay().getTime()) return 'overdue';
   return 'unpaid';
@@ -376,81 +366,66 @@ async function updateManualJournalEntry(
 }
 
 export async function buildFinanceData(farmId: string | undefined) {
-  const [
-    salesOrders,
-    marketingOrders,
-    purchaseOrders,
-    wages,
-    contractorPayments,
-    maintenanceLogs,
-    repairRecords,
-    usageLogs,
-    manualEntries,
-    productionBatches,
-    productionRequests,
-    priceList,
-  ] = await Promise.all([
-    prisma.sales_orders.findMany({
-      where: { farm_id: farmId },
-      include: {
-        customers: { select: { name: true } },
-        users_sales_orders_created_byTousers: { select: { full_name: true } },
-        sales_order_items: { include: { stock_items: { include: { item_categories: { select: { name: true } } } } } },
-      },
-      orderBy: { order_date: 'desc' },
-    }),
-    prismaAny.marketing_orders.findMany({
-      where: { farm_id: farmId },
-      orderBy: { date: 'desc' },
-    }).catch(() => []),
-    prisma.purchase_orders.findMany({
-      where: { farm_id: farmId, status: { not: 'cancelled' } },
-      include: {
-        suppliers: { select: { name: true } },
-        users: { select: { full_name: true } },
-      },
-      orderBy: { order_date: 'desc' },
-    }),
-    prismaAny.personnel_wages.findMany({
-      where: { farm_id: farmId },
-      orderBy: { created_at: 'desc' },
-    }).catch(() => []),
-    prismaAny.contractor_payments.findMany({
-      where: { farm_id: farmId },
-      orderBy: { created_at: 'desc' },
-    }).catch(() => []),
-    prisma.asset_maintenance_logs.findMany({
-      where: { assets: { farm_id: farmId, deleted_at: null } },
-      include: { assets: { select: { name: true, category: true } }, users: { select: { full_name: true } } },
-      orderBy: { maintenance_date: 'desc' },
-    }),
-    prismaAny.repair_records.findMany({
-      where: { farm_id: farmId },
-      include: { assets: { select: { name: true, category: true } } },
-      orderBy: { completed_date: 'desc' },
-    }).catch(() => []),
-    prisma.asset_usage_logs.findMany({
-      where: { assets: { farm_id: farmId, deleted_at: null }, fuel_cost: { gt: 0 } as any },
-      include: { assets: { select: { name: true, category: true } }, employees: { select: { full_name: true } } },
-      orderBy: { start_time: 'desc' },
-    }),
-    prismaAny.journal_entries.findMany({
-      where: { farm_id: farmId, source_module: 'finance' },
-      include: { users: { select: { full_name: true } }, journal_entry_lines: true },
-      orderBy: { entry_date: 'desc' },
-    }).catch(() => []),
-    prismaAny.inventory_production_batches.findMany({
-      where: { farm_id: farmId },
-      orderBy: { created_at: 'desc' },
-      take: 8,
-    }).catch(() => []),
-    prismaAny.inventory_production_requests.findMany({
-      where: { farm_id: farmId },
-    }).catch(() => []),
-    prisma.prices.findMany({
-      where: { farm_id: farmId },
-    }),
-  ]);
+  const salesOrders = await prisma.sales_orders.findMany({
+    where: { farm_id: farmId },
+    include: {
+      customers: { select: { name: true } },
+      users_sales_orders_created_byTousers: { select: { full_name: true } },
+      sales_order_items: { include: { stock_items: { include: { item_categories: { select: { name: true } } } } } },
+    },
+    orderBy: { order_date: 'desc' },
+  });
+  const marketingOrders = await prismaAny.marketing_orders.findMany({
+    where: { farm_id: farmId },
+    orderBy: { date: 'desc' },
+  }).catch(() => []);
+  const purchaseOrders = await prisma.purchase_orders.findMany({
+    where: { farm_id: farmId, status: { not: 'cancelled' } },
+    include: {
+      suppliers: { select: { name: true } },
+      users: { select: { full_name: true } },
+    },
+    orderBy: { order_date: 'desc' },
+  });
+  const wages = await prismaAny.personnel_wages.findMany({
+    where: { farm_id: farmId },
+    orderBy: { created_at: 'desc' },
+  }).catch(() => []);
+  const contractorPayments = await prismaAny.contractor_payments.findMany({
+    where: { farm_id: farmId },
+    orderBy: { created_at: 'desc' },
+  }).catch(() => []);
+  const maintenanceLogs = await prisma.asset_maintenance_logs.findMany({
+    where: { assets: { farm_id: farmId, deleted_at: null } },
+    include: { assets: { select: { name: true, category: true } }, users: { select: { full_name: true } } },
+    orderBy: { maintenance_date: 'desc' },
+  });
+  const repairRecords = await prismaAny.repair_records.findMany({
+    where: { farm_id: farmId },
+    include: { assets: { select: { name: true, category: true } } },
+    orderBy: { completed_date: 'desc' },
+  }).catch(() => []);
+  const usageLogs = await prisma.asset_usage_logs.findMany({
+    where: { assets: { farm_id: farmId, deleted_at: null }, fuel_cost: { gt: 0 } as any },
+    include: { assets: { select: { name: true, category: true } }, employees: { select: { full_name: true } } },
+    orderBy: { start_time: 'desc' },
+  });
+  const manualEntries = await prismaAny.journal_entries.findMany({
+    where: { farm_id: farmId, source_module: 'finance' },
+    include: { users: { select: { full_name: true } }, journal_entry_lines: true },
+    orderBy: { entry_date: 'desc' },
+  }).catch(() => []);
+  const productionBatches = await prismaAny.inventory_production_batches.findMany({
+    where: { farm_id: farmId },
+    orderBy: { created_at: 'desc' },
+    take: 8,
+  }).catch(() => []);
+  const productionRequests = await prismaAny.inventory_production_requests.findMany({
+    where: { farm_id: farmId },
+  }).catch(() => []);
+  const priceList = await prisma.prices.findMany({
+    where: { farm_id: farmId },
+  });
 
   const incomes: LedgerRow[] = salesOrders.map((order: any) => {
     const products = order.sales_order_items.map((item: any) => item.stock_items?.name ?? 'Unknown item');
@@ -703,6 +678,8 @@ export async function buildFinanceData(farmId: string | undefined) {
   });
 
   const today = startOfDay();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthEnd = endOfMonth(today);
   const summary = {
     grossRevenue: Number(incomes.reduce((sum, row) => sum + row.amount, 0).toFixed(2)),
     totalExpenses: Number(expenses.reduce((sum, row) => sum + row.amount, 0).toFixed(2)),
@@ -712,6 +689,7 @@ export async function buildFinanceData(farmId: string | undefined) {
     payrollDue: Number(expenses.filter((row) => row.category === 'payroll').reduce((sum, row) => sum + remainingAmount(row.amount, row.paymentStatus), 0).toFixed(2)),
     procurementCosts: Number(expenses.filter((row) => row.linkedModule === 'procurement').reduce((sum, row) => sum + row.amount, 0).toFixed(2)),
     maintenanceCosts: Number(expenses.filter((row) => row.category === 'maintenance').reduce((sum, row) => sum + row.amount, 0).toFixed(2)),
+    contractorPayments: Number(expenses.filter((row) => row.category === 'contractor').reduce((sum, row) => sum + row.amount, 0).toFixed(2)),
   };
   const netProfit = Number((summary.grossRevenue - summary.totalExpenses).toFixed(2));
   const profitMargin = summary.grossRevenue > 0 ? Number(((netProfit / summary.grossRevenue) * 100).toFixed(2)) : 0;
@@ -789,6 +767,12 @@ export async function buildFinanceData(farmId: string | undefined) {
   return {
     summary: {
       ...summary,
+      totalIncome: summary.grossRevenue,
+      totalRevenue: summary.grossRevenue,
+      totalExpense: summary.totalExpenses,
+      totalExpenses: summary.totalExpenses,
+      incomeThisMonth: Number(incomes.filter((row) => row.date && new Date(row.date) >= monthStart && new Date(row.date) <= monthEnd).reduce((sum, row) => sum + row.amount, 0).toFixed(2)),
+      expensesThisMonth: Number(expenses.filter((row) => row.date && new Date(row.date) >= monthStart && new Date(row.date) <= monthEnd).reduce((sum, row) => sum + row.amount, 0).toFixed(2)),
       netProfit,
       profitMargin,
     },

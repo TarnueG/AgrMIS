@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Lock, Pencil, RotateCcw, Save, Shield, Trash2, User, Users } from 'lucide-react';
 import api from '@/lib/api';
+import { refreshModuleData } from '@/lib/module-refresh';
 import { useToast } from '@/hooks/use-toast';
 import { usePermissions } from '@/hooks/usePermissions';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -122,6 +123,12 @@ export function AccessControlContent() {
   const [duplicateFromRoleId, setDuplicateFromRoleId] = useState('');
   const [selectedUser, setSelectedUser] = useState<UserRecord | null>(null);
   const [userRoleId, setUserRoleId] = useState('');
+  const refreshAccessControl = () =>
+    refreshModuleData(queryClient, [
+      ['access-control-subsystems'],
+      ['access-control-users'],
+      ['user-permissions'],
+    ]);
 
   const { data: accessData } = useQuery({
     queryKey: ['access-control-subsystems'],
@@ -179,8 +186,7 @@ export function AccessControlContent() {
       }),
     onSuccess: () => {
       toast({ title: 'Permissions saved' });
-      queryClient.invalidateQueries({ queryKey: ['access-control-subsystems'] });
-      queryClient.invalidateQueries({ queryKey: ['user-permissions'] });
+      void refreshAccessControl();
     },
     onError: (error: Error) => {
       toast({ title: 'Save failed', description: error.message, variant: 'destructive' });
@@ -198,8 +204,7 @@ export function AccessControlContent() {
       toast({ title: 'Role created' });
       setRoleDialogMode(null);
       resetRoleDialog();
-      queryClient.invalidateQueries({ queryKey: ['access-control-subsystems'] });
-      queryClient.invalidateQueries({ queryKey: ['access-control-users'] });
+      void refreshAccessControl();
     },
     onError: (error: Error) => {
       toast({ title: 'Create failed', description: error.message, variant: 'destructive' });
@@ -216,8 +221,7 @@ export function AccessControlContent() {
       toast({ title: 'Role updated' });
       setRoleDialogMode(null);
       resetRoleDialog();
-      queryClient.invalidateQueries({ queryKey: ['access-control-subsystems'] });
-      queryClient.invalidateQueries({ queryKey: ['access-control-users'] });
+      void refreshAccessControl();
     },
     onError: (error: Error) => {
       toast({ title: 'Update failed', description: error.message, variant: 'destructive' });
@@ -228,8 +232,7 @@ export function AccessControlContent() {
     mutationFn: (roleId: string) => api.post(`/access-control/roles/${roleId}/duplicate`, {}),
     onSuccess: () => {
       toast({ title: 'Role duplicated' });
-      queryClient.invalidateQueries({ queryKey: ['access-control-subsystems'] });
-      queryClient.invalidateQueries({ queryKey: ['access-control-users'] });
+      void refreshAccessControl();
     },
     onError: (error: Error) => {
       toast({ title: 'Duplicate failed', description: error.message, variant: 'destructive' });
@@ -240,8 +243,7 @@ export function AccessControlContent() {
     mutationFn: (roleId: string) => api.post(`/access-control/roles/${roleId}/reset`, {}),
     onSuccess: () => {
       toast({ title: 'Role reset to defaults' });
-      queryClient.invalidateQueries({ queryKey: ['access-control-subsystems'] });
-      queryClient.invalidateQueries({ queryKey: ['access-control-users'] });
+      void refreshAccessControl();
     },
     onError: (error: Error) => {
       toast({ title: 'Reset failed', description: error.message, variant: 'destructive' });
@@ -252,8 +254,7 @@ export function AccessControlContent() {
     mutationFn: (roleId: string) => api.delete(`/access-control/roles/${roleId}`),
     onSuccess: () => {
       toast({ title: 'Role deleted' });
-      queryClient.invalidateQueries({ queryKey: ['access-control-subsystems'] });
-      queryClient.invalidateQueries({ queryKey: ['access-control-users'] });
+      void refreshAccessControl();
       setRoleFilter('');
     },
     onError: (error: Error) => {
@@ -268,7 +269,7 @@ export function AccessControlContent() {
       toast({ title: 'User role updated' });
       setSelectedUser(null);
       setUserRoleId('');
-      queryClient.invalidateQueries({ queryKey: ['access-control-users'] });
+      void refreshAccessControl();
     },
     onError: (error: Error) => {
       toast({ title: 'Role update failed', description: error.message, variant: 'destructive' });

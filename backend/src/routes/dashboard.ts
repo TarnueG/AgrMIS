@@ -3,6 +3,7 @@ import prisma from '../lib/prisma';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 import { buildFinanceData } from './finance';
+import { hasStatus, normalizeStatus, toNumber } from '../lib/summary';
 
 const router = Router();
 const prismaAny = prisma as any;
@@ -29,19 +30,13 @@ function addDays(value: Date, days: number) {
   return next;
 }
 
-function toNumber(value: unknown) {
-  if (value == null) return 0;
-  if (typeof value === 'number') return value;
-  return Number(value);
-}
-
 function titleize(value: string | null | undefined) {
   if (!value) return 'System';
   return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function computeMaintenanceStatus(dueDate: Date | string, status?: string | null) {
-  if (status === 'completed') return 'completed';
+  if (hasStatus(status, 'completed')) return 'completed';
   const due = startOfDay(dueDate);
   const today = startOfDay();
   if (due.getTime() < today.getTime()) return 'overdue';
@@ -68,121 +63,147 @@ function remainingAmount(amount: number, status: string) {
   return amount;
 }
 
+async function safe<T>(label: string, fn: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    console.error(`[dashboard] Failed to load ${label}`, error);
+    return fallback;
+  }
+}
+
+function emptyFinanceData() {
+  return {
+    summary: {
+      grossRevenue: 0,
+      totalExpenses: 0,
+      cashCollected: 0,
+      receivables: 0,
+      payables: 0,
+      payrollDue: 0,
+      procurementCosts: 0,
+      maintenanceCosts: 0,
+      contractorPayments: 0,
+      netProfit: 0,
+      profitMargin: 0,
+      totalIncome: 0,
+      totalRevenue: 0,
+      totalExpense: 0,
+      incomeThisMonth: 0,
+      expensesThisMonth: 0,
+    },
+    cashFlow: [],
+    profitability: [],
+    incomes: [],
+    expenses: [],
+    receivables: [],
+    payables: [],
+    costOfProduction: [],
+  };
+}
+
 async function loadDashboardData(farmId: string | undefined) {
   const today = startOfDay();
   const todayEnd = endOfDay(today);
   const weekAgo = startOfDay(addDays(today, -6));
 
-  const [
-    finance,
-    stockItems,
-    reorderAlerts,
-    procurementShowcase,
-    purchaseOrders,
-    salesOrders,
-    customers,
-    batches,
-    productionRequests,
-    employees,
-    attendanceLogs,
-    maintenanceSchedules,
-    workOrders,
-    assets,
-    auditRows,
-    leaveRows,
-    wages,
-  ] = await Promise.all([
-    buildFinanceData(farmId),
-    prisma.stock_items.findMany({
-      where: { farm_id: farmId, deleted_at: null },
-      select: { id: true, name: true, current_quantity: true, reorder_threshold: true, unit_of_measure: true },
-    }),
-    prisma.reorder_alerts.findMany({
-      where: {
-        status: 'open',
-        stock_items: { farm_id: farmId, deleted_at: null },
-      },
-      include: {
-        stock_items: { select: { id: true, name: true, current_quantity: true, reorder_threshold: true } },
-      },
-      orderBy: { triggered_at: 'desc' },
-    }),
-    prisma.$queryRaw<any[]>`
+  const finance = await safe('finance', () => buildFinanceData(farmId), emptyFinanceData());
+  const stockItems = await safe('stock items', () => prisma.stock_items.findMany({
+    where: { farm_id: farmId, deleted_at: null },
+    select: { id: true, name: true, current_quantity: true, reorder_threshold: true, unit_of_measure: true },
+  }), []);
+  const reorderAlerts = await safe('reorder alerts', () => prisma.reorder_alerts.findMany({
+    where: {
+      status: 'open',
+      stock_items: { farm_id: farmId, deleted_at: null },
+    },
+    include: {
+      stock_items: { select: { id: true, name: true, current_quantity: true, reorder_threshold: true } },
+    },
+    orderBy: { triggered_at: 'desc' },
+    take: 25,
+  }), []);
+  const procurementShowcase = await safe('procurement showcase', () => prisma.$queryRaw<any[]>`
       SELECT id, item_name, quantity, received_quantity, status, expected_date, supplier, notes, total_cost
       FROM public.procurement
+      WHERE farm_id = ${farmId}::uuid
       ORDER BY created_at DESC
-    `.catch(() => []),
-    prisma.purchase_orders.findMany({
-      where: { farm_id: farmId },
-      include: { suppliers: { select: { name: true } } },
-      orderBy: { created_at: 'desc' },
-    }),
-    prisma.sales_orders.findMany({
-      where: { farm_id: farmId },
-      include: {
-        customers: { select: { name: true } },
-        sales_order_items: { include: { stock_items: { select: { name: true } } } },
-      },
-      orderBy: { created_at: 'desc' },
-    }),
-    prisma.customers.findMany({
-      where: { farm_id: farmId, deleted_at: null },
-      select: { id: true, name: true, is_active: true },
-    }),
-    prismaAny.inventory_production_batches.findMany({
-      where: { farm_id: farmId },
-      orderBy: { created_at: 'desc' },
-    }),
-    prismaAny.inventory_production_requests.findMany({
-      where: { farm_id: farmId },
-    }),
-    prisma.employees.findMany({
-      where: { farm_id: farmId, deleted_at: null },
-      select: { id: true, full_name: true, status: true, employment_type: true },
-    }),
-    prisma.attendance_logs.findMany({
-      where: {
-        employees: { farm_id: farmId, deleted_at: null },
-        log_date: { gte: weekAgo, lte: todayEnd },
-      },
-      include: {
-        employees: { select: { id: true, full_name: true } },
-      },
-      orderBy: { log_date: 'desc' },
-    }),
-    prismaAny.asset_maintenance_schedules.findMany({
-      where: { farm_id: farmId },
-      include: { assets: { select: { id: true, name: true, asset_code: true } } },
-      orderBy: { due_date: 'asc' },
-    }).catch(() => []),
-    prisma.work_orders.findMany({
-      where: { farm_id: farmId, asset_id: { not: null } } as any,
-      include: { assets: { select: { id: true, name: true } } } as any,
-      orderBy: { created_at: 'desc' },
-    }),
-    prisma.assets.findMany({
-      where: { farm_id: farmId, deleted_at: null },
-      select: { id: true, name: true, status: true, next_service_date: true, category: true },
-    }),
-    prismaAny.audit_events.findMany({
-      where: {
-        occurred_at: { gte: addDays(today, -14) },
-      },
-      orderBy: { occurred_at: 'desc' },
-      take: 20,
-    }),
-    prisma.leave_requests.findMany({
-      where: { employees: { farm_id: farmId, deleted_at: null } },
-      include: { employees: { select: { full_name: true } } },
-      orderBy: { created_at: 'desc' },
-    }).catch(() => []),
-    prismaAny.personnel_wages.findMany({
-      where: { farm_id: farmId },
-      orderBy: { created_at: 'desc' },
-    }).catch(() => []),
-  ]);
+      LIMIT 200
+    `, []);
+  const purchaseOrders = await safe('purchase orders', () => prisma.purchase_orders.findMany({
+    where: { farm_id: farmId },
+    include: { suppliers: { select: { name: true } } },
+    orderBy: { created_at: 'desc' },
+    take: 200,
+  }), []);
+  const salesOrders = await safe('sales orders', () => prisma.sales_orders.findMany({
+    where: { farm_id: farmId },
+    include: {
+      customers: { select: { name: true } },
+      sales_order_items: { include: { stock_items: { select: { name: true } } } },
+    },
+    orderBy: { created_at: 'desc' },
+    take: 200,
+  }), []);
+  const customerCount = await safe('customer count', () => prisma.customers.count({
+    where: { farm_id: farmId, deleted_at: null, is_active: { not: false } as any },
+  }), 0);
+  const batches = await safe('production batches', () => prismaAny.inventory_production_batches.findMany({
+    where: { farm_id: farmId },
+    orderBy: { created_at: 'desc' },
+    take: 200,
+  }), []);
+  const productionRequestsCount = await safe('production requests', () => prismaAny.inventory_production_requests.count({
+    where: { farm_id: farmId },
+  }), 0);
+  const employees = await safe('employees', () => prisma.employees.findMany({
+    where: { farm_id: farmId, deleted_at: null },
+    select: { id: true, status: true, employment_type: true },
+  }), []);
+  const attendanceLogs = await safe('attendance logs', () => prisma.attendance_logs.findMany({
+    where: {
+      employees: { farm_id: farmId, deleted_at: null },
+      log_date: { gte: weekAgo, lte: todayEnd },
+    },
+    select: { id: true, employee_id: true, log_date: true, status: true },
+    orderBy: { log_date: 'desc' },
+  }), []);
+  const maintenanceSchedules = await safe('maintenance schedules', () => prismaAny.asset_maintenance_schedules.findMany({
+    where: { farm_id: farmId },
+    include: { assets: { select: { id: true, name: true, asset_code: true } } },
+    orderBy: { due_date: 'asc' },
+    take: 200,
+  }), []);
+  const workOrders = await safe('work orders', () => prisma.work_orders.findMany({
+    where: { farm_id: farmId, asset_id: { not: null } } as any,
+    include: { assets: { select: { id: true, name: true } } } as any,
+    orderBy: { created_at: 'desc' },
+    take: 200,
+  }), []);
+  const assets = await safe('assets', () => prisma.assets.findMany({
+    where: { farm_id: farmId, deleted_at: null },
+    select: { id: true, name: true, status: true, next_service_date: true, category: true },
+  }), []);
+  const auditRows = await safe('audit rows', () => prismaAny.audit_events.findMany({
+    where: {
+      occurred_at: { gte: addDays(today, -14) },
+    },
+    orderBy: { occurred_at: 'desc' },
+    take: 20,
+  }), []);
+  const leaveRows = await safe('leave rows', () => prisma.leave_requests.findMany({
+    where: { employees: { farm_id: farmId, deleted_at: null } },
+    select: { id: true, approval_status: true },
+    orderBy: { created_at: 'desc' },
+    take: 100,
+  }), []);
+  const wages = await safe('wages', () => prismaAny.personnel_wages.findMany({
+    where: { farm_id: farmId },
+    select: { id: true, payment_status: true, full_name: true, pay_period: true },
+    orderBy: { created_at: 'desc' },
+    take: 100,
+  }), []);
 
-  const requestsById = new Map((productionRequests as any[]).map((row) => [row.id, row]));
   const activeOrders = salesOrders.filter((order) => !['delivered', 'invoiced', 'cancelled'].includes(order.status));
   const productionInProgress = (batches as any[]).filter((batch) => ['pending', 'in_progress'].includes(String(batch.status || 'pending')));
   const batchesWaitingQuality = (batches as any[]).filter((batch) => String(batch.status || '') === 'quality_check');
@@ -192,14 +213,14 @@ async function loadDashboardData(farmId: string | undefined) {
   const todayExpenses = finance.expenses
     .filter((row) => row.date && new Date(row.date) >= today && new Date(row.date) <= todayEnd)
     .reduce((sum, row) => sum + row.amount, 0);
-  const activeEmployees = employees.filter((employee) => !['terminated'].includes(String(employee.status || '').toLowerCase()));
+  const activeEmployees = employees.filter((employee) => !hasStatus(employee.status, 'terminated', 'inactive', 'suspended'));
   const todayAttendance = attendanceLogs.filter((row) => {
     const date = new Date(row.log_date);
     return date >= today && date <= todayEnd;
   });
-  const workersPresent = todayAttendance.filter((row) => ['present', 'half_day'].includes(String(row.status || ''))).length;
-  const workersAbsent = todayAttendance.filter((row) => ['absent', 'leave'].includes(String(row.status || ''))).length;
-  const assetsAvailable = assets.filter((asset) => asset.status === 'operational').length;
+  const workersPresent = todayAttendance.filter((row) => hasStatus(row.status, 'present', 'half_day')).length;
+  const workersAbsent = todayAttendance.filter((row) => hasStatus(row.status, 'absent', 'leave')).length;
+  const assetsAvailable = assets.filter((asset) => hasStatus(asset.status, 'operational', 'active')).length;
   const pendingApprovals =
     (procurementShowcase as any[]).filter((row) => String(row.status || '').toLowerCase() === 'pending').length +
     (leaveRows as any[]).filter((row) => String(row.approval_status || '').toLowerCase() === 'pending').length +
@@ -365,6 +386,26 @@ async function loadDashboardData(farmId: string | undefined) {
       assetsAvailable,
       criticalAlerts: priorityAlerts.filter((row) => ['critical', 'security'].includes(row.severity)).length,
       pendingApprovals,
+      inventoryValue: Number(stockItems.reduce((sum, item) => sum + toNumber(item.current_quantity), 0).toFixed(2)),
+      lowStockItems: lowStock.length,
+      pendingProcurement: (procurementShowcase as any[]).filter((row) => !hasStatus(row.status, 'received', 'rejected', 'cancelled')).length,
+    productionOutput: Number((batches as any[]).reduce((sum, batch) => sum + toNumber(batch.produced_quantity || batch.quantity || 0), 0).toFixed(2)),
+    activeSalesOrders: activeOrders.length,
+      customerCount,
+      laborSummary: {
+        total: activeEmployees.length,
+        present: workersPresent,
+        absent: workersAbsent,
+      },
+      assetsRequiringService:
+        (maintenanceSchedules as any[]).filter((row) => ['overdue', 'due_soon'].includes(normalizeStatus(computeMaintenanceStatus(row.due_date, row.status)))).length +
+        workOrders.filter((row) => !hasStatus(row.status, 'completed', 'cancelled')).length,
+      revenueSummary: {
+        today: Number(todayRevenue.toFixed(2)),
+        receivables: Number(finance.summary.receivables.toFixed(2)),
+        payables: Number(finance.summary.payables.toFixed(2)),
+      },
+      reportsAlertsCount: priorityAlerts.length,
     },
     today: {
       productionScheduledToday: (batches as any[]).filter((batch) => batch.start_date && new Date(batch.start_date) >= today && new Date(batch.start_date) <= todayEnd).length,
@@ -423,10 +464,10 @@ async function loadDashboardData(farmId: string | undefined) {
       maintenanceDueTrend,
     },
     context: {
-      customers: customers.filter((row) => row.is_active !== false).length,
+      customers: customerCount,
       expectedReceiptsOpen: overdueProcurement.length + (procurementShowcase as any[]).filter((row) => String(row.status || '').toLowerCase() === 'approved').length,
       workOrdersOpen: workOrders.filter((row) => !['completed', 'cancelled'].includes(String(row.status || '').toLowerCase())).length,
-      requestsTracked: productionRequests.length,
+      requestsTracked: productionRequestsCount,
     },
   };
 }

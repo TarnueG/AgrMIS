@@ -208,7 +208,7 @@ function DashboardContent({
   role: string;
   canView: (subsystem: string) => boolean;
 }) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ['amis-dashboard-overview'],
     queryFn: () => api.get<DashboardOverview>('/dashboard/overview'),
   });
@@ -330,6 +330,19 @@ function DashboardContent({
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {isError && (
+        <Card className="border-rose-500/30 bg-rose-500/10 text-white">
+          <CardContent className="p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 text-rose-300" />
+              <div>
+                <p className="font-medium">Dashboard data could not be loaded.</p>
+                <p className="text-sm text-rose-100/80">{error instanceof Error ? error.message : 'The dashboard API request failed.'}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
       <div className="overflow-hidden rounded-[28px] border border-slate-800 bg-[radial-gradient(circle_at_top_left,_rgba(34,197,94,0.15),_transparent_24%),radial-gradient(circle_at_top_right,_rgba(56,189,248,0.15),_transparent_24%),linear-gradient(180deg,_rgba(2,6,23,0.98),_rgba(15,23,42,0.98))] p-6 shadow-[0_32px_90px_rgba(2,6,23,0.42)]">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="space-y-2">

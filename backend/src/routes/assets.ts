@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { clientInfo, logAuditEvent } from '../lib/audit';
+import { endOfMonth, hasStatus, startOfMonth, toNumber } from '../lib/summary';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 import { completeMaintenanceScheduleFlow } from '../services/assetService';
@@ -183,12 +184,6 @@ function addDays(value: Date, days: number) {
   return next;
 }
 
-function toNumber(value: unknown) {
-  if (value == null) return 0;
-  if (typeof value === 'number') return value;
-  return Number(value);
-}
-
 function diffHours(start: Date, end: Date) {
   return Number(Math.max((end.getTime() - start.getTime()) / 3600000, 0).toFixed(2));
 }
@@ -202,7 +197,7 @@ function mapBoardStatus(status: string) {
 }
 
 function computeScheduleStatus(dueDate: Date | string, storedStatus?: string | null) {
-  if (storedStatus === 'completed') return 'completed';
+  if (hasStatus(storedStatus, 'completed')) return 'completed';
   const due = startOfDay(dueDate);
   const today = startOfDay();
   if (due.getTime() < today.getTime()) return 'overdue';
@@ -443,8 +438,8 @@ router.get('/summary', async (req, res) => {
   try {
     const farmId = req.user!.farmId ?? undefined;
     const today = startOfDay();
-    const monthStart = startOfDay(new Date(today.getFullYear(), today.getMonth(), 1));
-    const monthEnd = endOfDay(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+    const monthStart = startOfMonth(today);
+    const monthEnd = endOfMonth(today);
     const [assets, schedules, workOrders, usageLogs, repairs, maintenanceLogs] = await Promise.all([
       buildAssetSnapshot(farmId),
       prismaAny.asset_maintenance_schedules.findMany({ where: { farm_id: farmId } }).catch(() => []),
@@ -464,8 +459,8 @@ router.get('/summary', async (req, res) => {
       }),
     ]);
 
-    const dueCount = (schedules as any[]).filter((schedule) => computeScheduleStatus(schedule.due_date, schedule.status) !== 'completed').length;
-    const openWorkOrders = workOrders.filter((order) => !['completed', 'cancelled'].includes(order.status));
+    const dueCount = (schedules as any[]).filter((schedule) => ['overdue', 'due soon'].includes(computeScheduleStatus(schedule.due_date, schedule.status))).length;
+    const openWorkOrders = workOrders.filter((order) => !hasStatus(order.status, 'completed', 'cancelled'));
     const downtimeHours =
       (repairs as any[]).reduce((sum, row) => sum + toNumber(row.downtime_hours), 0) +
       maintenanceLogs.reduce((sum, row) => sum + toNumber(row.downtime_hours), 0);
@@ -479,11 +474,11 @@ router.get('/summary', async (req, res) => {
       maintenanceLogs.reduce((sum, row) => sum + toNumber(row.cost), 0);
 
     const statusDistribution = [
-      { name: 'Available', value: assets.filter((asset) => asset.board_status === 'available').length },
-      { name: 'In Use', value: assets.filter((asset) => asset.board_status === 'assigned').length },
-      { name: 'Maintenance', value: assets.filter((asset) => asset.board_status === 'maintenance').length },
-      { name: 'Out of Service', value: assets.filter((asset) => asset.board_status === 'out_of_service').length },
-      { name: 'Retired', value: assets.filter((asset) => asset.board_status === 'retired').length },
+      { name: 'Available', value: assets.filter((asset) => hasStatus(asset.board_status, 'available')).length },
+      { name: 'In Use', value: assets.filter((asset) => hasStatus(asset.board_status, 'assigned')).length },
+      { name: 'Maintenance', value: assets.filter((asset) => hasStatus(asset.board_status, 'maintenance')).length },
+      { name: 'Out of Service', value: assets.filter((asset) => hasStatus(asset.board_status, 'out_of_service')).length },
+      { name: 'Retired', value: assets.filter((asset) => hasStatus(asset.board_status, 'retired')).length },
     ];
 
     const usageByCategory = Object.values(
@@ -540,15 +535,18 @@ router.get('/summary', async (req, res) => {
     res.json({
       cards: {
         totalAssets: assets.length,
-        availableNow: assets.filter((asset) => asset.board_status === 'available').length,
+        availableNow: assets.filter((asset) => hasStatus(asset.board_status, 'available')).length,
         inUseToday: usageLogs.length,
-        inMaintenance: assets.filter((asset) => asset.board_status === 'maintenance').length,
+        inUse: assets.filter((asset) => hasStatus(asset.board_status, 'assigned')).length,
+        operational: assets.filter((asset) => hasStatus(asset.status, 'operational', 'active')).length,
+        inMaintenance: assets.filter((asset) => hasStatus(asset.board_status, 'maintenance')).length,
         maintenanceDue: dueCount,
         openWorkOrders: openWorkOrders.length,
         downtimeHours: Number(downtimeHours.toFixed(2)),
         monthlyMaintenanceCost: Number(monthlyMaintenanceCost.toFixed(2)),
-        retiredSold: assets.filter((asset) => ['retired', 'sold'].includes(asset.status)).length,
-        lostDamaged: assets.filter((asset) => ['lost', 'decommissioned'].includes(asset.status)).length,
+        retiredSold: assets.filter((asset) => hasStatus(asset.status, 'retired', 'sold')).length,
+        lostDamaged: assets.filter((asset) => hasStatus(asset.status, 'lost', 'decommissioned')).length,
+        retiredSoldLost: assets.filter((asset) => hasStatus(asset.status, 'retired', 'sold', 'lost', 'decommissioned')).length,
       },
       charts: {
         statusDistribution,

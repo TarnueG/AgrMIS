@@ -39,6 +39,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
+import { refreshModuleData } from '@/lib/module-refresh';
 
 type AnimalKind = 'pig' | 'cattle' | 'bird';
 type ReferenceKind = 'pig' | 'cattle' | 'bird' | 'pond';
@@ -55,6 +56,12 @@ type CommandCenterPayload = {
     mortalityThisMonth: number;
     feedConsumedThisMonth: number;
     upcomingHealthChecks: number;
+  };
+  charts: {
+    speciesCounts: { name: string; value: number }[];
+    healthStatuses: { name: string; value: number }[];
+    feedAndMortalityTrend: { label: string; feed: number; mortality: number }[];
+    pondComparison: { name: string; stocked: number; estimate: number }[];
   };
   animalRegister: {
     id: string;
@@ -272,6 +279,7 @@ function DashboardKpi({
 export default function Livestock() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const refreshLivestockData = () => refreshModuleData(queryClient, [['farm-ops-command-center']]);
   const [search, setSearch] = useState('');
   const [speciesFilter, setSpeciesFilter] = useState<'all' | AnimalKind>('all');
   const [healthFilter, setHealthFilter] = useState('all');
@@ -350,43 +358,27 @@ export default function Livestock() {
     sourceId: '',
   });
 
-  const { data } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ['farm-ops-command-center'],
     queryFn: () => api.get<CommandCenterPayload>('/livestock/command-center'),
   });
-
-  const payload = data || {
-    summary: {
-      totalAnimals: 0,
-      pigs: 0,
-      cattle: 0,
-      birds: 0,
-      fishPonds: 0,
-      healthyAnimals: 0,
-      sickAnimals: 0,
-      mortalityThisMonth: 0,
-      feedConsumedThisMonth: 0,
-      upcomingHealthChecks: 0,
-    },
-    animalRegister: [],
-    fishPonds: [],
-    healthLogs: [],
-    feedUsageLogs: [],
-    mortalityLogs: [],
-    stockItems: [],
-  };
+  const summary = data?.summary;
+  const fishPonds = data?.fishPonds ?? [];
+  const healthLogs = data?.healthLogs ?? [];
+  const feedUsageLogs = data?.feedUsageLogs ?? [];
+  const mortalityLogs = data?.mortalityLogs ?? [];
 
   const feedInventory = useMemo(
-    () => payload.stockItems.filter((item) => /feed|bran|ration/i.test(`${item.name} ${item.category || ''}`)),
-    [payload.stockItems],
+    () => (data?.stockItems ?? []).filter((item) => /feed|bran|ration/i.test(`${item.name} ${item.category || ''}`)),
+    [data?.stockItems],
   );
 
   const medicineInventory = useMemo(
-    () => payload.stockItems.filter((item) => /medicine|vaccine|drug|fungicide|chemical/i.test(`${item.name} ${item.category || ''}`)),
-    [payload.stockItems],
+    () => (data?.stockItems ?? []).filter((item) => /medicine|vaccine|drug|fungicide|chemical/i.test(`${item.name} ${item.category || ''}`)),
+    [data?.stockItems],
   );
 
-  const filteredAnimals = useMemo(() => payload.animalRegister.filter((row) => {
+  const filteredAnimals = useMemo(() => (data?.animalRegister ?? []).filter((row) => {
     const matchesSearch =
       row.animalId.toLowerCase().includes(search.toLowerCase()) ||
       row.species.toLowerCase().includes(search.toLowerCase()) ||
@@ -395,60 +387,14 @@ export default function Livestock() {
     const matchesSpecies = speciesFilter === 'all' || row.type === speciesFilter;
     const matchesHealth = healthFilter === 'all' || row.healthStatus.toLowerCase() === healthFilter;
     return matchesSearch && matchesSpecies && matchesHealth;
-  }), [healthFilter, payload.animalRegister, search, speciesFilter]);
+  }), [data?.animalRegister, healthFilter, search, speciesFilter]);
 
-  const analytics = useMemo(() => {
-    const speciesCounts = [
-      { name: 'Pigs', value: payload.summary.pigs },
-      { name: 'Cattle', value: payload.summary.cattle },
-      { name: 'Birds', value: payload.summary.birds },
-      { name: 'Pond Fish', value: payload.fishPonds.reduce((sum, row) => sum + row.currentEstimate, 0) },
-    ];
-
-    const healthStatusMap = payload.animalRegister.reduce((map, row) => {
-      const key = labelize(row.healthStatus);
-      map.set(key, (map.get(key) || 0) + 1);
-      return map;
-    }, new Map<string, number>());
-
-    const currentMonthDays = Array.from({ length: 6 }, (_, index) => {
-      const date = new Date();
-      date.setDate(date.getDate() - (5 - index) * 5);
-      const label = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(date);
-      return { label, feed: 0, mortality: 0 };
-    });
-
-    payload.feedUsageLogs.forEach((row) => {
-      const rowTime = new Date(row.date).getTime();
-      currentMonthDays.forEach((bucket, index) => {
-        const bucketDate = new Date();
-        bucketDate.setDate(bucketDate.getDate() - (5 - index) * 5);
-        const diff = Math.abs(bucketDate.getTime() - rowTime);
-        if (diff < 5 * 24 * 60 * 60 * 1000) bucket.feed += row.quantityUsed;
-      });
-    });
-
-    payload.mortalityLogs.forEach((row) => {
-      const rowTime = new Date(row.date).getTime();
-      currentMonthDays.forEach((bucket, index) => {
-        const bucketDate = new Date();
-        bucketDate.setDate(bucketDate.getDate() - (5 - index) * 5);
-        const diff = Math.abs(bucketDate.getTime() - rowTime);
-        if (diff < 5 * 24 * 60 * 60 * 1000) bucket.mortality += row.quantity;
-      });
-    });
-
-    return {
-      speciesCounts,
-      healthStatuses: Array.from(healthStatusMap.entries()).map(([name, value]) => ({ name, value })),
-      feedTrend: currentMonthDays,
-      pondComparison: payload.fishPonds.map((pond) => ({
-        name: pond.pondId,
-        stocked: pond.stockingQuantity,
-        estimate: pond.currentEstimate,
-      })),
-    };
-  }, [payload]);
+  const analytics = useMemo(() => ({
+    speciesCounts: data?.charts.speciesCounts ?? [],
+    healthStatuses: data?.charts.healthStatuses ?? [],
+    feedTrend: data?.charts.feedAndMortalityTrend ?? [],
+    pondComparison: data?.charts.pondComparison ?? [],
+  }), [data?.charts]);
 
   const createAnimalMutation = useMutation({
     mutationFn: (form: AnimalForm) => {
@@ -481,7 +427,7 @@ export default function Livestock() {
       });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['farm-ops-command-center'] });
+      void refreshLivestockData();
       toast({ title: 'Animal record added' });
       setIsAnimalOpen(false);
     },
@@ -500,7 +446,7 @@ export default function Livestock() {
       expected_harvest_date: form.expectedHarvestDate || null,
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['farm-ops-command-center'] });
+      void refreshLivestockData();
       toast({ title: 'Fish pond added' });
       setIsPondOpen(false);
     },
@@ -516,7 +462,7 @@ export default function Livestock() {
       expected_harvest_date: form.expectedHarvestDate || null,
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['farm-ops-command-center'] });
+      void refreshLivestockData();
       toast({ title: 'Fish stock added to pond' });
       setIsStockOpen(false);
     },
@@ -540,7 +486,7 @@ export default function Livestock() {
       notes: form.notes || null,
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['farm-ops-command-center'] });
+      void refreshLivestockData();
       toast({ title: 'Health log recorded' });
       setIsHealthOpen(false);
     },
@@ -562,7 +508,7 @@ export default function Livestock() {
       notes: form.notes || null,
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['farm-ops-command-center'] });
+      void refreshLivestockData();
       toast({ title: 'Feed usage recorded' });
       setIsFeedOpen(false);
     },
@@ -581,7 +527,7 @@ export default function Livestock() {
       date_recorded: form.dateRecorded || null,
     }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['farm-ops-command-center'] });
+      void refreshLivestockData();
       toast({ title: 'Mortality logged' });
       setIsMortalityOpen(false);
     },
@@ -596,7 +542,7 @@ export default function Livestock() {
             <div className="flex flex-wrap items-center gap-2">
               <Badge className="bg-primary/15 text-primary border-primary/20">Farm Operations Command Center</Badge>
               <Badge variant="outline" className="text-muted-foreground">
-                {payload.summary.totalAnimals.toLocaleString()} live animal units tracked
+                {isLoading ? 'Loading...' : `${summary?.totalAnimals?.toLocaleString() ?? 0} live animal units tracked`}
               </Badge>
             </div>
             <div>
@@ -722,7 +668,7 @@ export default function Livestock() {
                     <Select value={stockForm.pondId} onValueChange={(value) => setStockForm({ ...stockForm, pondId: value })}>
                       <SelectTrigger><SelectValue placeholder="Select pond" /></SelectTrigger>
                       <SelectContent>
-                        {payload.fishPonds.map((pond) => (
+                        {fishPonds.map((pond) => (
                           <SelectItem key={pond.id} value={pond.id}>{pond.pondId}</SelectItem>
                         ))}
                       </SelectContent>
@@ -904,16 +850,16 @@ export default function Livestock() {
         </div>
 
         <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
-          <DashboardKpi title="Total Animals" value={payload.summary.totalAnimals.toLocaleString()} detail="Current live units across all farm operations" icon={Activity} tone="primary" />
-          <DashboardKpi title="Pigs" value={payload.summary.pigs} detail="Tagged pig records" icon={BadgeAlert} tone="info" />
-          <DashboardKpi title="Cattle" value={payload.summary.cattle} detail="Active cattle records" icon={Beef} tone="warning" />
-          <DashboardKpi title="Birds / Poultry" value={payload.summary.birds.toLocaleString()} detail="Bird count across active flocks" icon={Wheat} tone="success" />
-          <DashboardKpi title="Fish Ponds" value={payload.summary.fishPonds} detail="Tracked aquaculture ponds" icon={Fish} tone="info" />
-          <DashboardKpi title="Healthy" value={payload.summary.healthyAnimals.toLocaleString()} detail="Operationally healthy units" icon={HeartPulse} tone="success" />
-          <DashboardKpi title="Sick / Under Treatment" value={payload.summary.sickAnimals} detail="Needs treatment follow-up" icon={ShieldPlus} tone="warning" />
-          <DashboardKpi title="Mortality This Month" value={payload.summary.mortalityThisMonth} detail="Losses recorded in current month" icon={Skull} tone="danger" />
-          <DashboardKpi title="Feed Consumed This Month" value={payload.summary.feedConsumedThisMonth.toLocaleString()} detail="Feed issued from inventory" icon={Soup} tone="primary" />
-          <DashboardKpi title="Upcoming Health Checks" value={payload.summary.upcomingHealthChecks} detail="Due within the next 14 days" icon={Syringe} tone="info" />
+          <DashboardKpi title="Total Animals" value={isLoading ? '...' : summary?.totalAnimals?.toLocaleString() ?? 0} detail="Current live units across all farm operations" icon={Activity} tone="primary" />
+          <DashboardKpi title="Pigs" value={isLoading ? '...' : summary?.pigs ?? 0} detail="Tagged pig records" icon={BadgeAlert} tone="info" />
+          <DashboardKpi title="Cattle" value={isLoading ? '...' : summary?.cattle ?? 0} detail="Active cattle records" icon={Beef} tone="warning" />
+          <DashboardKpi title="Birds / Poultry" value={isLoading ? '...' : summary?.birds?.toLocaleString() ?? 0} detail="Bird count across active flocks" icon={Wheat} tone="success" />
+          <DashboardKpi title="Fish Ponds" value={isLoading ? '...' : summary?.fishPonds ?? 0} detail="Tracked aquaculture ponds" icon={Fish} tone="info" />
+          <DashboardKpi title="Healthy" value={isLoading ? '...' : summary?.healthyAnimals?.toLocaleString() ?? 0} detail="Operationally healthy units" icon={HeartPulse} tone="success" />
+          <DashboardKpi title="Sick / Under Treatment" value={isLoading ? '...' : summary?.sickAnimals ?? 0} detail="Needs treatment follow-up" icon={ShieldPlus} tone="warning" />
+          <DashboardKpi title="Mortality This Month" value={isLoading ? '...' : summary?.mortalityThisMonth ?? 0} detail="Losses recorded in current month" icon={Skull} tone="danger" />
+          <DashboardKpi title="Feed Consumed This Month" value={isLoading ? '...' : summary?.feedConsumedThisMonth?.toLocaleString() ?? 0} detail="Feed issued from inventory" icon={Soup} tone="primary" />
+          <DashboardKpi title="Upcoming Health Checks" value={isLoading ? '...' : summary?.upcomingHealthChecks ?? 0} detail="Due within the next 14 days" icon={Syringe} tone="info" />
         </div>
 
         <Card>
@@ -1057,7 +1003,7 @@ export default function Livestock() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {payload.fishPonds.map((pond) => (
+                  {fishPonds.map((pond) => (
                     <TableRow key={pond.id}>
                       <TableCell className="font-medium">{pond.pondId}</TableCell>
                       <TableCell>{pond.fishType}</TableCell>
@@ -1107,7 +1053,7 @@ export default function Livestock() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {!payload.fishPonds.length && (
+                  {!fishPonds.length && (
                     <TableRow>
                       <TableCell colSpan={10} className="py-8 text-center text-muted-foreground">No fish ponds available.</TableCell>
                     </TableRow>
@@ -1138,7 +1084,7 @@ export default function Livestock() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {payload.healthLogs.slice(0, 10).map((row) => (
+                    {healthLogs.slice(0, 10).map((row) => (
                       <TableRow key={row.id}>
                         <TableCell className="font-mono text-xs">{row.recordId}</TableCell>
                         <TableCell>{row.animalOrPondId}</TableCell>
@@ -1151,7 +1097,7 @@ export default function Livestock() {
                         <TableCell>{row.notes || '-'}</TableCell>
                       </TableRow>
                     ))}
-                    {!payload.healthLogs.length && (
+                    {!healthLogs.length && (
                       <TableRow>
                         <TableCell colSpan={9} className="py-6 text-center text-muted-foreground">No health logs recorded yet.</TableCell>
                       </TableRow>
@@ -1179,7 +1125,7 @@ export default function Livestock() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {payload.feedUsageLogs.slice(0, 10).map((row) => (
+                    {feedUsageLogs.slice(0, 10).map((row) => (
                       <TableRow key={row.id}>
                         <TableCell>{formatDate(row.date)}</TableCell>
                         <TableCell className="font-medium">{row.animalGroupOrPond}</TableCell>
@@ -1190,7 +1136,7 @@ export default function Livestock() {
                         <TableCell>{row.recordedBy}</TableCell>
                       </TableRow>
                     ))}
-                    {!payload.feedUsageLogs.length && (
+                    {!feedUsageLogs.length && (
                       <TableRow>
                         <TableCell colSpan={7} className="py-6 text-center text-muted-foreground">No feed usage logged yet.</TableCell>
                       </TableRow>
@@ -1219,7 +1165,7 @@ export default function Livestock() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {payload.mortalityLogs.map((row) => (
+                  {mortalityLogs.map((row) => (
                     <TableRow key={row.id}>
                       <TableCell>{formatDate(row.date)}</TableCell>
                       <TableCell className="font-medium">{row.animalOrPondId}</TableCell>
@@ -1230,7 +1176,7 @@ export default function Livestock() {
                       <TableCell>{row.notes}</TableCell>
                     </TableRow>
                   ))}
-                  {!payload.mortalityLogs.length && (
+                  {!mortalityLogs.length && (
                     <TableRow>
                       <TableCell colSpan={7} className="py-6 text-center text-muted-foreground">No mortality records recorded.</TableCell>
                     </TableRow>

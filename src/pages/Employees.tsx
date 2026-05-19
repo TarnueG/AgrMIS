@@ -36,6 +36,7 @@ import {
 } from 'recharts';
 
 import api from '@/lib/api';
+import { refreshModuleData } from '@/lib/module-refresh';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -247,6 +248,16 @@ export default function Employees() {
   const [workerTab, setWorkerTab] = useState('all');
   const [search, setSearch] = useState('');
   const [payMonth] = useState(format(new Date(), 'yyyy-MM'));
+  const refreshHrData = () =>
+    refreshModuleData(qc, [
+      ['hr-summary'],
+      ['hr-personnel'],
+      ['hr-attendance-today'],
+      ['hr-attendance-week'],
+      ['hr-tasks'],
+      ['hr-payroll'],
+      ['hr-leave'],
+    ]);
 
   const { data: summary } = useQuery<Summary>({
     queryKey: ['hr-summary'],
@@ -297,9 +308,7 @@ export default function Employees() {
   const markAttendance = useMutation({
     mutationFn: (payload: { employeeId: string; status: 'present' | 'absent'; clockIn?: string }) => api.post('/hr/attendance', payload),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hr-attendance-today'] });
-      qc.invalidateQueries({ queryKey: ['hr-attendance-week'] });
-      qc.invalidateQueries({ queryKey: ['hr-summary'] });
+      void refreshHrData();
       toast({ title: 'Attendance updated' });
     },
     onError: (error: any) => toast({ title: error.message || 'Failed to update attendance', variant: 'destructive' }),
@@ -308,9 +317,7 @@ export default function Employees() {
   const clockOutWorker = useMutation({
     mutationFn: ({ id }: { id: string }) => api.patch(`/hr/attendance/${id}`, { clockOut: format(new Date(), 'HH:mm') }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hr-attendance-today'] });
-      qc.invalidateQueries({ queryKey: ['hr-attendance-week'] });
-      qc.invalidateQueries({ queryKey: ['hr-payroll', payMonth] });
+      void refreshHrData();
       toast({ title: 'Clock-out recorded' });
     },
     onError: (error: any) => toast({ title: error.message || 'Clock-out failed', variant: 'destructive' }),
@@ -319,8 +326,7 @@ export default function Employees() {
   const advanceTask = useMutation({
     mutationFn: ({ id, nextStatus }: { id: string; nextStatus: string }) => api.patch(`/hr/tasks/${id}`, { status: nextStatus }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hr-tasks'] });
-      qc.invalidateQueries({ queryKey: ['hr-summary'] });
+      void refreshHrData();
       toast({ title: 'Task board updated' });
     },
     onError: (error: any) => toast({ title: error.message || 'Task update failed', variant: 'destructive' }),
@@ -329,8 +335,7 @@ export default function Employees() {
   const generatePayroll = useMutation({
     mutationFn: () => api.post('/hr/payroll/generate', { month: payMonth }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hr-payroll', payMonth] });
-      qc.invalidateQueries({ queryKey: ['hr-summary'] });
+      void refreshHrData();
       toast({ title: 'Payroll records generated' });
     },
     onError: (error: any) => toast({ title: error.message || 'Payroll generation failed', variant: 'destructive' }),
@@ -339,8 +344,7 @@ export default function Employees() {
   const payPayroll = useMutation({
     mutationFn: (id: string) => api.patch(`/hr/payroll/${id}/pay`, {}),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hr-payroll', payMonth] });
-      qc.invalidateQueries({ queryKey: ['hr-summary'] });
+      void refreshHrData();
       toast({ title: 'Payroll marked paid' });
     },
     onError: (error: any) => toast({ title: error.message || 'Payroll payment failed', variant: 'destructive' }),

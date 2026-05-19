@@ -46,6 +46,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
+import { refreshModuleData } from '@/lib/module-refresh';
 
 type AssetBoardStatus = 'available' | 'assigned' | 'maintenance' | 'out_of_service' | 'retired';
 type AssetStatus = 'operational' | 'active' | 'under_maintenance' | 'decommissioned' | 'retired' | 'lost' | 'sold';
@@ -487,14 +488,14 @@ export default function Machinery() {
   });
 
   const invalidateAssets = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['assets-summary'] }),
-      queryClient.invalidateQueries({ queryKey: ['assets-register'] }),
-      queryClient.invalidateQueries({ queryKey: ['assets-availability'] }),
-      queryClient.invalidateQueries({ queryKey: ['assets-maintenance'] }),
-      queryClient.invalidateQueries({ queryKey: ['assets-work-orders'] }),
-      queryClient.invalidateQueries({ queryKey: ['assets-repairs'] }),
-      queryClient.invalidateQueries({ queryKey: ['assets-usage'] }),
+    refreshModuleData(queryClient, [
+      ['assets-summary'],
+      ['assets-register'],
+      ['assets-availability'],
+      ['assets-maintenance'],
+      ['assets-work-orders'],
+      ['assets-repairs'],
+      ['assets-usage'],
     ]);
 
   const createAsset = useMutation({

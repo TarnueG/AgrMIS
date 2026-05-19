@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { logAuditEvent, clientInfo } from '../lib/audit';
+import { hasStatus, normalizeStatus } from '../lib/summary';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
 import { deactivateUser, reactivateUser } from '../lib/userStatus';
@@ -449,20 +450,20 @@ async function buildSummary(farmId: string | undefined) {
   ]);
 
   const workforce = employees as any[];
-  const workerIds = new Set(workforce.map((row) => row.id));
+  const activeWorkforce = workforce.filter((employee) => !hasStatus(employee.status, 'inactive', 'suspended', 'terminated'));
   const presentIds = new Set(
     (todayLogs as any[])
-      .filter((row) => row.status === 'present' || row.status === 'half_day')
+      .filter((row) => hasStatus(row.status, 'present', 'half_day'))
       .map((row) => row.employee_id),
   );
   const leaveIds = new Set((leaveRows as any[]).map((row) => row.employee_id));
-  const absentCount = workforce.filter((employee) => {
-    if (!workerIds.has(employee.id)) return false;
-    if (employee.status === 'inactive' || employee.status === 'suspended') return true;
-    if (presentIds.has(employee.id)) return false;
-    return leaveIds.has(employee.id) || true;
-  }).length - leaveIds.size + leaveIds.size;
-  const dailyWorkersClockedIn = (todayLogs as any[]).filter((row) => deriveWorkerType(row.employees) === 'daily' && (row.status === 'present' || row.status === 'half_day')).length;
+  const absentLogIds = new Set(
+    (todayLogs as any[])
+      .filter((row) => hasStatus(row.status, 'absent', 'leave', 'public_holiday'))
+      .map((row) => row.employee_id),
+  );
+  const absentCount = activeWorkforce.filter((employee) => !presentIds.has(employee.id) || leaveIds.has(employee.id) || absentLogIds.has(employee.id)).length;
+  const dailyWorkersClockedIn = (todayLogs as any[]).filter((row) => deriveWorkerType(row.employees) === 'daily' && hasStatus(row.status, 'present', 'half_day')).length;
   const openFieldTasks = (tasks as any[]).filter((row) => statusBucket(row) !== 'completed').length;
   const payrollDue = (wages as any[]).filter((row) => row.payment_status !== 'paid').reduce((sum, row) => sum + decimalToNumber(row.amount), 0);
   const laborCostThisMonth = [...(wages as any[]), ...(contractorPayments as any[])].reduce((sum, row) => sum + decimalToNumber((row as any).amount), 0);
@@ -473,21 +474,27 @@ async function buildSummary(farmId: string | undefined) {
 
   return {
     totalWorkforce: workforce.length,
+    activeWorkers: activeWorkforce.length,
+    inactiveSuspendedTerminated: workforce.filter((row) => hasStatus(row.status, 'inactive', 'suspended', 'terminated')).length,
+    permanentEmployees: workforce.filter((row) => deriveWorkerType(row) === 'permanent' && !hasStatus(row.status, 'inactive', 'suspended', 'terminated')).length,
+    dailyWorkers: workforce.filter((row) => deriveWorkerType(row) === 'daily' && !hasStatus(row.status, 'inactive', 'suspended', 'terminated')).length,
+    contractors: (contractors as any[]).filter((row) => hasStatus(row.status, 'active')).length,
     presentToday: presentIds.size,
     absentOnLeave: absentCount,
     dailyWorkersClockedIn,
     openFieldTasks,
+    openTasks: openFieldTasks,
     payrollDue: Number(payrollDue.toFixed(2)),
-    contractorsActive: (contractors as any[]).filter((row) => row.status === 'active' || row.status === 'finished').length,
+    contractorsActive: (contractors as any[]).filter((row) => hasStatus(row.status, 'active')).length,
     laborCostThisMonth: Number(laborCostThisMonth.toFixed(2)),
     overtimeHours: Number(overtimeHours.toFixed(2)),
     supervisorsAssigned: supervisorState.bySupervisor.size,
     totalEmployees: workforce.length,
-    pendingTasks: (tasks as any[]).filter((row) => row.status === 'pending').length,
+    pendingTasks: (tasks as any[]).filter((row) => normalizeStatus(row.status) === 'pending').length,
     contractorCount: (contractors as any[]).length,
-    activeCount: workforce.filter((row) => row.status === 'active').length,
-    inactiveCount: workforce.filter((row) => row.status === 'inactive').length,
-    suspendedCount: workforce.filter((row) => row.status === 'suspended').length,
+    activeCount: workforce.filter((row) => hasStatus(row.status, 'active')).length,
+    inactiveCount: workforce.filter((row) => hasStatus(row.status, 'inactive')).length,
+    suspendedCount: workforce.filter((row) => hasStatus(row.status, 'suspended')).length,
     employeeCount: workforce.filter((row) => {
       const type = deriveWorkerType(row);
       return type === 'permanent' || type === 'contract' || type === 'supervisor';

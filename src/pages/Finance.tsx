@@ -44,6 +44,7 @@ import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import api, { getAccessToken } from '@/lib/api';
 import { formatCurrency, formatCurrencyPrecise, formatFinanceDate, formatPercent, titleize } from '@/lib/finance-format';
+import { refreshModuleData } from '@/lib/module-refresh';
 
 type Summary = {
   grossRevenue: number;
@@ -295,15 +296,15 @@ export default function Finance() {
   });
 
   const invalidateFinance = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['finance-summary-v2'] }),
-      queryClient.invalidateQueries({ queryKey: ['finance-cash-flow'] }),
-      queryClient.invalidateQueries({ queryKey: ['finance-profitability'] }),
-      queryClient.invalidateQueries({ queryKey: ['finance-income-ledger'] }),
-      queryClient.invalidateQueries({ queryKey: ['finance-expense-ledger'] }),
-      queryClient.invalidateQueries({ queryKey: ['finance-receivables'] }),
-      queryClient.invalidateQueries({ queryKey: ['finance-payables'] }),
-      queryClient.invalidateQueries({ queryKey: ['finance-cost-of-production'] }),
+    refreshModuleData(queryClient, [
+      ['finance-summary-v2'],
+      ['finance-cash-flow'],
+      ['finance-profitability'],
+      ['finance-income-ledger'],
+      ['finance-expense-ledger'],
+      ['finance-receivables'],
+      ['finance-payables'],
+      ['finance-cost-of-production'],
     ]);
 
   const createIncome = useMutation({
