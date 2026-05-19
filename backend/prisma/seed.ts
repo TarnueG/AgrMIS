@@ -62,7 +62,118 @@ const USERS = {
     username: 'customer',
     customerType: 'retailer',
   },
+  inventoryManager: {
+    userId: '00000000-0000-0000-0000-000000000010',
+    employeeId: '00000000-0000-0000-0000-000000000011',
+    email: 'inventory@agritech.local',
+    password: 'password123',
+    fullName: 'Martha Dennis',
+    role: 'inventory_manager',
+    username: 'inventory',
+    jobTitle: 'Inventory Manager',
+    department: 'Inventory',
+    sector: 'logistics',
+    monthlySalary: 1650,
+    bankId: 'BANK-INV-001',
+  },
+  procurementOfficer: {
+    userId: '00000000-0000-0000-0000-000000000012',
+    employeeId: '00000000-0000-0000-0000-000000000013',
+    email: 'procurement@agritech.local',
+    password: 'password123',
+    fullName: 'Daniel Kormah',
+    role: 'procurement_officer',
+    username: 'procurement',
+    jobTitle: 'Procurement Officer',
+    department: 'Procurement',
+    sector: 'general',
+    monthlySalary: 1780,
+    bankId: 'BANK-PROC-001',
+  },
+  productionManager: {
+    userId: '00000000-0000-0000-0000-000000000014',
+    employeeId: '00000000-0000-0000-0000-000000000015',
+    email: 'production@agritech.local',
+    password: 'password123',
+    fullName: 'Moses Kpadeh',
+    role: 'production_manager',
+    username: 'production',
+    jobTitle: 'Production Manager',
+    department: 'Processing',
+    sector: 'production',
+    monthlySalary: 2250,
+    bankId: 'BANK-PRD-001',
+  },
+  hrManager: {
+    userId: '00000000-0000-0000-0000-000000000016',
+    employeeId: '00000000-0000-0000-0000-000000000017',
+    email: 'hr@agritech.local',
+    password: 'password123',
+    fullName: 'Rebecca Cole',
+    role: 'hr_manager',
+    username: 'hr',
+    jobTitle: 'HR Manager',
+    department: 'Human Capital',
+    sector: 'admin',
+    monthlySalary: 2100,
+    bankId: 'BANK-HR-001',
+  },
+  assetManager: {
+    userId: '00000000-0000-0000-0000-000000000018',
+    employeeId: '00000000-0000-0000-0000-000000000019',
+    email: 'assets@agritech.local',
+    password: 'password123',
+    fullName: 'Peter Sumo',
+    role: 'asset_manager',
+    username: 'assets',
+    jobTitle: 'Asset Manager',
+    department: 'Maintenance',
+    sector: 'logistics',
+    monthlySalary: 1720,
+    bankId: 'BANK-AST-001',
+  },
+  accountant: {
+    userId: '00000000-0000-0000-0000-000000000020',
+    employeeId: '00000000-0000-0000-0000-000000000021',
+    email: 'finance@agritech.local',
+    password: 'password123',
+    fullName: 'Naomi Howard',
+    role: 'accountant',
+    username: 'finance',
+    jobTitle: 'Accountant',
+    department: 'Finance',
+    sector: 'admin',
+    monthlySalary: 2400,
+    bankId: 'BANK-FIN-001',
+  },
+  fieldSupervisorUser: {
+    userId: '00000000-0000-0000-0000-000000000022',
+    employeeId: '00000000-0000-0000-0000-000000000023',
+    email: 'field.supervisor@agritech.local',
+    password: 'password123',
+    fullName: 'Abigail Swen',
+    role: 'field_supervisor',
+    username: 'fieldsupervisor',
+    jobTitle: 'Field Supervisor',
+    department: 'Operations',
+    sector: 'crop',
+    monthlySalary: 1850,
+    bankId: 'BANK-SUP-001',
+  },
 } as const;
+
+const EMPLOYEE_USER_KEYS = [
+  'superAdmin',
+  'farmManager',
+  'salesOfficer',
+  'inventoryManager',
+  'procurementOfficer',
+  'productionManager',
+  'hrManager',
+  'assetManager',
+  'accountant',
+  'fieldSupervisorUser',
+] as const;
 
 type StockTransactionSeed = {
   type: string;
@@ -226,6 +337,135 @@ const STOCK_ITEMS: StockItemSeed[] = [
     ],
     alert: { status: 'open', quantityAtTrigger: 55, notes: 'Crate stock short against harvest requirement.' },
   },
+  {
+    sku: 'SEED-RICE-IR64',
+    name: 'Rice Seed',
+    category: 'Seeds',
+    unitName: 'bag',
+    unitSymbol: 'bag',
+    unitCategory: 'count',
+    quantity: 150,
+    reservedQuantity: 30,
+    reorderThreshold: 120,
+    unitCost: 37.4,
+    storageLocation: 'Seed Store B',
+    description: 'Certified lowland rice seed held for the next paddy block.',
+    transactions: [
+      { type: 'purchase', quantity: 210, before: 0, after: 210, note: 'Certified rice seed receipt for lowland plots.' },
+      { type: 'usage', quantity: 60, before: 210, after: 150, note: 'Issued to transplant nursery and direct seeding block.' },
+    ],
+  },
+  {
+    sku: 'FERT-NPK-151515',
+    name: 'NPK Fertilizer',
+    category: 'Fertilizers',
+    unitName: 'kilogram',
+    unitSymbol: 'kg',
+    unitCategory: 'mass',
+    quantity: 280,
+    reservedQuantity: 40,
+    reorderThreshold: 300,
+    unitCost: 0.73,
+    storageLocation: 'Fertilizer Shed 2',
+    description: 'Balanced fertilizer for rice and vegetable field nutrition.',
+    transactions: [
+      { type: 'purchase', quantity: 860, before: 0, after: 860, note: 'Balanced NPK bulk delivery received for seasonal program.' },
+      { type: 'usage', quantity: 580, before: 860, after: 280, note: 'Applied across rice paddies and vegetable plots.' },
+    ],
+    alert: { status: 'open', quantityAtTrigger: 280, notes: 'NPK stock is below the next two-week field requirement.' },
+  },
+  {
+    sku: 'PACK-BAGS-5KG',
+    name: 'Packaging Bags',
+    category: 'Packaging',
+    unitName: 'piece',
+    unitSymbol: 'pc',
+    unitCategory: 'count',
+    quantity: 940,
+    reservedQuantity: 180,
+    reorderThreshold: 700,
+    unitCost: 0.22,
+    storageLocation: 'Packing Shed',
+    description: 'Printed 5kg bags for packaged rice and finished produce.',
+    transactions: [
+      { type: 'purchase', quantity: 1500, before: 0, after: 1500, note: 'Packaging bags received for rice line and produce repacking.' },
+      { type: 'usage', quantity: 560, before: 1500, after: 940, note: 'Consumed by rice packaging and vegetable packing batches.' },
+    ],
+  },
+  {
+    sku: 'HARV-MAIZE-RAW',
+    name: 'Maize Harvest',
+    category: 'Crop Harvest',
+    unitName: 'kilogram',
+    unitSymbol: 'kg',
+    unitCategory: 'mass',
+    quantity: 1850,
+    reservedQuantity: 220,
+    reorderThreshold: 0,
+    unitCost: 0.41,
+    storageLocation: 'Dry Grain Store',
+    description: 'Shelled maize harvest held for feed milling and local sales.',
+    transactions: [
+      { type: 'production_output', quantity: 2400, before: 0, after: 2400, note: 'Harvest intake from north maize block.' },
+      { type: 'usage', quantity: 550, before: 2400, after: 1850, note: 'Issued to feed mill and local wholesaler order.' },
+    ],
+  },
+  {
+    sku: 'VET-MED-001',
+    name: 'Veterinary Medicine',
+    category: 'Veterinary Supplies',
+    unitName: 'piece',
+    unitSymbol: 'pc',
+    unitCategory: 'count',
+    quantity: 18,
+    reservedQuantity: 0,
+    reorderThreshold: 24,
+    unitCost: 14.6,
+    storageLocation: 'Vet Cabinet',
+    description: 'General livestock treatment stock for deworming and antibiotics.',
+    transactions: [
+      { type: 'purchase', quantity: 30, before: 0, after: 30, note: 'Veterinary cabinet restock received from farm clinic supplier.' },
+      { type: 'usage', quantity: 12, before: 30, after: 18, note: 'Issued for pig and poultry treatment rounds.' },
+    ],
+    alert: { status: 'open', quantityAtTrigger: 18, notes: 'Veterinary medicine stock is nearing safety minimum.' },
+  },
+  {
+    sku: 'FUEL-DIESEL-001',
+    name: 'Diesel Fuel',
+    category: 'Fuel & Lubricants',
+    unitName: 'liter',
+    unitSymbol: 'L',
+    unitCategory: 'volume',
+    quantity: 420,
+    reservedQuantity: 90,
+    reorderThreshold: 350,
+    unitCost: 1.28,
+    storageLocation: 'Fuel Cage',
+    description: 'Operational diesel for tractor, truck, pump, and generator runs.',
+    transactions: [
+      { type: 'purchase', quantity: 900, before: 0, after: 900, note: 'Diesel top-up for mixed farm operations.' },
+      { type: 'usage', quantity: 480, before: 900, after: 420, note: 'Consumed by field traction, cold room backup, and irrigation cycles.' },
+    ],
+  },
+  {
+    sku: 'PART-PUMP-BELT',
+    name: 'Spare Pump Belt',
+    category: 'Spare Parts',
+    unitName: 'piece',
+    unitSymbol: 'pc',
+    unitCategory: 'count',
+    quantity: 2,
+    reservedQuantity: 0,
+    reorderThreshold: 4,
+    unitCost: 28,
+    storageLocation: 'Workshop Parts Shelf',
+    description: 'Critical spare belt for irrigation pump and pond transfer system.',
+    transactions: [
+      { type: 'purchase', quantity: 4, before: 0, after: 4, note: 'Pump belt kit received with service parts order.' },
+      { type: 'usage', quantity: 2, before: 4, after: 2, note: 'Two belts used during emergency pump repair.' },
+    ],
+    alert: { status: 'open', quantityAtTrigger: 2, notes: 'Pump belt stock is below critical maintenance reserve.' },
+  },
 ] as const;
 
 function todayMinus(days: number) {
@@ -238,6 +478,235 @@ function todayPlus(days: number) {
   const date = new Date();
   date.setDate(date.getDate() + days);
   return date;
+}
+
+const capabilityCache = new Map<string, boolean>();
+
+async function hasTable(tableName: string) {
+  const cacheKey = `table:${tableName}`;
+  if (capabilityCache.has(cacheKey)) return capabilityCache.get(cacheKey)!;
+  const rows = await prisma.$queryRawUnsafe<Array<{ exists: boolean }>>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = $1
+     ) AS exists`,
+    tableName,
+  );
+  const exists = Boolean(rows[0]?.exists);
+  capabilityCache.set(cacheKey, exists);
+  return exists;
+}
+
+async function hasColumn(tableName: string, columnName: string) {
+  const cacheKey = `column:${tableName}.${columnName}`;
+  if (capabilityCache.has(cacheKey)) return capabilityCache.get(cacheKey)!;
+  const rows = await prisma.$queryRawUnsafe<Array<{ exists: boolean }>>(
+    `SELECT EXISTS (
+       SELECT 1
+       FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+     ) AS exists`,
+    tableName,
+    columnName,
+  );
+  const exists = Boolean(rows[0]?.exists);
+  capabilityCache.set(cacheKey, exists);
+  return exists;
+}
+
+async function upsertAssetCompat(match: {
+  name?: string | null;
+  asset_code?: string | null;
+  serial_number?: string | null;
+}, data: Record<string, any>) {
+  const candidateColumns = [
+    'farm_id',
+    'asset_code',
+    'name',
+    'asset_type',
+    'category',
+    'manufacturer',
+    'model',
+    'serial_number',
+    'purchase_date',
+    'purchase_cost',
+    'current_value',
+    'location',
+    'assigned_to',
+    'status',
+    'last_service_date',
+    'next_service_date',
+    'warranty_expiry_date',
+    'notes',
+  ];
+  if (await hasColumn('assets', 'condition')) candidateColumns.splice(13, 0, 'condition');
+  const columns: string[] = [];
+  for (const column of candidateColumns) {
+    if (await hasColumn('assets', column)) {
+      columns.push(column);
+    }
+  }
+
+  const castSuffix = (column: string) => {
+    if (['farm_id', 'assigned_to'].includes(column)) return '::uuid';
+    if (['purchase_date', 'last_service_date', 'next_service_date', 'warranty_expiry_date'].includes(column)) return '::date';
+    return '';
+  };
+
+  const existing = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT id
+     FROM public.assets
+     WHERE farm_id = $1::uuid
+       AND deleted_at IS NULL
+       AND (
+         ($2 IS NOT NULL AND serial_number = $2)
+         OR ($3 IS NOT NULL AND asset_code = $3)
+         OR ($4 IS NOT NULL AND name = $4)
+       )
+     LIMIT 1`,
+    FARM_ID,
+    match.serial_number ?? null,
+    match.asset_code ?? null,
+    match.name ?? null,
+  );
+
+  const values = columns.map((column) => (column in data ? data[column] : null));
+  if (existing.length) {
+    const setClause = columns
+      .map((column, index) => `${column} = $${index + 2}${castSuffix(column)}`)
+      .join(', ');
+    const updatedRows = await prisma.$queryRawUnsafe<any[]>(
+      `UPDATE public.assets
+       SET ${setClause},
+           updated_at = NOW()
+       WHERE id = $1::uuid
+       RETURNING *`,
+      existing[0].id,
+      ...values,
+    );
+    return updatedRows[0];
+  }
+
+  const placeholders = columns
+    .map((column, index) => `$${index + 1}${castSuffix(column)}`)
+    .join(', ');
+  const createdRows = await prisma.$queryRawUnsafe<any[]>(
+    `INSERT INTO public.assets (${columns.join(', ')})
+     VALUES (${placeholders})
+     RETURNING *`,
+    ...values,
+  );
+  return createdRows[0];
+}
+
+async function upsertMaintenanceScheduleCompat(assetId: string, data: Record<string, any>) {
+  if (!(await hasTable('asset_maintenance_schedules'))) return null;
+  const existing = await prismaAny.asset_maintenance_schedules.findFirst({
+    where: {
+      asset_id: assetId,
+      service_type: data.service_type,
+      due_date: data.due_date,
+    },
+  }).catch(() => null);
+
+  if (existing) {
+    return prismaAny.asset_maintenance_schedules.update({
+      where: { id: existing.id },
+      data: { ...data, asset_id: assetId, updated_at: new Date() },
+    });
+  }
+
+  return prismaAny.asset_maintenance_schedules.create({
+    data: { ...data, asset_id: assetId },
+  });
+}
+
+async function findWorkOrderCompat(workOrderNumber: string) {
+  const rows = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT *
+     FROM public.work_orders
+     WHERE work_order_number = $1
+     LIMIT 1`,
+    workOrderNumber,
+  );
+  return rows[0] ?? null;
+}
+
+async function upsertWorkOrderCompat(data: Record<string, any>) {
+  const candidateColumns = [
+    'farm_id',
+    'asset_id',
+    'work_order_number',
+    'title',
+    'description',
+    'planned_start_date',
+    'planned_end_date',
+    'priority',
+    'requested_by_employee_id',
+    'assigned_technician',
+    'issue_type',
+    'estimated_cost',
+    'actual_cost',
+    'actual_start_time',
+    'actual_end_time',
+    'completed_at',
+    'planned_inputs',
+    'actual_inputs',
+    'planned_outputs',
+    'actual_outputs',
+    'related_crop_id',
+    'related_livestock_id',
+    'related_aquaculture_id',
+    'status',
+    'created_by',
+  ];
+  const columns: string[] = [];
+  for (const column of candidateColumns) {
+    if (await hasColumn('work_orders', column)) {
+      columns.push(column);
+    }
+  }
+
+  const castSuffix = (column: string) => {
+    if (['farm_id', 'asset_id', 'requested_by_employee_id', 'related_crop_id', 'related_livestock_id', 'related_aquaculture_id', 'created_by'].includes(column)) return '::uuid';
+    if (['planned_start_date', 'planned_end_date'].includes(column)) return '::date';
+    if (['actual_start_time', 'actual_end_time', 'completed_at'].includes(column)) return '::timestamptz';
+    if (['planned_inputs', 'actual_inputs', 'planned_outputs', 'actual_outputs'].includes(column)) return '::jsonb';
+    return '';
+  };
+
+  const existing = await findWorkOrderCompat(data.work_order_number);
+  const values = columns.map((column) => (column in data ? data[column] : null));
+
+  if (existing) {
+    const setClause = columns
+      .filter((column) => column !== 'work_order_number')
+      .map((column, index) => {
+        const paramIndex = columns.indexOf(column) + 2;
+        return `${column} = $${paramIndex}${castSuffix(column)}`;
+      })
+      .join(', ');
+    const updatedRows = await prisma.$queryRawUnsafe<any[]>(
+      `UPDATE public.work_orders
+       SET ${setClause},
+           updated_at = NOW()
+       WHERE id = $1::uuid
+       RETURNING *`,
+      existing.id,
+      ...values,
+    );
+    return updatedRows[0];
+  }
+
+  const placeholders = columns.map((column, index) => `$${index + 1}${castSuffix(column)}`).join(', ');
+  const createdRows = await prisma.$queryRawUnsafe<any[]>(
+    `INSERT INTO public.work_orders (${columns.join(', ')})
+     VALUES (${placeholders})
+     RETURNING *`,
+    ...values,
+  );
+  return createdRows[0];
 }
 
 async function ensureRole(name: string) {
@@ -449,6 +918,10 @@ async function ensureUnitsAndCategories() {
     { name: 'Livestock Feed', type: 'feed', description: 'Feed for poultry and livestock operations.' },
     { name: 'Aquaculture Feed', type: 'feed', description: 'Feed for fish ponds and aquaculture.' },
     { name: 'Crop Harvest', type: 'harvested_product', description: 'Harvested crop products ready for sale.' },
+    { name: 'Packaging', type: 'supply', description: 'Finished goods packaging and labeling materials.' },
+    { name: 'Fuel & Lubricants', type: 'supply', description: 'Fuel, oils, and lubricants for operations.' },
+    { name: 'Spare Parts', type: 'supply', description: 'Replacement parts for machinery and utilities.' },
+    { name: 'Veterinary Supplies', type: 'farm_input', description: 'Animal treatment and health consumables.' },
     { name: 'General Supplies', type: 'supply', description: 'Operational supplies and field consumables.' },
   ];
 
@@ -510,6 +983,17 @@ async function ensureSuppliers() {
       country: 'Romania',
       payment_terms: '30 days',
       commodity: 'Tools & Spare Parts',
+    },
+    {
+      name: 'PackRight Supplies',
+      supplier_type: 'packaging',
+      contact_person: 'Iulia Nedelcu',
+      phone: '+40 721 100 505',
+      email: 'orders@packright.example',
+      address: 'Braila packaging warehouse',
+      country: 'Romania',
+      payment_terms: '21 days',
+      commodity: 'Packaging Materials',
     },
   ];
 
@@ -632,6 +1116,104 @@ async function ensureStockAndAlerts() {
           },
         });
       }
+    }
+  }
+}
+
+async function ensureInventoryBatches() {
+  const items = await prisma.stock_items.findMany({
+    where: { farm_id: FARM_ID, deleted_at: null },
+    select: { id: true, sku: true, unit_of_measure: true },
+  });
+  const stockBySku = new Map(items.map((item) => [item.sku ?? '', item]));
+
+  const batchSeeds = [
+    {
+      batch_number: 'LOT-RICE-SEED-2026-01',
+      sku: 'SEED-RICE-IR64',
+      initial_quantity: 150,
+      remaining_quantity: 150,
+      production_date: todayMinus(42),
+      expiry_date: todayPlus(210),
+      quality_grade: 'approved',
+      source_type: 'procurement',
+      source_id: FARM_ID,
+      supplier_name: 'GreenSeed Agro Supply',
+    },
+    {
+      batch_number: 'LOT-NPK-2026-05',
+      sku: 'FERT-NPK-151515',
+      initial_quantity: 280,
+      remaining_quantity: 280,
+      production_date: todayMinus(35),
+      expiry_date: todayPlus(120),
+      quality_grade: 'approved',
+      source_type: 'procurement',
+      source_id: FARM_ID,
+      supplier_name: 'AgroChem Inputs Ltd',
+    },
+    {
+      batch_number: 'LOT-VET-2026-02',
+      sku: 'VET-MED-001',
+      initial_quantity: 18,
+      remaining_quantity: 18,
+      production_date: todayMinus(55),
+      expiry_date: todayPlus(25),
+      quality_grade: 'monitor',
+      source_type: 'procurement',
+      source_id: FARM_ID,
+      supplier_name: 'AgroChem Inputs Ltd',
+    },
+    {
+      batch_number: 'LOT-PACK-2026-03',
+      sku: 'PACK-BAGS-5KG',
+      initial_quantity: 940,
+      remaining_quantity: 940,
+      production_date: todayMinus(28),
+      expiry_date: null,
+      quality_grade: 'approved',
+      source_type: 'procurement',
+      source_id: FARM_ID,
+      supplier_name: 'PackRight Supplies',
+    },
+  ];
+
+  for (const seed of batchSeeds) {
+    const stockItem = stockBySku.get(seed.sku);
+    if (!stockItem) continue;
+    const supplier = await prisma.suppliers.findFirst({
+      where: { farm_id: FARM_ID, name: seed.supplier_name, deleted_at: null },
+      select: { id: true },
+    });
+    const existing = await prisma.batches.findFirst({
+      where: { batch_number: seed.batch_number },
+    });
+
+    const data = {
+      batch_number: seed.batch_number,
+      stock_item_id: stockItem.id,
+      supplier_id: supplier?.id ?? null,
+      initial_quantity: seed.initial_quantity,
+      remaining_quantity: seed.remaining_quantity,
+      unit_of_measure: stockItem.unit_of_measure,
+      production_date: seed.production_date,
+      expiry_date: seed.expiry_date,
+      quality_grade: seed.quality_grade,
+      source_type: seed.source_type,
+      source_id: seed.source_id,
+      metadata: {
+        seeded: true,
+        seedKey: seed.batch_number,
+      },
+    } as any;
+
+    if (existing) {
+      await prisma.batches.update({
+        where: { id: existing.id },
+        data,
+      });
+    } else {
+      await prisma.batches.create({ data });
     }
   }
 }
@@ -1478,16 +2060,7 @@ async function ensureAssetsAndLand() {
   const employeeByName = new Map(operators.map((employee) => [employee.full_name, employee.id]));
 
   async function ensureAsset(data: any) {
-    const existing = await prisma.assets.findFirst({
-      where: { farm_id: FARM_ID, name: data.name, deleted_at: null },
-    });
-    if (existing) {
-      return prisma.assets.update({
-        where: { id: existing.id },
-        data: { ...data, updated_at: new Date() },
-      });
-    }
-    return prisma.assets.create({ data });
+    return upsertAssetCompat({ name: data.name, asset_code: data.asset_code, serial_number: data.serial_number }, data);
   }
 
   const assets = [
@@ -1748,29 +2321,11 @@ async function ensureAssetsAndLand() {
   for (const schedule of assetSchedules) {
     const asset = createdAssets.get(schedule.assetName);
     if (!asset) continue;
-    const existing = await prismaAny.asset_maintenance_schedules.findFirst({
-      where: {
-        farm_id: FARM_ID,
-        asset_id: asset.id,
-        service_type: schedule.service_type,
-        due_date: schedule.due_date,
-      },
+    await upsertMaintenanceScheduleCompat(asset.id, {
+      farm_id: FARM_ID,
+      created_by: USERS.farmManager.userId,
+      ...schedule,
     });
-    if (existing) {
-      await prismaAny.asset_maintenance_schedules.update({
-        where: { id: existing.id },
-        data: { ...schedule, asset_id: asset.id, updated_at: new Date() },
-      });
-    } else {
-      await prismaAny.asset_maintenance_schedules.create({
-        data: {
-          farm_id: FARM_ID,
-          asset_id: asset.id,
-          created_by: USERS.farmManager.userId,
-          ...schedule,
-        },
-      });
-    }
   }
 
   const workOrders = [
@@ -1845,12 +2400,10 @@ async function ensureAssetsAndLand() {
   for (const order of workOrders) {
     const asset = createdAssets.get(order.assetName);
     if (!asset) continue;
-    const existing = await prisma.work_orders.findFirst({
-      where: { farm_id: FARM_ID, work_order_number: order.work_order_number },
-    });
     const payload = {
       farm_id: FARM_ID,
       asset_id: asset.id,
+      work_order_number: order.work_order_number,
       title: order.title,
       description: order.description,
       planned_start_date: order.planned_start_date,
@@ -1868,19 +2421,7 @@ async function ensureAssetsAndLand() {
       actual_outputs: order.actual_outputs,
       created_by: USERS.farmManager.userId,
     } as any;
-    if (existing) {
-      await prisma.work_orders.update({
-        where: { id: existing.id },
-        data: { ...payload, updated_at: new Date() },
-      });
-    } else {
-      await prisma.work_orders.create({
-        data: {
-          work_order_number: order.work_order_number,
-          ...payload,
-        } as any,
-      });
-    }
+    await upsertWorkOrderCompat(payload);
   }
 
   const maintenanceLogs = [
@@ -1915,11 +2456,12 @@ async function ensureAssetsAndLand() {
       where: { asset_id: asset.id, description: log.description, maintenance_date: log.maintenance_date },
     });
     if (!existing) {
+      const { assetName: _assetName, ...maintenanceData } = log;
       await prisma.asset_maintenance_logs.create({
         data: {
           asset_id: asset.id,
           performed_by: USERS.superAdmin.userId,
-          ...log,
+          ...maintenanceData,
         },
       });
     }
@@ -1952,24 +2494,26 @@ async function ensureAssetsAndLand() {
     },
   ];
 
-  for (const repair of repairSeeds) {
-    const asset = createdAssets.get(repair.assetName);
-    if (!asset) continue;
-    const linkedOrder = repair.work_order_number
-      ? await prisma.work_orders.findFirst({ where: { farm_id: FARM_ID, work_order_number: repair.work_order_number } })
-      : null;
-    const existing = await prismaAny.repair_records.findFirst({
-      where: { farm_id: FARM_ID, asset_id: asset.id, issue: repair.issue, completed_date: repair.completed_date },
-    });
-    if (!existing) {
-      await prismaAny.repair_records.create({
-        data: {
-          farm_id: FARM_ID,
-          asset_id: asset.id,
-          work_order_id: linkedOrder?.id ?? null,
-          ...repair,
-        },
+  if (await hasTable('repair_records')) {
+    for (const repair of repairSeeds) {
+      const asset = createdAssets.get(repair.assetName);
+      if (!asset) continue;
+      const linkedOrder = repair.work_order_number
+        ? await findWorkOrderCompat(repair.work_order_number)
+        : null;
+      const existing = await prismaAny.repair_records.findFirst({
+        where: { farm_id: FARM_ID, asset_id: asset.id, issue: repair.issue, completed_date: repair.completed_date },
       });
+      if (!existing) {
+        await prismaAny.repair_records.create({
+          data: {
+            farm_id: FARM_ID,
+            asset_id: asset.id,
+            work_order_id: linkedOrder?.id ?? null,
+            ...repair,
+          },
+        });
+      }
     }
   }
 
@@ -2028,20 +2572,22 @@ async function ensureAssetsAndLand() {
     },
   ];
 
-  for (const usage of usageSeeds) {
-    const asset = createdAssets.get(usage.assetName);
-    if (!asset || !usage.used_by) continue;
-    const existing = await prisma.asset_usage_logs.findFirst({
-      where: { asset_id: asset.id, purpose: usage.purpose, location: usage.location, notes: usage.notes },
-    });
-    if (!existing) {
-      await prisma.asset_usage_logs.create({
-        data: {
-          asset_id: asset.id,
-          authorized_by: USERS.farmManager.userId,
-          ...usage,
-        },
+  if (await hasColumn('asset_usage_logs', 'activity')) {
+    for (const usage of usageSeeds) {
+      const asset = createdAssets.get(usage.assetName);
+      if (!asset || !usage.used_by) continue;
+      const existing = await prisma.asset_usage_logs.findFirst({
+        where: { asset_id: asset.id, purpose: usage.purpose, location: usage.location, notes: usage.notes },
       });
+      if (!existing) {
+        await prisma.asset_usage_logs.create({
+          data: {
+            asset_id: asset.id,
+            authorized_by: USERS.farmManager.userId,
+            ...usage,
+          },
+        });
+      }
     }
   }
 
@@ -2207,6 +2753,15 @@ async function ensureManagerCoverage() {
       notes: 'Weekly packaged staples buyer.',
     },
     {
+      name: 'Red Palm Market Traders',
+      email: 'orders@redpalmtraders.example',
+      customer_type: 'retailer',
+      phone: '+231 770 000 106',
+      address: 'Waterside produce corridor',
+      country: 'Liberia',
+      notes: 'Market traders buying vegetables and maize harvest lots.',
+    },
+    {
       name: 'Green Plate Restaurants',
       email: 'purchasing@greenplate.example',
       customer_type: 'restaurant',
@@ -2216,6 +2771,24 @@ async function ensureManagerCoverage() {
       notes: 'Requests frequent fresh produce and rice supply.',
     },
     {
+      name: 'Blue Coast Export Buyer',
+      email: 'trade@bluecoastexport.example',
+      customer_type: 'exporter',
+      phone: '+231 770 000 107',
+      address: 'Port export terminal',
+      country: 'Liberia',
+      notes: 'Export buyer for packaged rice and fish harvest consignments.',
+    },
+    {
+      name: 'Harvest Feed Depot',
+      email: 'procurement@harvestfeed.example',
+      customer_type: 'business',
+      phone: '+231 770 000 108',
+      address: 'Paynesville feed market',
+      country: 'Liberia',
+      notes: 'Local feed customer and bulk ration buyer.',
+    },
+    {
       name: 'River Port Commodities',
       email: 'trade@riverport.example',
       customer_type: 'business',
@@ -2223,6 +2796,15 @@ async function ensureManagerCoverage() {
       address: 'Port logistics enclave',
       country: 'Liberia',
       notes: 'Bulk commodity and fertilizer buyer.',
+    },
+    {
+      name: 'Local Harvest Wholesalers',
+      email: 'supply@localharvestwholesale.example',
+      customer_type: 'business',
+      phone: '+231 770 000 109',
+      address: 'Buchanan road wholesale strip',
+      country: 'Liberia',
+      notes: 'Buys maize harvest, crates, and seasonal produce in volume.',
     },
   ];
 
@@ -3054,13 +3636,6 @@ async function ensureManagerCoverage() {
   const assetsByName = new Map<string, any>();
   for (const seed of assetSeeds) {
     const assignedEmployee = employeesByName.get(seed.assigned_to_name);
-    let asset = await prisma.assets.findFirst({
-      where: {
-        farm_id: FARM_ID,
-        OR: [{ serial_number: seed.serial_number }, { asset_code: seed.asset_code }],
-        deleted_at: null,
-      },
-    });
     const assetData = {
       farm_id: FARM_ID,
       asset_code: seed.asset_code,
@@ -3082,14 +3657,10 @@ async function ensureManagerCoverage() {
       warranty_expiry_date: seed.warranty_expiry_date,
       notes: seed.notes,
     };
-    if (asset) {
-      asset = await prisma.assets.update({
-        where: { id: asset.id },
-        data: { ...assetData, updated_at: new Date() } as any,
-      });
-    } else {
-      asset = await prisma.assets.create({ data: assetData as any });
-    }
+    const asset = await upsertAssetCompat(
+      { name: seed.name, asset_code: seed.asset_code, serial_number: seed.serial_number },
+      assetData,
+    );
     assetsByName.set(seed.name, asset);
 
     const existingLog = await prisma.asset_maintenance_logs.findFirst({
@@ -3119,19 +3690,11 @@ async function ensureManagerCoverage() {
   for (const seed of maintenanceSchedules) {
     const asset = assetsByName.get(seed.asset_name);
     if (!asset) continue;
-    const existing = await prismaAny.asset_maintenance_schedules.findFirst({
-      where: { asset_id: asset.id, service_type: seed.service_type, due_date: seed.due_date },
-    }).catch(() => null);
-    if (existing) {
-      await prismaAny.asset_maintenance_schedules.update({
-        where: { id: existing.id },
-        data: { ...seed, farm_id: FARM_ID, asset_id: asset.id, created_by: USERS.farmManager.userId, updated_at: new Date() },
-      });
-    } else {
-      await prismaAny.asset_maintenance_schedules.create({
-        data: { ...seed, farm_id: FARM_ID, asset_id: asset.id, created_by: USERS.farmManager.userId },
-      });
-    }
+    await upsertMaintenanceScheduleCompat(asset.id, {
+      ...seed,
+      farm_id: FARM_ID,
+      created_by: USERS.farmManager.userId,
+    });
   }
 
   const usageSeeds = [
@@ -3143,45 +3706,47 @@ async function ensureManagerCoverage() {
     { asset_name: 'Boom Sprayer', operator_name: 'James Kollie', purpose: 'Crop protection round', sector: 'crop', activity: 'Foliar nutrient application on vegetable block', start_time: new Date(todayMinus(2).setHours(6, 50, 0, 0)), end_time: new Date(todayMinus(2).setHours(10, 20, 0, 0)), fuel_cost: 31, location: 'Vegetable Block C', notes: 'Stopped early because two nozzles lost pressure.' },
   ];
 
-  for (const seed of usageSeeds) {
-    const asset = assetsByName.get(seed.asset_name);
-    const employee = employeesByName.get(seed.operator_name);
-    if (!asset || !employee) continue;
-    const existing = await prisma.asset_usage_logs.findFirst({
-      where: { asset_id: asset.id, used_by: employee.id, purpose: seed.purpose, start_time: seed.start_time },
-    });
-    const hours = seed.end_time ? Number(((seed.end_time.getTime() - seed.start_time.getTime()) / 3600000).toFixed(2)) : null;
-    if (existing) {
-      await prisma.asset_usage_logs.update({
-        where: { id: existing.id },
-        data: {
-          authorized_by: USERS.farmManager.userId,
-          sector: seed.sector,
-          activity: seed.activity,
-          end_time: seed.end_time,
-          hours_used: hours,
-          fuel_cost: seed.fuel_cost,
-          location: seed.location,
-          notes: seed.notes,
-        } as any,
+  if (await hasColumn('asset_usage_logs', 'activity')) {
+    for (const seed of usageSeeds) {
+      const asset = assetsByName.get(seed.asset_name);
+      const employee = employeesByName.get(seed.operator_name);
+      if (!asset || !employee) continue;
+      const existing = await prisma.asset_usage_logs.findFirst({
+        where: { asset_id: asset.id, used_by: employee.id, purpose: seed.purpose, start_time: seed.start_time },
       });
-    } else {
-      await prisma.asset_usage_logs.create({
-        data: {
-          asset_id: asset.id,
-          used_by: employee.id,
-          authorized_by: USERS.farmManager.userId,
-          purpose: seed.purpose,
-          sector: seed.sector,
-          activity: seed.activity,
-          start_time: seed.start_time,
-          end_time: seed.end_time,
-          hours_used: hours,
-          fuel_cost: seed.fuel_cost,
-          location: seed.location,
-          notes: seed.notes,
-        } as any,
-      });
+      const hours = seed.end_time ? Number(((seed.end_time.getTime() - seed.start_time.getTime()) / 3600000).toFixed(2)) : null;
+      if (existing) {
+        await prisma.asset_usage_logs.update({
+          where: { id: existing.id },
+          data: {
+            authorized_by: USERS.farmManager.userId,
+            sector: seed.sector,
+            activity: seed.activity,
+            end_time: seed.end_time,
+            hours_used: hours,
+            fuel_cost: seed.fuel_cost,
+            location: seed.location,
+            notes: seed.notes,
+          } as any,
+        });
+      } else {
+        await prisma.asset_usage_logs.create({
+          data: {
+            asset_id: asset.id,
+            used_by: employee.id,
+            authorized_by: USERS.farmManager.userId,
+            purpose: seed.purpose,
+            sector: seed.sector,
+            activity: seed.activity,
+            start_time: seed.start_time,
+            end_time: seed.end_time,
+            hours_used: hours,
+            fuel_cost: seed.fuel_cost,
+            location: seed.location,
+            notes: seed.notes,
+          } as any,
+        });
+      }
     }
   }
 
@@ -3199,9 +3764,6 @@ async function ensureManagerCoverage() {
     const asset = assetsByName.get(seed.asset_name);
     const requestedEmployee = employeesByName.get(seed.requested_by_name);
     if (!asset) continue;
-    const existing = await prisma.work_orders.findFirst({
-      where: { farm_id: FARM_ID, work_order_number: seed.work_order_number },
-    });
     const data = {
       farm_id: FARM_ID,
       asset_id: asset.id,
@@ -3225,12 +3787,7 @@ async function ensureManagerCoverage() {
         ? { repairAction: 'Fault isolated and repaired', partsUsed: ['Display board assembly'], downtimeHours: 8, completedBy: seed.assigned_technician }
         : null,
     };
-    const workOrder = existing
-      ? await prisma.work_orders.update({
-          where: { id: existing.id },
-          data: { ...data, updated_at: new Date() } as any,
-        })
-      : await prisma.work_orders.create({ data: data as any });
+    const workOrder = await upsertWorkOrderCompat(data);
     workOrdersByNumber.set(seed.work_order_number, workOrder);
   }
 
@@ -3240,33 +3797,35 @@ async function ensureManagerCoverage() {
     { asset_name: 'Cold Room Generator', work_order_number: null, issue: 'Cooling backup readiness', repair_action: 'Performed oil service and load bank test', parts_used: ['Oil filter', 'Fuel filter'], downtime_hours: 1.5, cost: 310, completed_by: 'PowerCore Systems', completed_date: todayMinus(15), notes: 'Generator passed full load run.' },
   ];
 
-  for (const seed of repairSeeds) {
-    const asset = assetsByName.get(seed.asset_name);
-    const workOrder = seed.work_order_number ? workOrdersByNumber.get(seed.work_order_number) : null;
-    if (!asset) continue;
-    const existing = await prismaAny.repair_records.findFirst({
-      where: { asset_id: asset.id, issue: seed.issue, completed_date: seed.completed_date },
-    }).catch(() => null);
-    const data = {
-      farm_id: FARM_ID,
-      asset_id: asset.id,
-      work_order_id: workOrder?.id ?? null,
-      issue: seed.issue,
-      repair_action: seed.repair_action,
-      parts_used: seed.parts_used,
-      downtime_hours: seed.downtime_hours,
-      cost: seed.cost,
-      completed_by: seed.completed_by,
-      completed_date: seed.completed_date,
-      notes: seed.notes,
-    };
-    if (existing) {
-      await prismaAny.repair_records.update({
-        where: { id: existing.id },
-        data: { ...data, updated_at: new Date() },
-      });
-    } else {
-      await prismaAny.repair_records.create({ data });
+  if (await hasTable('repair_records')) {
+    for (const seed of repairSeeds) {
+      const asset = assetsByName.get(seed.asset_name);
+      const workOrder = seed.work_order_number ? workOrdersByNumber.get(seed.work_order_number) : null;
+      if (!asset) continue;
+      const existing = await prismaAny.repair_records.findFirst({
+        where: { asset_id: asset.id, issue: seed.issue, completed_date: seed.completed_date },
+      }).catch(() => null);
+      const data = {
+        farm_id: FARM_ID,
+        asset_id: asset.id,
+        work_order_id: workOrder?.id ?? null,
+        issue: seed.issue,
+        repair_action: seed.repair_action,
+        parts_used: seed.parts_used,
+        downtime_hours: seed.downtime_hours,
+        cost: seed.cost,
+        completed_by: seed.completed_by,
+        completed_date: seed.completed_date,
+        notes: seed.notes,
+      };
+      if (existing) {
+        await prismaAny.repair_records.update({
+          where: { id: existing.id },
+          data: { ...data, updated_at: new Date() },
+        });
+      } else {
+        await prismaAny.repair_records.create({ data });
+      }
     }
   }
 
@@ -3577,19 +4136,11 @@ async function ensureManagerCoverage() {
     { work_order_number: 'WO-DEMO-003', title: 'Pond Aeration Check', description: 'Inspect paddle-wheel aeration and electrical loads.', planned_start_date: todayPlus(1), planned_end_date: todayPlus(2), priority: 'normal', status: 'planned' },
   ];
   for (const seed of workOrderSeeds) {
-    const existing = await prisma.work_orders.findFirst({
-      where: { farm_id: FARM_ID, work_order_number: seed.work_order_number },
+    await upsertWorkOrderCompat({
+      farm_id: FARM_ID,
+      created_by: USERS.farmManager.userId,
+      ...seed,
     });
-    if (existing) {
-      await prisma.work_orders.update({
-        where: { id: existing.id },
-        data: { ...seed, updated_at: new Date() } as any,
-      });
-    } else {
-      await prisma.work_orders.create({
-        data: { farm_id: FARM_ID, created_by: USERS.farmManager.userId, ...seed } as any,
-      });
-    }
   }
 
   const cropSeeds = [
@@ -5410,14 +5961,15 @@ async function ensureAuditEvents() {
 
 async function main() {
   await ensureFarm();
-  await upsertEmployeeUser(USERS.superAdmin);
-  await upsertEmployeeUser(USERS.farmManager);
-  await upsertEmployeeUser(USERS.salesOfficer);
+  for (const key of EMPLOYEE_USER_KEYS) {
+    await upsertEmployeeUser(USERS[key]);
+  }
   await upsertCustomerUser(USERS.customer);
 
   await ensureUnitsAndCategories();
   await ensureSuppliers();
   await ensureStockAndAlerts();
+  await ensureInventoryBatches();
   await ensureCustomersAndSales();
   await ensureMarketing();
   await ensureEmployeesAndHr();
@@ -5433,9 +5985,10 @@ async function main() {
 
   console.log('\nDemo bootstrap complete.');
   console.log('Login credentials:');
-  console.log(`  super_admin            ${USERS.superAdmin.email} / ${USERS.superAdmin.password}`);
-  console.log(`  farm_manager           ${USERS.farmManager.email} / ${USERS.farmManager.password}`);
-  console.log(`  sales_customer_officer ${USERS.salesOfficer.email} / ${USERS.salesOfficer.password}`);
+  for (const key of EMPLOYEE_USER_KEYS) {
+    const user = USERS[key];
+    console.log(`  ${user.role.padEnd(22, ' ')} ${user.email} / ${user.password}`);
+  }
   console.log(`  customer               ${USERS.customer.email} / ${USERS.customer.password}`);
   console.log('');
 }
