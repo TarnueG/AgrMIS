@@ -21,6 +21,7 @@ import reportsRouter from './routes/reports';
 import profileRouter from './routes/profile';
 import accessControlRouter from './routes/accessControl';
 import auditLogRouter from './routes/auditLog';
+import dashboardRouter from './routes/dashboard';
 import { seedPermissions } from './seeds/permissionSeed';
 
 const app = express();
@@ -55,6 +56,7 @@ app.use('/api/v1/finance', financeRouter);
 app.use('/api/v1/reports', reportsRouter);
 app.use('/api/v1/profile', profileRouter);
 app.use('/api/v1/access-control', accessControlRouter);
+app.use('/api/v1/dashboard', dashboardRouter);
 app.use('/api/v1/audit', auditLogRouter);
 app.use('/api/v1/audit-log', auditLogRouter);
 
