@@ -106,7 +106,8 @@ export function AppSidebar() {
   const location = useLocation();
   const { signOut, user } = useAuth();
   const { canView } = usePermissions();
-  const [openGroups, setOpenGroups] = useState<string[]>(['Sales & Distribution', 'Production Management', 'Asset Management']);
+  const defaultOpenGroups = ['Sales & Distribution', 'Production Management', 'Asset Management'];
+  const [openGroups, setOpenGroups] = useState<string[]>(defaultOpenGroups);
   const contentRef = useRef<HTMLDivElement>(null);
   const customerRole = isCustomerRole(user?.role);
   const adminRole = isAdminRole(user?.role);
@@ -178,6 +179,23 @@ export function AppSidebar() {
     })
     .filter(Boolean) as Array<MenuLeaf | MenuGroup>;
 
+  useEffect(() => {
+    const activeGroupTitles = visibleItems
+      .filter((item): item is MenuGroup => 'items' in item)
+      .filter((item) => item.items.some((subItem) => isPathActive(subItem.path)))
+      .map((item) => item.title);
+
+    if (!activeGroupTitles.length) return;
+
+    setOpenGroups((prev) => {
+      if (activeGroupTitles.every((title) => prev.includes(title))) {
+        return prev;
+      }
+
+      return Array.from(new Set([...prev, ...activeGroupTitles]));
+    });
+  }, [location.pathname, location.search, visibleItems]);
+
   const homePath = customerRole ? '/customer' : '/dashboard';
 
   return (
@@ -203,42 +221,48 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {visibleItems.map((item) =>
-                'items' in item ? (
-                  <Collapsible
-                    key={item.title}
-                    open={openGroups.includes(item.title)}
-                    onOpenChange={() => toggleGroup(item.title)}
-                  >
-                    <SidebarMenuItem>
-                      <CollapsibleTrigger asChild>
-                        <SidebarMenuButton className="w-full justify-between hover:bg-sidebar-accent">
-                          <span className="flex items-center gap-3">
-                            <item.icon className="h-4 w-4" />
-                            {item.title}
-                          </span>
-                          <ChevronDown
-                            className={`h-4 w-4 transition-transform ${openGroups.includes(item.title) ? 'rotate-180' : ''}`}
-                          />
-                        </SidebarMenuButton>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent>
-                        <div className="ml-4 mt-1 space-y-1 border-l border-sidebar-border pl-4">
-                          {item.items.map((subItem) => (
-                            <Link key={subItem.path} to={subItem.path}>
-                              <SidebarMenuButton
-                                className={`w-full ${isPathActive(subItem.path) ? 'bg-sidebar-primary text-sidebar-primary-foreground' : 'hover:bg-sidebar-accent'}`}
-                              >
-                                <subItem.icon className="h-4 w-4" />
-                                {subItem.title}
-                              </SidebarMenuButton>
-                            </Link>
-                          ))}
-                        </div>
-                      </CollapsibleContent>
-                    </SidebarMenuItem>
-                  </Collapsible>
-                ) : (
+              {visibleItems.map((item) => {
+                if ('items' in item) {
+                  const groupIsActive = item.items.some((subItem) => isPathActive(subItem.path));
+
+                  return (
+                    <Collapsible key={item.title} open={openGroups.includes(item.title)} onOpenChange={() => toggleGroup(item.title)}>
+                      <SidebarMenuItem>
+                        <CollapsibleTrigger asChild>
+                          <SidebarMenuButton
+                            className={`w-full justify-between ${
+                              groupIsActive ? 'bg-sidebar-primary/15 text-sidebar-foreground' : 'hover:bg-sidebar-accent'
+                            }`}
+                          >
+                            <span className="flex items-center gap-3">
+                              <item.icon className="h-4 w-4" />
+                              {item.title}
+                            </span>
+                            <ChevronDown
+                              className={`h-4 w-4 transition-transform ${openGroups.includes(item.title) ? 'rotate-180' : ''}`}
+                            />
+                          </SidebarMenuButton>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent>
+                          <div className="ml-4 mt-1 space-y-1 border-l border-sidebar-border pl-4">
+                            {item.items.map((subItem) => (
+                              <Link key={subItem.path} to={subItem.path}>
+                                <SidebarMenuButton
+                                  className={`w-full ${isPathActive(subItem.path) ? 'bg-sidebar-primary text-sidebar-primary-foreground' : 'hover:bg-sidebar-accent'}`}
+                                >
+                                  <subItem.icon className="h-4 w-4" />
+                                  {subItem.title}
+                                </SidebarMenuButton>
+                              </Link>
+                            ))}
+                          </div>
+                        </CollapsibleContent>
+                      </SidebarMenuItem>
+                    </Collapsible>
+                  );
+                }
+
+                return (
                   <SidebarMenuItem key={item.path}>
                     <Link to={item.path}>
                       <SidebarMenuButton
@@ -254,8 +278,8 @@ export function AppSidebar() {
                       </SidebarMenuButton>
                     </Link>
                   </SidebarMenuItem>
-                )
-              )}
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

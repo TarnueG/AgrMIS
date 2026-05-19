@@ -131,7 +131,7 @@ function ProfilePanel() {
       <Card>
         <CardContent className="pt-6 space-y-6">
           {isLoading ? (
-            <div className="text-center text-muted-foreground py-8">Loading…</div>
+            <div className="text-center text-muted-foreground py-8">Loading...</div>
           ) : (
             <>
               <div className="flex flex-col items-center gap-3">
@@ -445,10 +445,10 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{u.employee?.job_title ?? '—'}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">{u.employee?.job_title ?? '--'}</TableCell>
                       <TableCell>
                         <span className={`px-2 py-0.5 rounded-full text-xs ${roleColor(u.role?.name ?? '')}`}>
-                          {u.role?.name?.replace(/_/g, ' ') ?? '—'}
+                          {u.role?.name?.replace(/_/g, ' ') ?? '--'}
                         </span>
                       </TableCell>
                       <TableCell className="text-center" onClick={e => e.stopPropagation()}>
@@ -493,7 +493,7 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
                     <p className="font-semibold">{selectedUser.fullName}</p>
                     <p className="text-xs text-muted-foreground">@{selectedUser.username ?? '—'}</p>
                     <span className={`mt-1 inline-block px-2 py-0.5 rounded-full text-xs ${roleColor(selectedUser.role?.name ?? '')}`}>
-                      {selectedUser.role?.name?.replace(/_/g, ' ') ?? '—'}
+                      {selectedUser.role?.name?.replace(/_/g, ' ') ?? '--'}
                     </span>
                   </div>
                 </div>
@@ -956,7 +956,7 @@ function ChangePasswordPanel() {
                   type={showCurrent ? 'text' : 'password'}
                   value={current}
                   onChange={e => setCurrent(e.target.value)}
-                  placeholder="••••••••"
+                  placeholder="********"
                   className="pr-10"
                 />
                 <button type="button" onClick={() => setShowCurrent(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
@@ -989,7 +989,7 @@ function ChangePasswordPanel() {
               />
             </div>
             <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={mutation.isPending}>
-              {mutation.isPending ? 'Updating…' : 'Update Password'}
+              {mutation.isPending ? 'Updating...' : 'Update Password'}
             </Button>
           </form>
         </CardContent>
@@ -1164,10 +1164,10 @@ function AccessControlContent() {
                 <TableRow key={u.id}>
                   <TableCell className="font-medium">{u.fullName}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">{u.email}</TableCell>
-                  <TableCell className="text-sm">{u.employee?.job_title ?? '—'}</TableCell>
+                  <TableCell className="text-sm">{u.employee?.job_title ?? '--'}</TableCell>
                   <TableCell>
                     <span className="px-2 py-0.5 rounded-full text-xs bg-primary/20 text-primary capitalize">
-                      {u.role?.name?.replace(/_/g, ' ') ?? '—'}
+                      {u.role?.name?.replace(/_/g, ' ') ?? '--'}
                     </span>
                   </TableCell>
                   <TableCell className="text-right">
@@ -1190,7 +1190,7 @@ function AccessControlContent() {
       <Dialog open={roleDialogOpen} onOpenChange={setRoleDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Change Role — {selectedUser?.fullName}</DialogTitle>
+            <DialogTitle>Change Role - {selectedUser?.fullName}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
@@ -1250,7 +1250,7 @@ export function Settings() {
     setPanel(nextPanel);
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set('panel', nextPanel);
-    setSearchParams(nextParams, { replace: true });
+    setSearchParams(nextParams);
   };
 
   const navSections = [
@@ -1293,6 +1293,9 @@ export function Settings() {
         <aside className="w-52 shrink-0 border-r border-border flex flex-col py-4 bg-background">
           <div className="px-4 pb-3 mb-2 border-b border-border">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Settings</h2>
+            <p className="mt-2 text-xs text-muted-foreground/70">
+              System preferences, security, and user administration.
+            </p>
           </div>
           <nav className="flex-1 overflow-y-auto px-2 space-y-4">
             {navSections.map((section) => (
