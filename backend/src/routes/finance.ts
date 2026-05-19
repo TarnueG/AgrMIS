@@ -375,7 +375,7 @@ async function updateManualJournalEntry(
   });
 }
 
-async function buildFinanceData(farmId: string | undefined) {
+export async function buildFinanceData(farmId: string | undefined) {
   const [
     salesOrders,
     marketingOrders,

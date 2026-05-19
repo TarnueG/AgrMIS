@@ -23,7 +23,8 @@ export type AuditEventType =
   | 'leave_updated'
   | 'finance_transaction_created'
   | 'finance_transaction_updated'
-  | 'finance_exported';
+  | 'finance_exported'
+  | 'report_exported';
 
 interface AuditPayload {
   actorUserId?: string | null;
