@@ -340,7 +340,7 @@ async function loadDashboardData(farmId: string | undefined) {
       subsystem: 'machinery',
       issue: `${row.label ?? 'Asset'} maintenance is overdue`,
       recommendedAction: 'Schedule or complete maintenance before operational impact grows.',
-      link: '/machinery',
+      link: '/assets/machinery',
     })),
     ...(wages as any[])
       .filter((row) => String(row.payment_status || '').toLowerCase() !== 'paid')

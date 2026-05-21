@@ -40,6 +40,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 import {
@@ -184,6 +185,7 @@ function DashboardKpi({
 
 export default function Inventory() {
   const { toast } = useToast();
+  const { canCreate, canDelete, canEdit } = usePermissions();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -272,10 +274,11 @@ export default function Inventory() {
     mutationFn: (data: SupplierFormData) =>
       api.post('/procurement/suppliers', {
         name: data.name,
+        contactPerson: data.contact_person || undefined,
         phone: data.phone || null,
         email: data.email || null,
         address: data.address || null,
-        notes: [data.contact_person, data.notes].filter(Boolean).join(' | ') || null,
+        notes: data.notes || null,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['inventory-suppliers'] });
@@ -412,7 +415,7 @@ export default function Inventory() {
           <div className="flex flex-col gap-2 sm:flex-row">
           <Dialog open={isSupplierOpen} onOpenChange={setIsSupplierOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline" className="w-full sm:w-auto">
+              <Button variant="outline" className="w-full sm:w-auto" disabled={!canCreate('procurement')}>
                 <UserPlus className="mr-2 h-4 w-4" />
                 Add Supplier
               </Button>
@@ -468,7 +471,7 @@ export default function Inventory() {
                     onChange={(e) => setSupplierForm({ ...supplierForm, notes: e.target.value })}
                   />
                 </div>
-                <Button type="submit" className="w-full gradient-primary" disabled={addSupplierMutation.isPending}>
+                <Button type="submit" className="w-full gradient-primary" disabled={addSupplierMutation.isPending || !canCreate('procurement')}>
                   Add Supplier
                 </Button>
               </form>
@@ -477,7 +480,7 @@ export default function Inventory() {
 
           <Dialog open={isMovementOpen} onOpenChange={setIsMovementOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline" className="w-full sm:w-auto">
+              <Button variant="outline" className="w-full sm:w-auto" disabled={!canEdit('inventory')}>
                 <ClipboardPlus className="mr-2 h-4 w-4" />
                 Record Movement
               </Button>
@@ -553,7 +556,7 @@ export default function Inventory() {
                     placeholder="Receipt, dispatch, production issue, sales order reference..."
                   />
                 </div>
-                <Button type="submit" className="w-full gradient-primary" disabled={recordMovementMutation.isPending}>
+                <Button type="submit" className="w-full gradient-primary" disabled={recordMovementMutation.isPending || !canEdit('inventory')}>
                   Record Movement
                 </Button>
               </form>
@@ -562,7 +565,7 @@ export default function Inventory() {
 
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
-              <Button className="gradient-primary w-full sm:w-auto">
+              <Button className="gradient-primary w-full sm:w-auto" disabled={!canCreate('inventory')}>
                 <Plus className="mr-2 h-4 w-4" />
                 Add Item
               </Button>
@@ -693,7 +696,7 @@ export default function Inventory() {
                     </SelectContent>
                   </Select>
                 </div>
-                <Button type="submit" className="w-full gradient-primary" disabled={addMutation.isPending}>
+                <Button type="submit" className="w-full gradient-primary" disabled={addMutation.isPending || !canCreate('inventory')}>
                   Add Item
                 </Button>
               </form>
@@ -1142,7 +1145,16 @@ export default function Inventory() {
                       </TableCell>
                       <TableCell>{getStatusBadge(item.status)}</TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="icon" onClick={() => deleteMutation.mutate(item.id)} disabled={deleteMutation.isPending}>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            if (window.confirm(`Delete inventory item "${item.item_name}"?`)) {
+                              deleteMutation.mutate(item.id);
+                            }
+                          }}
+                          disabled={deleteMutation.isPending || !canDelete('inventory')}
+                        >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </TableCell>

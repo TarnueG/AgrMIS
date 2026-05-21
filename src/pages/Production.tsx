@@ -39,6 +39,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 
 type BatchStatus = 'pending' | 'in_process' | 'quality_check' | 'passed' | 'rework' | 'declined';
@@ -298,6 +299,7 @@ function DashboardKpi({
 
 export default function Production() {
   const { toast } = useToast();
+  const { canCreate, canEdit } = usePermissions();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | BatchStatus>('all');
@@ -598,7 +600,7 @@ export default function Production() {
           <div className="flex flex-col gap-2 sm:flex-row">
             <Dialog open={isLogOpen} onOpenChange={setIsLogOpen}>
               <DialogTrigger asChild>
-                <Button variant="outline">
+                <Button variant="outline" disabled={!canCreate('production')}>
                   <ClipboardList className="mr-2 h-4 w-4" />
                   Add Daily Log
                 </Button>
@@ -661,14 +663,14 @@ export default function Production() {
                     <Label>Notes</Label>
                     <Textarea value={dailyLogForm.notes} onChange={(event) => setDailyLogForm({ ...dailyLogForm, notes: event.target.value })} />
                   </div>
-                  <Button type="submit" className="w-full gradient-primary" disabled={logMutation.isPending}>Save Daily Log</Button>
+                  <Button type="submit" className="w-full gradient-primary" disabled={logMutation.isPending || !canCreate('production')}>Save Daily Log</Button>
                 </form>
               </DialogContent>
             </Dialog>
 
             <Dialog open={isBatchOpen} onOpenChange={setIsBatchOpen}>
               <DialogTrigger asChild>
-                <Button className="gradient-primary text-black">
+                <Button className="gradient-primary text-black" disabled={!canCreate('production')}>
                   <Plus className="mr-2 h-4 w-4" />
                   Create Batch
                 </Button>
@@ -780,7 +782,7 @@ export default function Production() {
                     <Label>Notes</Label>
                     <Textarea value={batchForm.notes} onChange={(event) => setBatchForm({ ...batchForm, notes: event.target.value })} />
                   </div>
-                  <Button type="submit" className="w-full gradient-primary" disabled={createBatchMutation.isPending}>Create Batch</Button>
+                  <Button type="submit" className="w-full gradient-primary" disabled={createBatchMutation.isPending || !canCreate('production')}>Create Batch</Button>
                 </form>
               </DialogContent>
             </Dialog>
@@ -884,6 +886,7 @@ export default function Production() {
                           {['pending', 'in_process'].includes(batch.status) && (
                             <Select
                               value={batch.status}
+                              disabled={!canEdit('production')}
                               onValueChange={(value) => updateBatchMutation.mutate({ id: batch.id, status: value as 'pending' | 'in_process' | 'quality_check' })}
                             >
                               <SelectTrigger className="h-8 w-[148px]">
@@ -897,7 +900,7 @@ export default function Production() {
                             </Select>
                           )}
                           {['pending', 'in_process', 'quality_check', 'rework'].includes(batch.status) && (
-                            <Button variant="outline" size="sm" onClick={() => {
+                            <Button variant="outline" size="sm" disabled={!canCreate('production')} onClick={() => {
                               setConsumptionBatch(batch);
                               setConsumptionForm({
                                 stockItemId: 'none',
@@ -910,7 +913,7 @@ export default function Production() {
                             </Button>
                           )}
                           {['in_process', 'quality_check', 'rework'].includes(batch.status) && (
-                            <Button variant="outline" size="sm" onClick={() => {
+                            <Button variant="outline" size="sm" disabled={!canCreate('production')} onClick={() => {
                               setQualityBatch(batch);
                               setQualityForm({
                                 result: 'passed',
@@ -1207,7 +1210,7 @@ export default function Production() {
                 <Label>Notes</Label>
                 <Textarea value={consumptionForm.notes} onChange={(event) => setConsumptionForm({ ...consumptionForm, notes: event.target.value })} />
               </div>
-              <Button type="submit" className="w-full gradient-primary" disabled={consumeMutation.isPending}>
+              <Button type="submit" className="w-full gradient-primary" disabled={consumeMutation.isPending || !canCreate('production')}>
                 Post Consumption
               </Button>
             </form>
@@ -1267,7 +1270,7 @@ export default function Production() {
                 <Label>Notes</Label>
                 <Textarea value={qualityForm.notes} onChange={(event) => setQualityForm({ ...qualityForm, notes: event.target.value })} />
               </div>
-              <Button type="submit" className="w-full gradient-primary" disabled={qualityMutation.isPending}>
+              <Button type="submit" className="w-full gradient-primary" disabled={qualityMutation.isPending || !canCreate('production')}>
                 Save Quality Result
               </Button>
             </form>

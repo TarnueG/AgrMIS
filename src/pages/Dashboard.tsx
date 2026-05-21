@@ -324,7 +324,7 @@ function DashboardContent({
     { title: 'Receive Stock', path: '/inventory', icon: PackageCheck, enabled: visibility.inventory },
     { title: 'Create Production Batch', path: '/production', icon: Factory, enabled: visibility.production },
     { title: 'Assign Labor Task', path: '/employees', icon: Users, enabled: visibility.hr },
-    { title: 'Record Maintenance', path: '/machinery', icon: Wrench, enabled: visibility.assets },
+    { title: 'Record Maintenance', path: '/assets/machinery', icon: Wrench, enabled: visibility.assets },
     { title: 'View Reports', path: '/reports', icon: FileBarChart2, enabled: visibility.reports || visibility.finance },
   ].filter((action) => action.enabled);
 

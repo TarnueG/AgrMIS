@@ -40,6 +40,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
+import { usePermissions } from '@/hooks/usePermissions';
 import { useToast } from '@/hooks/use-toast';
 import api from '@/lib/api';
 
@@ -222,6 +223,7 @@ function DashboardKpi({
 
 export default function Orders() {
   const { toast } = useToast();
+  const { canCreate, canEdit } = usePermissions();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | typeof salesStatuses[number]>('all');
@@ -497,7 +499,7 @@ export default function Orders() {
 
           <Dialog open={isOrderOpen} onOpenChange={setIsOrderOpen}>
             <DialogTrigger asChild>
-              <Button className="gradient-primary w-full sm:w-auto">
+              <Button className="gradient-primary w-full sm:w-auto" disabled={!canCreate('sales_order_points')}>
                 <Plus className="mr-2 h-4 w-4" />
                 New Order
               </Button>
@@ -603,7 +605,7 @@ export default function Orders() {
                   <Label>Notes</Label>
                   <Textarea value={orderForm.notes} onChange={(e) => setOrderForm({ ...orderForm, notes: e.target.value })} />
                 </div>
-                <Button type="submit" className="w-full gradient-primary" disabled={createOrderMutation.isPending}>
+                <Button type="submit" className="w-full gradient-primary" disabled={createOrderMutation.isPending || !canCreate('sales_order_points')}>
                   Create Order
                 </Button>
               </form>
@@ -710,6 +712,7 @@ export default function Orders() {
                             <Button
                               variant="outline"
                               size="sm"
+                              disabled={!canEdit('sales_order_points')}
                               onClick={() => {
                                 setDispatchingOrder(order);
                                 setDispatchForm({
@@ -729,7 +732,7 @@ export default function Orders() {
                             </Button>
                           )}
                           {order.status !== 'completed' && order.status !== 'rejected' && (
-                            <Button variant="outline" size="sm" onClick={() => statusMutation.mutate({ id: order.id, status: 'rejected' })}>
+                            <Button variant="outline" size="sm" disabled={!canEdit('sales_order_points')} onClick={() => statusMutation.mutate({ id: order.id, status: 'rejected' })}>
                               Cancel
                             </Button>
                           )}
@@ -970,9 +973,9 @@ export default function Orders() {
                 <Label>Notes</Label>
                 <Textarea value={dispatchForm.notes} onChange={(e) => setDispatchForm({ ...dispatchForm, notes: e.target.value })} />
               </div>
-              <Button type="submit" className="w-full gradient-primary" disabled={dispatchMutation.isPending}>
-                {dispatchForm.status === 'completed' ? 'Complete Order' : 'Create Dispatch Log'}
-              </Button>
+                <Button type="submit" className="w-full gradient-primary" disabled={dispatchMutation.isPending || !canEdit('sales_order_points')}>
+                  {dispatchForm.status === 'completed' ? 'Complete Order' : 'Create Dispatch Log'}
+                </Button>
             </form>
           </DialogContent>
         </Dialog>

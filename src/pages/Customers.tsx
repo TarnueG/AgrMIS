@@ -277,7 +277,6 @@ export default function Customers() {
                       placeholder="Search customers..."
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
-                      onBlur={() => setSearch('')}
                       className="pl-9 w-52 text-white placeholder:text-white/50"
                     />
                   </div>
@@ -355,7 +354,6 @@ export default function Customers() {
                   placeholder="Search customers..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  onBlur={() => setSearch('')}
                   className="pl-9 text-white placeholder:text-white/50"
                 />
               </div>
