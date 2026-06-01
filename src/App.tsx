@@ -18,11 +18,15 @@ import Reports from "./pages/Reports";
 import Procurement from "./pages/Procurement";
 import ProcurementAnalytics from "./pages/ProcurementAnalytics";
 import ProcurementAnalyticsDrilldown from "./pages/ProcurementAnalyticsDrilldown";
+import CrmAnalytics from "./pages/CrmAnalytics";
+import CrmAnalyticsDetail from "./pages/CrmAnalyticsDetail";
 import Employees from "./pages/Employees";
 import LandParcels from "./pages/LandParcels";
 import Machinery from "./pages/Machinery";
 import Livestock from "./pages/Livestock";
 import Marketing from "./pages/Marketing";
+import MarketingAnalytics from "./pages/MarketingAnalytics";
+import MarketingAnalyticsOrders from "./pages/MarketingAnalyticsOrders";
 import CheckoutPage from "./pages/CheckoutPage";
 import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import SalesOrderPoints from "./pages/SalesOrderPoints";
@@ -47,6 +51,13 @@ const App = () => (
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/inventory" element={<ProtectedRoute subsystem="inventory"><Inventory /></ProtectedRoute>} />
             <Route path="/customers" element={<ProtectedRoute subsystem="crm"><Customers /></ProtectedRoute>} />
+            <Route path="/crm/analytics" element={<ProtectedRoute subsystem="crm"><CrmAnalytics /></ProtectedRoute>} />
+            <Route path="/crm/analytics/customers" element={<ProtectedRoute subsystem="crm"><CrmAnalyticsDetail /></ProtectedRoute>} />
+            <Route path="/crm/analytics/purchases" element={<ProtectedRoute subsystem="crm"><CrmAnalyticsDetail /></ProtectedRoute>} />
+            <Route path="/crm/analytics/carts" element={<ProtectedRoute subsystem="crm"><CrmAnalyticsDetail /></ProtectedRoute>} />
+            <Route path="/crm/analytics/segments" element={<ProtectedRoute subsystem="crm"><CrmAnalyticsDetail /></ProtectedRoute>} />
+            <Route path="/crm/analytics/customers/top" element={<ProtectedRoute subsystem="crm"><CrmAnalyticsDetail /></ProtectedRoute>} />
+            <Route path="/crm/analytics/products/top" element={<ProtectedRoute subsystem="crm"><CrmAnalyticsDetail /></ProtectedRoute>} />
             <Route path="/orders" element={<ProtectedRoute subsystem="sales_order_points"><Orders /></ProtectedRoute>} />
             <Route path="/production" element={<ProtectedRoute subsystem="production"><Production /></ProtectedRoute>} />
             <Route path="/finance" element={<ProtectedRoute subsystem="finance"><Finance /></ProtectedRoute>} />
@@ -59,6 +70,8 @@ const App = () => (
             <Route path="/assets/machinery" element={<ProtectedRoute subsystem="machinery"><Machinery /></ProtectedRoute>} />
             <Route path="/assets/livestock" element={<ProtectedRoute subsystem="livestock"><Livestock /></ProtectedRoute>} />
             <Route path="/marketing" element={<ProtectedRoute subsystem="marketing"><Marketing /></ProtectedRoute>} />
+            <Route path="/marketing/analytics" element={<ProtectedRoute subsystem="marketing"><MarketingAnalytics /></ProtectedRoute>} />
+            <Route path="/marketing/analytics/orders/:status" element={<ProtectedRoute subsystem="marketing"><MarketingAnalyticsOrders /></ProtectedRoute>} />
             <Route path="/checkout" element={<ProtectedRoute subsystem="sales_order_points"><CheckoutPage /></ProtectedRoute>} />
             <Route path="/payment-success" element={<ProtectedRoute subsystem="sales_order_points"><PaymentSuccessPage /></ProtectedRoute>} />
             <Route path="/sales-order-points" element={<ProtectedRoute subsystem="sales_order_points"><SalesOrderPoints /></ProtectedRoute>} />

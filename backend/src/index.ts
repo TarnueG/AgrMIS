@@ -15,11 +15,13 @@ import parcelRequestsRouter from './routes/parcelRequests';
 import landParcelsRouter from './routes/landParcels';
 import livestockRouter from './routes/livestock';
 import marketingRouter from './routes/marketing';
+import marketingAnalyticsRouter from './routes/marketingAnalytics';
 import { handleStripeWebhook } from './routes/marketingPayments';
 import profileRouter from './routes/profile';
 import accessControlRouter from './routes/accessControl';
 import auditLogRouter from './routes/auditLog';
 import financeRouter from './routes/finance';
+import crmAnalyticsRouter from './routes/crmAnalytics';
 import { seedPermissions } from './seeds/permissionSeed';
 
 dotenv.config();
@@ -57,10 +59,12 @@ app.use('/api/v1/parcel-requests', parcelRequestsRouter);
 app.use('/api/v1/land-parcels', landParcelsRouter);
 app.use('/api/v1/livestock', livestockRouter);
 app.use('/api/v1/marketing', marketingRouter);
+app.use('/api/v1/marketing/analytics', marketingAnalyticsRouter);
 app.use('/api/v1/profile', profileRouter);
 app.use('/api/v1/access-control', accessControlRouter);
 app.use('/api/v1/audit-log', auditLogRouter);
 app.use('/api/v1/finance', financeRouter);
+app.use('/api/v1/crm/analytics', crmAnalyticsRouter);
 
 app.get('/api/v1/health', (_req, res) => res.json({ status: 'ok' }));
 

@@ -76,14 +76,17 @@ const menuItems = [
   {
     title: 'CRM',
     icon: Users,
-    path: '/customers',
-    subsystem: 'crm',
+    items: [
+      { title: 'Customers', path: '/customers', icon: Users, subsystem: 'crm' },
+      { title: 'Analytics', path: '/crm/analytics', icon: BarChart3, subsystem: 'crm' },
+    ],
   },
   {
     title: 'Marketing',
     icon: ShoppingCart,
     items: [
       { title: 'Marketing Dashboard',  path: '/marketing',          icon: ShoppingCart, subsystem: 'marketing'          },
+      { title: 'Analytics',            path: '/marketing/analytics', icon: BarChart3,   subsystem: 'marketing'          },
       { title: 'Sales & Order Points', path: '/sales-order-points', icon: Factory,      subsystem: 'sales_order_points' },
     ],
   },
@@ -119,7 +122,7 @@ export function AppSidebar() {
   const location = useLocation();
   const { signOut, user } = useAuth();
   const { canView, isLoading: permsLoading } = usePermissions();
-  const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management', 'Marketing', 'Production', 'Procurement']);
+  const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management', 'Marketing', 'Production', 'Procurement', 'CRM']);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const { data: alertData } = useQuery<{ count: number }>({
@@ -133,6 +136,15 @@ export function AppSidebar() {
     queryFn: () => api.get<any>('/profile'),
     enabled: !!user,
     staleTime: 5 * 60 * 1000,
+  });
+
+  const isMarketingAnalytics = location.pathname.startsWith('/marketing/analytics');
+  const { data: marketingSummary } = useQuery<any>({
+    queryKey: ['marketing-analytics-sidebar-summary'],
+    queryFn: () => api.get('/marketing/analytics/summary'),
+    enabled: isMarketingAnalytics,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   });
 
   useEffect(() => {
@@ -177,6 +189,109 @@ export function AppSidebar() {
       return itemVisible(item.subsystem!) ? item : null;
     })
     .filter(Boolean) as typeof menuItems;
+
+  if (isMarketingAnalytics) {
+    const marketingNav = [
+      { title: 'Dashboard', path: '/marketing/analytics', icon: LayoutDashboard },
+      { title: 'Campaigns', path: '/marketing', icon: ShoppingCart },
+      { title: 'Sales Report', path: '/sales-order-points', icon: Factory },
+      { title: 'Purchase Orders', path: '/procurement', icon: Truck },
+      { title: 'Audience', path: '/customers', icon: Users },
+      { title: 'Settings', path: '/settings', icon: Settings },
+    ];
+
+    return (
+      <Sidebar className="border-r-0">
+        <SidebarHeader className="border-b-0 px-5 py-5" style={{ backgroundColor: '#181410' }}>
+          <Link to="/marketing/analytics" className="flex items-center gap-3">
+            <div
+              className="flex h-12 w-12 items-center justify-center rounded-2xl"
+              style={{ background: 'linear-gradient(135deg, #E2592A 0%, #C99A1E 100%)' }}
+            >
+              <BarChart3 className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-lg font-extrabold tracking-[-0.03em] text-[#FFFCF6]" style={{ fontFamily: '"Bricolage Grotesque", sans-serif' }}>Lumen</h1>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#B8AA93]">Analytics</p>
+            </div>
+          </Link>
+        </SidebarHeader>
+        <SidebarContent className="px-4 py-4" style={{ backgroundColor: '#181410' }}>
+          <SidebarGroup className="p-0">
+            <SidebarGroupContent>
+              <SidebarMenu className="gap-2">
+                {marketingNav.map((item) => (
+                  <SidebarMenuItem key={item.path}>
+                    <Link to={item.path}>
+                      <SidebarMenuButton
+                        className="h-11 rounded-full px-4 text-sm"
+                        style={
+                          location.pathname === item.path
+                            ? { background: 'linear-gradient(135deg, #E2592A 0%, #D04F23 100%)', color: '#FFFCF6' }
+                            : { color: '#D5CAB9' }
+                        }
+                      >
+                        <item.icon className="h-4 w-4" />
+                        {item.title}
+                      </SidebarMenuButton>
+                    </Link>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarFooter className="mt-auto px-4 pb-5 pt-0" style={{ backgroundColor: '#181410' }}>
+          <div className="rounded-[20px] border border-[#2A241E] bg-[#211B15] p-4 text-[#FFFCF6]">
+            <p className="text-sm font-semibold">Monthly Target</p>
+            <p className="mt-2 text-lg font-extrabold tracking-[-0.03em]" style={{ fontFamily: '"Bricolage Grotesque", sans-serif' }}>
+              ${(marketingSummary?.currentMonthIncome ?? 0).toLocaleString('en-US')}
+            </p>
+            <p className="mt-1 text-xs text-[#B8AA93]">
+              {marketingSummary?.targetProgress?.toFixed?.(1) ?? '0.0'}% of ${(marketingSummary?.monthlyTarget ?? 840000).toLocaleString('en-US')} goal
+            </p>
+            <div className="mt-4 h-2 rounded-full bg-[#3A2F24]">
+              <div
+                className="h-2 rounded-full"
+                style={{
+                  width: `${Math.min(100, marketingSummary?.targetProgress ?? 0)}%`,
+                  background: 'linear-gradient(90deg, #E2592A 0%, #C99A1E 100%)',
+                }}
+              />
+            </div>
+          </div>
+          <div className="mt-4 flex items-center gap-3 px-1">
+            <div className="h-9 w-9 rounded-2xl bg-[#2A241E] overflow-hidden flex items-center justify-center shrink-0">
+              {profile?.profilePictureUrl ? (
+                <img src={profile.profilePictureUrl} alt="Profile" className="h-full w-full object-cover" />
+              ) : (
+                <span className="text-xs font-bold text-[#FFFCF6]">
+                  {profile?.fullName
+                    ? profile.fullName.split(' ').map((p: string) => p[0]).slice(0, 2).join('').toUpperCase()
+                    : (user?.email?.[0] ?? 'U').toUpperCase()}
+                </span>
+              )}
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-[#FFFCF6]">
+                {profile?.role?.replace(/_/g, ' ') ?? user?.email?.split('@')[0] ?? ''}
+              </p>
+              <p className="truncate text-xs text-[#B8AA93]">{profile?.employee?.jobTitle ?? 'Staff'}</p>
+            </div>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={signOut}
+            className="mt-3 w-full justify-start rounded-full text-[#D5CAB9] hover:bg-[#2A241E] hover:text-[#FFFCF6]"
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            Sign Out
+          </Button>
+        </SidebarFooter>
+      </Sidebar>
+    );
+  }
 
   return (
     <Sidebar className="border-r border-sidebar-border">

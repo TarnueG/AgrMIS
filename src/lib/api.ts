@@ -44,22 +44,40 @@ async function silentRefresh(): Promise<string> {
 
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
-async function request<T>(method: HttpMethod, path: string, body?: unknown): Promise<T> {
+type RequestOptions = {
+  body?: unknown;
+  headers?: Record<string, string>;
+  signal?: AbortSignal;
+};
+
+function buildApiUrl(path: string) {
+  return path.startsWith('/api/') ? path : `/api/v1${path}`;
+}
+
+function buildHeaders(body: unknown, extra?: Record<string, string>) {
   const isFormData = body instanceof FormData;
   const headers: Record<string, string> = {};
   if (!isFormData) headers['Content-Type'] = 'application/json';
   if (_accessToken) headers.Authorization = `Bearer ${_accessToken}`;
+  return { ...headers, ...extra };
+}
 
-  const init: RequestInit = { method, headers };
+async function request<T>(method: HttpMethod, path: string, options: RequestOptions = {}): Promise<T> {
+  const { body, headers: extraHeaders, signal } = options;
+  const headers = buildHeaders(body, extraHeaders);
+  const isFormData = body instanceof FormData;
+
+  const init: RequestInit = { method, headers, signal };
   if (body !== undefined) init.body = isFormData ? body : JSON.stringify(body);
 
-  let res = await fetch(`/api/v1${path}`, init);
+  const url = buildApiUrl(path);
+  let res = await fetch(url, init);
 
   if (res.status === 401) {
     try {
       const newToken = await silentRefresh();
       headers.Authorization = `Bearer ${newToken}`;
-      res = await fetch(`/api/v1${path}`, { ...init, headers });
+      res = await fetch(url, { ...init, headers });
     } catch {
       throw new Error('Unauthorized');
     }
@@ -75,11 +93,17 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown): Pro
 }
 
 const api = {
-  get:    <T>(path: string)                  => request<T>('GET',    path),
-  post:   <T>(path: string, body?: unknown)  => request<T>('POST',   path, body),
-  patch:  <T>(path: string, body?: unknown)  => request<T>('PATCH',  path, body),
-  put:    <T>(path: string, body?: unknown)  => request<T>('PUT',    path, body),
-  delete: <T>(path: string)                  => request<T>('DELETE', path),
+  get:    <T>(path: string, options?: Omit<RequestOptions, 'body'>) =>
+    request<T>('GET', path, options),
+  post:   <T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'body'>) =>
+    request<T>('POST', path, { ...options, body }),
+  patch:  <T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'body'>) =>
+    request<T>('PATCH', path, { ...options, body }),
+  put:    <T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'body'>) =>
+    request<T>('PUT', path, { ...options, body }),
+  delete: <T>(path: string, options?: Omit<RequestOptions, 'body'>) =>
+    request<T>('DELETE', path, options),
 };
 
 export default api;
+export { buildApiUrl, buildHeaders };
