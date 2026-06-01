@@ -55,15 +55,18 @@ const menuItems = [
     title: 'Asset Management',
     icon: Tractor,
     items: [
-      { title: 'Land Parcels', path: '/assets/land',      icon: Wheat,   subsystem: 'land_parcels' },
-      { title: 'Machinery',    path: '/assets/machinery', icon: Tractor, subsystem: 'machinery'    },
+      { title: 'Land Parcels',    path: '/assets/land',      icon: Wheat,    subsystem: 'land_parcels' },
+      { title: 'Machinery',       path: '/assets/machinery', icon: Tractor,  subsystem: 'machinery'    },
+      { title: 'Asset Analytics', path: '/assets/analytics', icon: BarChart3, subsystem: 'machinery'   },
     ],
   },
   {
     title: 'Inventory',
     icon: Package,
-    path: '/inventory',
-    subsystem: 'inventory',
+    items: [
+      { title: 'Inventory Dashboard', path: '/inventory',           icon: Package,   subsystem: 'inventory' },
+      { title: 'Inventory Analytics', path: '/inventory/analytics', icon: BarChart3, subsystem: 'inventory' },
+    ],
   },
   {
     title: 'Procurement',
@@ -77,25 +80,37 @@ const menuItems = [
     title: 'CRM',
     icon: Users,
     items: [
+<<<<<<< HEAD
       { title: 'Customers', path: '/customers', icon: Users, subsystem: 'crm' },
       { title: 'Analytics', path: '/crm/analytics', icon: BarChart3, subsystem: 'crm' },
+=======
+      { title: 'Customers',     path: '/customers',     icon: Users,    subsystem: 'crm' },
+      { title: 'CRM Analytics', path: '/crm/analytics', icon: BarChart3, subsystem: 'crm' },
+>>>>>>> 4a5051b8d808d34a3c2324862f447ea96d007414
     ],
   },
   {
     title: 'Marketing',
     icon: ShoppingCart,
     items: [
+<<<<<<< HEAD
       { title: 'Marketing Dashboard',  path: '/marketing',          icon: ShoppingCart, subsystem: 'marketing'          },
       { title: 'Analytics',            path: '/marketing/analytics', icon: BarChart3,   subsystem: 'marketing'          },
       { title: 'Sales & Order Points', path: '/sales-order-points', icon: Factory,      subsystem: 'sales_order_points' },
+=======
+      { title: 'Marketing Dashboard',  path: '/marketing',           icon: ShoppingCart, subsystem: 'marketing'          },
+      { title: 'Marketing Analytics',  path: '/marketing/analytics', icon: BarChart3,    subsystem: 'marketing'          },
+      { title: 'Sales & Order Points', path: '/sales-order-points',  icon: Factory,      subsystem: 'sales_order_points' },
+>>>>>>> 4a5051b8d808d34a3c2324862f447ea96d007414
     ],
   },
   {
     title: 'Production',
     icon: Factory,
     items: [
-      { title: 'Production',          path: '/production',       icon: Factory, subsystem: 'production' },
-      { title: 'Livestock Dashboard', path: '/assets/livestock', icon: Leaf,    subsystem: 'livestock'  },
+      { title: 'Production',           path: '/production',           icon: Factory,   subsystem: 'production' },
+      { title: 'Production Analytics', path: '/production/analytics', icon: BarChart3, subsystem: 'production' },
+      { title: 'Livestock Dashboard',  path: '/assets/livestock',     icon: Leaf,      subsystem: 'livestock'  },
     ],
   },
   {
@@ -122,7 +137,11 @@ export function AppSidebar() {
   const location = useLocation();
   const { signOut, user } = useAuth();
   const { canView, isLoading: permsLoading } = usePermissions();
+<<<<<<< HEAD
   const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management', 'Marketing', 'Production', 'Procurement', 'CRM']);
+=======
+  const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management', 'Marketing', 'Production', 'Procurement', 'CRM', 'Inventory']);
+>>>>>>> 4a5051b8d808d34a3c2324862f447ea96d007414
   const contentRef = useRef<HTMLDivElement>(null);
 
   const { data: alertData } = useQuery<{ count: number }>({
