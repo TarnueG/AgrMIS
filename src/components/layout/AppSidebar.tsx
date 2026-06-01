@@ -68,8 +68,10 @@ const menuItems = [
   {
     title: 'Procurement',
     icon: Truck,
-    path: '/procurement',
-    subsystem: 'procurement',
+    items: [
+      { title: 'Overview',  path: '/procurement',           icon: Truck,    subsystem: 'procurement' },
+      { title: 'Analytics', path: '/procurement/analytics', icon: BarChart3, subsystem: 'procurement' },
+    ],
   },
   {
     title: 'CRM',
@@ -117,7 +119,7 @@ export function AppSidebar() {
   const location = useLocation();
   const { signOut, user } = useAuth();
   const { canView, isLoading: permsLoading } = usePermissions();
-  const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management', 'Marketing', 'Production']);
+  const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management', 'Marketing', 'Production', 'Procurement']);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const { data: alertData } = useQuery<{ count: number }>({

@@ -82,7 +82,7 @@ router.patch('/:id/add-to-inventory', async (req, res) => {
         asset_type: request.asset_type,
         model: request.model,
         serial_number: parsed.data.license,
-        status: 'active',
+        status: 'operational',
         notes: request.notes,
       },
     });
@@ -91,7 +91,8 @@ router.patch('/:id/add-to-inventory', async (req, res) => {
       data: { license: parsed.data.license, added_to_inventory: true, updated_at: new Date() },
     });
     res.json(asset);
-  } catch {
+  } catch (err: any) {
+    if (err.code === 'P2002') return res.status(400).json({ error: 'License/serial number already exists', code: 'DUPLICATE' });
     res.status(500).json({ error: 'Failed to add to inventory', code: 'DB_ERROR' });
   }
 });

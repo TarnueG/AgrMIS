@@ -10,17 +10,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Search, Trash2, Heart, AlertTriangle, Leaf, Package } from 'lucide-react';
+import { Plus, Search, Trash2, Heart, AlertTriangle, Leaf, Package, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useConfirm } from '@/contexts/ConfirmContext';
 
-type LivestockView = 'pigs' | 'cattle' | 'birds' | 'fish' | 'mortality' | 'health';
+type LivestockView = 'pigs' | 'cattle' | 'birds' | 'fish' | 'mortality' | 'health' | 'ill' | 'recovering' | 'requested';
 
 const isWithin24h = (createdAt: string) => Date.now() - new Date(createdAt).getTime() < 24 * 60 * 60 * 1000;
 
 function statusBadge(status: string) {
   const map: Record<string, string> = {
     healthy: 'bg-success/20 text-success',
+    recovering: 'bg-blue-500/20 text-blue-500',
+    ill: 'bg-warning/20 text-warning',
     sick: 'bg-warning/20 text-warning',
     dead: 'bg-destructive/20 text-destructive',
     available: 'bg-success/20 text-success',
@@ -29,19 +32,31 @@ function statusBadge(status: string) {
   return map[status] || 'bg-muted text-muted-foreground';
 }
 
-const BLANK_PIG = { pig_id: '', breed: '', gender: 'unknown', status: 'healthy', pen_number: '', date_recorded: '' };
-const BLANK_CATTLE = { cattle_id: '', cattle_type: 'cow', status: 'healthy', location: '' };
-const BLANK_BIRD = { bird_type: 'chicken', batch_number: '', number_of_birds: 0, number_of_female: 0, number_of_male: 0 };
+const BLANK_PIG = { pig_id: '', breed: '', gender: 'female', status: 'healthy', weight_kg: '' as string | number, pen_number: '', location: '', date_recorded: '' };
+const BLANK_CATTLE = { cattle_id: '', cattle_type: 'cow', gender: 'female', status: 'healthy', weight_kg: '' as string | number, location: '', date_recorded: '' };
+
+const genId = (prefix: string) => `${prefix}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 4).toUpperCase()}`;
+const BLANK_BIRD = { bird_type: 'chicken', gender: 'female', weight_kg: '' as string | number, location: '', status: 'healthy' };
 const BLANK_POND = { pond_id: '', length_m: '', width_m: '', location: '', capacity: 2000, status: 'available' };
 const BLANK_FISH = { fish_type: '', batch_number: '', number_of_fish: 0 };
 const BLANK_MORTALITY = { livestock_type: 'pig', breed_or_type: '', record_id: '', pen_or_location: '', cause_of_death: '' };
+const BLANK_TREATMENT = { species: 'pig', id: '', description: '', treatment_date: '', location: '', weight_kg: '' as string | number, expected_recovery_date: '' };
+
+const STATUS_OPTIONS = [
+  { value: 'healthy', label: 'Healthy' },
+  { value: 'recovering', label: 'Recovering' },
+  { value: 'ill', label: 'Ill' },
+  { value: 'dead', label: 'Dead' },
+];
 
 export default function Livestock() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
-  const [selectedView, setSelectedView] = useState<LivestockView>('pigs');
+  const { openConfirm } = useConfirm();
+  const [selectedView, setSelectedView] = useState<LivestockView | null>(null);
   const [search, setSearch] = useState('');
+  const [dateFilter, setDateFilter] = useState<'all' | '7' | '30' | '90' | '365'>('all');
 
   const [isPigOpen, setIsPigOpen] = useState(false);
   const [isCattleOpen, setIsCattleOpen] = useState(false);
@@ -49,6 +64,10 @@ export default function Livestock() {
   const [isPondOpen, setIsPondOpen] = useState(false);
   const [isFishOpen, setIsFishOpen] = useState(false);
   const [isMortalityOpen, setIsMortalityOpen] = useState(false);
+  const [isTreatmentOpen, setIsTreatmentOpen] = useState(false);
+  const [treatmentForm, setTreatmentForm] = useState({ ...BLANK_TREATMENT });
+  const [fulfilReq, setFulfilReq] = useState<any | null>(null);
+  const [fulfilSelected, setFulfilSelected] = useState<Set<string>>(new Set());
   const [editItem, setEditItem] = useState<any | null>(null);
 
   const [birdFilter, setBirdFilter] = useState('');
@@ -68,15 +87,20 @@ export default function Livestock() {
   const { data: ponds = [] } = useQuery<any[]>({ queryKey: ['fish-ponds'], queryFn: () => api.get('/livestock/fish-ponds') });
   const { data: fish = [] } = useQuery<any[]>({ queryKey: ['fish-stock', selectedPondId], queryFn: () => selectedPondId ? api.get(`/livestock/fish-ponds/${selectedPondId}/fish`) : Promise.resolve([]), enabled: !!selectedPondId });
   const { data: mortality = [] } = useQuery<any[]>({ queryKey: ['mortality', mortalityFilter], queryFn: () => api.get(`/livestock/mortality${mortalityFilter ? '?type=' + mortalityFilter : ''}`) });
+  const { data: illStock = [] } = useQuery<any[]>({ queryKey: ['ls-by-status', 'ill'], queryFn: () => api.get('/livestock/by-status/ill') });
+  const { data: recoveringStock = [] } = useQuery<any[]>({ queryKey: ['ls-by-status', 'recovering'], queryFn: () => api.get('/livestock/by-status/recovering') });
+  const { data: healthyStock = [] } = useQuery<any[]>({ queryKey: ['ls-by-status', 'healthy'], queryFn: () => api.get('/livestock/by-status/healthy') });
+  const { data: lsRequests = [] } = useQuery<any[]>({ queryKey: ['ls-requests'], queryFn: () => api.get('/livestock/requests'), refetchInterval: 30_000 });
 
+  const numW = (v: any) => (v !== '' && v != null ? Number(v) : undefined);
   const pigAdd = useMutation({
-    mutationFn: (d: typeof pigForm) => api.post('/livestock/pigs', d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['pigs'] }); toast({ title: 'Pig added' }); setIsPigOpen(false); setPigForm({ ...BLANK_PIG }); },
+    mutationFn: (d: typeof pigForm) => api.post('/livestock/pigs', { ...d, weight_kg: numW(d.weight_kg) }),
+    onSuccess: () => { invalidateLivestock(); toast({ title: 'Pig added' }); setIsPigOpen(false); setPigForm({ ...BLANK_PIG }); },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
   const pigEdit = useMutation({
-    mutationFn: ({ id, ...d }: any) => api.patch(`/livestock/pigs/${id}`, d),
-    onSuccess: (data: any) => { qc.invalidateQueries({ queryKey: ['pigs'] }); qc.invalidateQueries({ queryKey: ['mortality'] }); toast({ title: data?.migrated ? 'Pig moved to mortality' : 'Pig updated' }); setEditItem(null); setIsPigOpen(false); },
+    mutationFn: ({ id, ...d }: any) => api.patch(`/livestock/pigs/${id}`, { ...d, weight_kg: numW(d.weight_kg) }),
+    onSuccess: (data: any) => { invalidateLivestock(); toast({ title: data?.migrated ? 'Pig moved to mortality' : 'Pig updated' }); setEditItem(null); setIsPigOpen(false); },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
   const pigDelete = useMutation({
@@ -86,13 +110,13 @@ export default function Livestock() {
   });
 
   const cattleAdd = useMutation({
-    mutationFn: (d: typeof cattleForm) => api.post('/livestock/cattle', d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['cattle'] }); toast({ title: 'Cattle added' }); setIsCattleOpen(false); setCattleForm({ ...BLANK_CATTLE }); },
+    mutationFn: (d: typeof cattleForm) => api.post('/livestock/cattle', { ...d, weight_kg: numW(d.weight_kg) }),
+    onSuccess: () => { invalidateLivestock(); toast({ title: 'Grazing livestock added' }); setIsCattleOpen(false); setCattleForm({ ...BLANK_CATTLE }); },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
   const cattleEdit = useMutation({
-    mutationFn: ({ id, ...d }: any) => api.patch(`/livestock/cattle/${id}`, d),
-    onSuccess: (data: any) => { qc.invalidateQueries({ queryKey: ['cattle'] }); qc.invalidateQueries({ queryKey: ['mortality'] }); toast({ title: data?.migrated ? 'Cattle moved to mortality' : 'Cattle updated' }); setEditItem(null); setIsCattleOpen(false); },
+    mutationFn: ({ id, ...d }: any) => api.patch(`/livestock/cattle/${id}`, { ...d, weight_kg: numW(d.weight_kg) }),
+    onSuccess: (data: any) => { invalidateLivestock(); toast({ title: data?.migrated ? 'Moved to mortality' : 'Updated' }); setEditItem(null); setIsCattleOpen(false); },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
   const cattleDelete = useMutation({
@@ -102,13 +126,13 @@ export default function Livestock() {
   });
 
   const birdAdd = useMutation({
-    mutationFn: (d: typeof birdForm) => api.post('/livestock/birds', d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['birds'] }); toast({ title: 'Birds batch added' }); setIsBirdOpen(false); setBirdForm({ ...BLANK_BIRD }); },
+    mutationFn: (d: typeof birdForm) => api.post('/livestock/birds', { ...d, weight_kg: numW(d.weight_kg) }),
+    onSuccess: () => { invalidateLivestock(); toast({ title: 'Bird added' }); setIsBirdOpen(false); setBirdForm({ ...BLANK_BIRD }); },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
   const birdEdit = useMutation({
-    mutationFn: ({ id, ...d }: any) => api.patch(`/livestock/birds/${id}`, d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['birds'] }); toast({ title: 'Birds updated' }); setEditItem(null); setIsBirdOpen(false); },
+    mutationFn: ({ id, ...d }: any) => api.patch(`/livestock/birds/${id}`, { ...d, weight_kg: numW(d.weight_kg) }),
+    onSuccess: (data: any) => { invalidateLivestock(); toast({ title: data?.migrated ? 'Moved to mortality' : 'Bird updated' }); setEditItem(null); setIsBirdOpen(false); },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
@@ -150,49 +174,194 @@ export default function Livestock() {
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
-  const filteredPigs = pigs.filter(p => p.pig_id?.toLowerCase().includes(search.toLowerCase()) || p.breed?.toLowerCase().includes(search.toLowerCase()));
-  const filteredCattle = cattle.filter(c => c.cattle_id?.toLowerCase().includes(search.toLowerCase()) || c.cattle_type?.toLowerCase().includes(search.toLowerCase()));
-  const filteredBirds = birds.filter(b => b.batch_number?.toLowerCase().includes(search.toLowerCase()));
+  const SPECIES_PATH: Record<string, string> = { pig: 'pigs', grazing: 'cattle', bird: 'birds' };
+  function invalidateLivestock() {
+    ['pigs', 'cattle', 'birds', 'mortality', 'ls-by-status'].forEach(k => qc.invalidateQueries({ queryKey: [k] }));
+  }
+
+  // Action edit (status + weight) for the aggregated Health/Ill/Recovering rows
+  const editAggregate = useMutation({
+    mutationFn: ({ species, id, ...d }: any) => api.patch(`/livestock/${SPECIES_PATH[species]}/${id}`, d),
+    onSuccess: () => { invalidateLivestock(); toast({ title: 'Updated' }); },
+    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const treatmentAdd = useMutation({
+    mutationFn: (d: typeof treatmentForm) => api.post('/livestock/treatment', {
+      species: d.species,
+      id: d.id,
+      description: d.description || undefined,
+      treatment_date: d.treatment_date || undefined,
+      location: d.location || undefined,
+      weight_kg: d.weight_kg !== '' ? Number(d.weight_kg) : undefined,
+      expected_recovery_date: d.expected_recovery_date || undefined,
+    }),
+    onSuccess: () => { invalidateLivestock(); toast({ title: 'Treatment recorded — status set to Recovering' }); setIsTreatmentOpen(false); setTreatmentForm({ ...BLANK_TREATMENT }); },
+    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const acceptRequest = useMutation({
+    mutationFn: (id: string) => api.patch(`/livestock/requests/${id}/accept`, {}),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['ls-requests'] }); toast({ title: 'Request accepted — fulfil it next' }); },
+    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+  const declineRequest = useMutation({
+    mutationFn: (id: string) => api.patch(`/livestock/requests/${id}/decline`, {}),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['ls-requests'] }); toast({ title: 'Request declined' }); },
+    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+  const fulfilRequest = useMutation({
+    mutationFn: ({ id, animalIds }: { id: string; animalIds: string[] }) => api.post(`/livestock/requests/${id}/fulfil`, { animalIds }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['ls-requests'] }); toast({ title: 'Request fulfilled' }); setFulfilReq(null); setFulfilSelected(new Set()); },
+    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const DAYS_MAP: Record<string, number> = { '7': 7, '30': 30, '90': 90, '365': 365 };
+  const withinDays = (dateStr?: string) => {
+    if (dateFilter === 'all') return true;
+    if (!dateStr) return false;
+    return Date.now() - new Date(dateStr).getTime() <= DAYS_MAP[dateFilter] * 24 * 60 * 60 * 1000;
+  };
+
+  // Species cards show only that species' healthy stock; ill/recovering/dead live on their own cards.
+  const filteredPigs = pigs.filter(p => p.status === 'healthy' && withinDays(p.date_recorded ?? p.created_at) && (p.pig_id?.toLowerCase().includes(search.toLowerCase()) || p.breed?.toLowerCase().includes(search.toLowerCase())));
+  const filteredCattle = cattle.filter(c => c.status === 'healthy' && withinDays(c.date_recorded ?? c.created_at) && (c.cattle_id?.toLowerCase().includes(search.toLowerCase()) || c.cattle_type?.toLowerCase().includes(search.toLowerCase())));
+  const filteredBirds = birds.filter(b => b.status === 'healthy' && withinDays(b.date_recorded ?? b.created_at) && (b.bird_id?.toLowerCase().includes(search.toLowerCase()) || b.bird_type?.toLowerCase().includes(search.toLowerCase())));
   const filteredFish = fish.filter(f => f.fish_type?.toLowerCase().includes(search.toLowerCase()) || f.batch_number?.toLowerCase().includes(search.toLowerCase()));
-  const filteredMortality = mortality.filter(m => m.record_id?.toLowerCase().includes(search.toLowerCase()) || m.breed_or_type?.toLowerCase().includes(search.toLowerCase()));
+  const filteredMortality = mortality.filter(m => withinDays(m.date_recorded ?? m.created_at) && (m.record_id?.toLowerCase().includes(search.toLowerCase()) || m.breed_or_type?.toLowerCase().includes(search.toLowerCase())));
+
+  const healthyPigs = pigs.filter(p => p.status === 'healthy');
+  const healthyCattle = cattle.filter(c => c.status === 'healthy');
+  const healthyBirds = birds.filter(b => b.status === 'healthy');
 
   const CARDS: Array<{ key: LivestockView; label: string; count: number; color: string; icon: any }> = [
-    { key: 'pigs', label: 'Pigs', count: pigs.length, color: 'bg-pink-500/10 border-pink-500/20', icon: Package },
-    { key: 'fish', label: 'Fish Ponds', count: ponds.length, color: 'bg-blue-500/10 border-blue-500/20', icon: Package },
-    { key: 'health', label: 'Health', count: 0, color: 'bg-success/10 border-success/20', icon: Heart },
+    { key: 'health', label: 'Health', count: healthyStock.length, color: 'bg-success/10 border-success/20', icon: Heart },
+    { key: 'ill', label: 'Ill', count: illStock.length, color: 'bg-warning/10 border-warning/20', icon: AlertTriangle },
+    { key: 'recovering', label: 'Recovering', count: recoveringStock.length, color: 'bg-blue-500/10 border-blue-500/20', icon: Heart },
+    { key: 'requested', label: 'Livestock Requested', count: lsRequests.filter((r: any) => r.status === 'pending' || r.status === 'accepted').length, color: 'bg-indigo-500/10 border-indigo-500/20', icon: Package },
     { key: 'mortality', label: 'Mortality', count: mortality.length, color: 'bg-destructive/10 border-destructive/20', icon: AlertTriangle },
-    { key: 'birds', label: 'Birds', count: birds.length, color: 'bg-yellow-500/10 border-yellow-500/20', icon: Leaf },
-    { key: 'cattle', label: 'Cattle', count: cattle.length, color: 'bg-amber-500/10 border-amber-500/20', icon: Package },
+    { key: 'pigs', label: 'Pigs', count: healthyPigs.length, color: 'bg-pink-500/10 border-pink-500/20', icon: Package },
+    { key: 'cattle', label: 'Grazing Livestock', count: healthyCattle.length, color: 'bg-amber-500/10 border-amber-500/20', icon: Package },
+    { key: 'birds', label: 'Birds', count: healthyBirds.length, color: 'bg-yellow-500/10 border-yellow-500/20', icon: Leaf },
+    { key: 'fish', label: 'Fish Ponds', count: ponds.length, color: 'bg-blue-500/10 border-blue-500/20', icon: Package },
   ];
 
-  function openEditPig(pig: any) { setPigForm({ pig_id: pig.pig_id, breed: pig.breed ?? '', gender: pig.gender, status: pig.status, pen_number: pig.pen_number ?? '', date_recorded: '' }); setEditItem(pig); setIsPigOpen(true); }
-  function openEditCattle(c: any) { setCattleForm({ cattle_id: c.cattle_id, cattle_type: c.cattle_type, status: c.status, location: c.location ?? '' }); setEditItem(c); setIsCattleOpen(true); }
-  function openEditBird(b: any) { setBirdForm({ bird_type: b.bird_type, batch_number: b.batch_number, number_of_birds: b.number_of_birds, number_of_female: b.number_of_female, number_of_male: b.number_of_male }); setEditItem(b); setIsBirdOpen(true); }
+  function openEditPig(pig: any) { setPigForm({ pig_id: pig.pig_id, breed: pig.breed ?? '', gender: pig.gender, status: pig.status, weight_kg: pig.weight_kg ?? '', pen_number: pig.pen_number ?? '', location: pig.location ?? '', date_recorded: '' }); setEditItem(pig); setIsPigOpen(true); }
+  function openEditCattle(c: any) { setCattleForm({ cattle_id: c.cattle_id, cattle_type: c.cattle_type, gender: c.gender ?? 'female', status: c.status, weight_kg: c.weight_kg ?? '', location: c.location ?? '', date_recorded: '' }); setEditItem(c); setIsCattleOpen(true); }
+  function openEditBird(b: any) { setBirdForm({ bird_type: b.bird_type, gender: b.gender ?? 'female', weight_kg: b.weight_kg ?? '', location: b.location ?? '', status: b.status ?? 'healthy' }); setEditItem(b); setIsBirdOpen(true); }
+  function openTreatment(species: string, id: string, location: string, weight: any) { setTreatmentForm({ ...BLANK_TREATMENT, species, id, location: location ?? '', weight_kg: weight ?? '' }); setIsTreatmentOpen(true); }
+  // Empty source card → notify, auto-decline, move to Declined.
+  function startFulfil(r: any) {
+    const pool = healthyStock.filter((h: any) => h.species === r.species);
+    if (!pool.length) {
+      toast({ title: 'Livestock does not exist', description: 'No healthy stock available — request declined.', variant: 'destructive' });
+      declineRequest.mutate(r.id);
+      return;
+    }
+    setFulfilReq(r);
+    setFulfilSelected(new Set());
+  }
   function openEditFish(f: any) { setFishForm({ fish_type: f.fish_type, batch_number: f.batch_number, number_of_fish: f.number_of_fish }); setEditItem(f); setIsFishOpen(true); }
   function openEditMortality(m: any) { setMortalityForm({ livestock_type: m.livestock_type, breed_or_type: m.breed_or_type ?? '', record_id: m.record_id ?? '', pen_or_location: m.pen_or_location ?? '', cause_of_death: m.cause_of_death ?? '' }); setEditItem(m); setIsMortalityOpen(true); }
+
+  // Shared table for the aggregated Health / Ill / Recovering cards
+  function renderAgg(list: any[], recovering: boolean) {
+    return (
+      <Card>
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>ID</TableHead><TableHead>Type</TableHead><TableHead>Status</TableHead><TableHead>Location</TableHead>
+            {recovering
+              ? (<><TableHead>Date of Treatment</TableHead><TableHead>Expected Recovery</TableHead></>)
+              : (<TableHead>Last Treatment</TableHead>)}
+            <TableHead>Weight (kg)</TableHead>
+            <TableHead className="text-right">Action</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {list.map((r: any) => (
+              <TableRow key={r.id}>
+                <TableCell className="font-mono text-xs">{r.record_id || '-'}</TableCell>
+                <TableCell className="capitalize">{r.sub_type || r.species}</TableCell>
+                <TableCell><Badge className={statusBadge(r.status)}>{r.status}</Badge></TableCell>
+                <TableCell>{r.location || '-'}</TableCell>
+                {recovering ? (
+                  <>
+                    <TableCell>{r.treatment_date ? format(new Date(r.treatment_date), 'MMM d, yyyy') : '-'}</TableCell>
+                    <TableCell>{r.expected_recovery_date ? format(new Date(r.expected_recovery_date), 'MMM d, yyyy') : '-'}</TableCell>
+                  </>
+                ) : (
+                  <TableCell>{r.expected_recovery_date ? format(new Date(r.expected_recovery_date), 'MMM d, yyyy') : '-'}</TableCell>
+                )}
+                <TableCell>
+                  {canEdit('livestock') ? (
+                    <input type="number" step="0.01" min="0" defaultValue={r.weight_kg ?? ''}
+                      className="h-8 w-20 rounded border border-input bg-background px-2 text-sm text-foreground"
+                      onBlur={(e) => { const v = e.target.value; if (v !== '' && Number(v) !== Number(r.weight_kg)) editAggregate.mutate({ species: r.species, id: r.id, weight_kg: Number(v) }); }} />
+                  ) : (r.weight_kg != null ? Number(r.weight_kg).toFixed(2) : '-')}
+                </TableCell>
+                <TableCell className="text-right">
+                  {canEdit('livestock') && (
+                    <select value={r.status}
+                      onChange={(e) => { const ns = e.target.value; if (ns === 'dead') { openConfirm({ title: 'Mark as Dead', message: 'Move to mortality records?', type: 'danger', confirmText: 'Mark Dead', onConfirm: () => editAggregate.mutate({ species: r.species, id: r.id, status: 'dead' }) }); } else editAggregate.mutate({ species: r.species, id: r.id, status: ns }); }}
+                      className="h-8 rounded border border-input bg-background px-2 text-sm text-foreground">
+                      {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+            {!list.length && <TableRow><TableCell colSpan={recovering ? 8 : 7} className="text-center py-8 text-muted-foreground">No records</TableCell></TableRow>}
+          </TableBody>
+        </Table>
+      </Card>
+    );
+  }
 
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold">Livestock</h1>
-            <p className="text-muted-foreground">Manage farm animals, fish ponds, and mortality records</p>
-          </div>
-          <div className="flex gap-2">
+        <div className="flex justify-between items-center flex-wrap gap-3">
+          {selectedView ? (
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="icon" onClick={() => { setSelectedView(null); setDateFilter('all'); setSearch(''); }} aria-label="Back to livestock" className="text-muted-foreground hover:text-foreground">
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+              <h1 className="text-2xl font-bold">{CARDS.find(c => c.key === selectedView)?.label ?? 'Detail'}</h1>
+            </div>
+          ) : (
+            <div>
+              <h1 className="text-3xl font-bold">Livestock</h1>
+              <p className="text-muted-foreground">Manage farm animals, fish ponds, and mortality records</p>
+            </div>
+          )}
+          <div className="flex gap-2 items-center">
+            {selectedView && (
+              <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value as typeof dateFilter)} className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                <option value="all">All time</option>
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="365">Last 365 days</option>
+              </select>
+            )}
             {selectedView === 'pigs' && canCreate('livestock') && (
-              <Button className="gradient-primary text-black font-medium" onClick={() => { setEditItem(null); setPigForm({ ...BLANK_PIG }); setIsPigOpen(true); }}>
-                <Plus className="h-4 w-4 mr-2" />Add Pigs
+              <Button className="gradient-primary text-black font-medium" onClick={() => { setEditItem(null); setPigForm({ ...BLANK_PIG, pig_id: genId('PIG') }); setIsPigOpen(true); }}>
+                <Plus className="h-4 w-4 mr-2" />Add Pig
               </Button>
             )}
             {selectedView === 'cattle' && canCreate('livestock') && (
-              <Button className="gradient-primary text-black font-medium" onClick={() => { setEditItem(null); setCattleForm({ ...BLANK_CATTLE }); setIsCattleOpen(true); }}>
-                <Plus className="h-4 w-4 mr-2" />Add Cattle
+              <Button className="gradient-primary text-black font-medium" onClick={() => { setEditItem(null); setCattleForm({ ...BLANK_CATTLE, cattle_id: genId('GRZ') }); setIsCattleOpen(true); }}>
+                <Plus className="h-4 w-4 mr-2" />Add Grazing Livestock
               </Button>
             )}
             {selectedView === 'birds' && canCreate('livestock') && (
               <Button className="gradient-primary text-black font-medium" onClick={() => { setEditItem(null); setBirdForm({ ...BLANK_BIRD }); setIsBirdOpen(true); }}>
-                <Plus className="h-4 w-4 mr-2" />Add Birds
+                <Plus className="h-4 w-4 mr-2" />Add Bird
+              </Button>
+            )}
+            {(selectedView === 'health' || selectedView === 'ill' || selectedView === 'recovering') && canEdit('livestock') && (
+              <Button className="gradient-primary text-black font-medium" onClick={() => { setTreatmentForm({ ...BLANK_TREATMENT }); setIsTreatmentOpen(true); }}>
+                <Plus className="h-4 w-4 mr-2" />Treatment
               </Button>
             )}
             {selectedView === 'fish' && (
@@ -217,23 +386,26 @@ export default function Livestock() {
           </div>
         </div>
 
-        {/* Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          {CARDS.filter(({ key }) => canViewCard(`livestock.${key}`)).map(({ key, label, count, color, icon: Icon }) => (
-            <Card key={key} onClick={() => setSelectedView(key)}
-              className={`cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${color} ${selectedView === key ? 'ring-2 ring-primary shadow-lg scale-105' : ''}`}>
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-white/10"><Icon className="h-5 w-5" /></div>
-                <div>
-                  <p className="text-xs text-muted-foreground">{label}</p>
-                  <p className="text-xl font-bold">{count}</p>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        {/* Cards — dashboard only */}
+        {!selectedView && (
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {CARDS.filter(({ key }) => canViewCard(`livestock.${key}`)).map(({ key, label, count, color, icon: Icon }) => (
+              <Card key={key} onClick={() => setSelectedView(key)}
+                className={`cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${color}`}>
+                <CardContent className="p-4 flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-white/10"><Icon className="h-5 w-5" /></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">{label}</p>
+                    <p className="text-xl font-bold">{count}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
 
-        {/* Filters */}
+        {/* Filters — only within a detail view */}
+        {selectedView && (
         <div className="flex items-center gap-3 flex-wrap">
           <div className="relative max-w-sm flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -262,6 +434,7 @@ export default function Livestock() {
             </select>
           )}
         </div>
+        )}
 
         {/* PIGS TABLE */}
         {selectedView === 'pigs' && (
@@ -269,8 +442,8 @@ export default function Livestock() {
             <Table>
               <TableHeader><TableRow>
                 <TableHead>Pig ID</TableHead><TableHead>Breed</TableHead><TableHead>Gender</TableHead>
-                <TableHead>Status</TableHead><TableHead>Pen Number</TableHead><TableHead>Date</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>Weight (kg)</TableHead><TableHead>Status</TableHead><TableHead>Pen Number</TableHead><TableHead>Date</TableHead>
+                <TableHead>Mature for Market</TableHead><TableHead className="text-right">Actions</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {filteredPigs.map((p) => (
@@ -278,22 +451,32 @@ export default function Livestock() {
                     <TableCell className="font-medium">{p.pig_id}</TableCell>
                     <TableCell>{p.breed || '-'}</TableCell>
                     <TableCell className="capitalize">{p.gender}</TableCell>
+                    <TableCell>{p.weight_kg != null ? Number(p.weight_kg).toFixed(2) : '-'}</TableCell>
                     <TableCell>
-                      <select value={p.status} disabled={!isWithin24h(p.created_at)}
-                        onChange={(e) => { const ns = e.target.value; if (ns === 'dead') { if (confirm('Mark as dead? This pig will move to mortality records.')) pigEdit.mutate({ id: p.id, status: 'dead' }); } else pigEdit.mutate({ id: p.id, status: ns }); }}
+                      <select value={p.status}
+                        onChange={(e) => { const ns = e.target.value; if (ns === 'dead') { openConfirm({ title: 'Mark as Dead', message: 'Mark as dead? This pig will move to mortality records.', type: 'danger', confirmText: 'Mark Dead', onConfirm: () => pigEdit.mutate({ id: p.id, status: 'dead' }) }); } else pigEdit.mutate({ id: p.id, status: ns }); }}
                         className="h-8 rounded border border-input bg-background px-2 text-sm text-foreground">
-                        <option value="healthy">Healthy</option><option value="sick">Sick</option><option value="dead">Dead</option>
+                        {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                       </select>
                     </TableCell>
                     <TableCell>{p.pen_number || '-'}</TableCell>
                     <TableCell>{p.date_recorded ? format(new Date(p.date_recorded), 'MMM d, yyyy') : '-'}</TableCell>
+                    <TableCell>
+                      {canEdit('livestock') ? (
+                        <select value={p.mature_for_market ? 'yes' : 'no'}
+                          onChange={(e) => pigEdit.mutate({ id: p.id, mature_for_market: e.target.value === 'yes' })}
+                          className="h-8 rounded border border-input bg-background px-2 text-sm text-foreground">
+                          <option value="no">No</option><option value="yes">Yes</option>
+                        </select>
+                      ) : (p.mature_for_market ? 'Yes' : 'No')}
+                    </TableCell>
                     <TableCell className="text-right flex gap-1 justify-end">
-                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(p.created_at)} onClick={() => openEditPig(p)}>Edit</Button>}
-                      {canDelete('livestock') && <Button variant="ghost" size="icon" disabled={!isWithin24h(p.created_at)} onClick={() => { if (confirm('Delete this pig record?')) pigDelete.mutate(p.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
+                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => openEditPig(p)}>Edit</Button>}
+                      {canDelete('livestock') && <Button variant="ghost" size="icon" disabled={!isWithin24h(p.created_at)} onClick={() => openConfirm({ title: 'Delete Pig Record', message: 'Delete this pig record?', type: 'danger', confirmText: 'Delete', onConfirm: () => pigDelete.mutate(p.id) })}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                     </TableCell>
                   </TableRow>
                 ))}
-                {!filteredPigs.length && <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No pig records found</TableCell></TableRow>}
+                {!filteredPigs.length && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No healthy pig records</TableCell></TableRow>}
               </TableBody>
             </Table>
           </Card>
@@ -304,30 +487,40 @@ export default function Livestock() {
           <Card>
             <Table>
               <TableHeader><TableRow>
-                <TableHead>Type</TableHead><TableHead>Cattle ID</TableHead><TableHead>Status</TableHead>
-                <TableHead>Location</TableHead><TableHead>Date</TableHead><TableHead className="text-right">Actions</TableHead>
+                <TableHead>Type</TableHead><TableHead>ID</TableHead><TableHead>Weight (kg)</TableHead><TableHead>Status</TableHead>
+                <TableHead>Location</TableHead><TableHead>Date</TableHead><TableHead>Mature for Market</TableHead><TableHead className="text-right">Actions</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {filteredCattle.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium capitalize">{c.cattle_type}</TableCell>
                     <TableCell>{c.cattle_id}</TableCell>
+                    <TableCell>{c.weight_kg != null ? Number(c.weight_kg).toFixed(2) : '-'}</TableCell>
                     <TableCell>
-                      <select value={c.status} disabled={!isWithin24h(c.created_at)}
-                        onChange={(e) => { const ns = e.target.value; if (ns === 'dead') { if (confirm('Mark as dead? This cattle will move to mortality records.')) cattleEdit.mutate({ id: c.id, status: 'dead' }); } else cattleEdit.mutate({ id: c.id, status: ns }); }}
+                      <select value={c.status}
+                        onChange={(e) => { const ns = e.target.value; if (ns === 'dead') { openConfirm({ title: 'Mark as Dead', message: 'Mark as dead? This animal will move to mortality records.', type: 'danger', confirmText: 'Mark Dead', onConfirm: () => cattleEdit.mutate({ id: c.id, status: 'dead' }) }); } else cattleEdit.mutate({ id: c.id, status: ns }); }}
                         className="h-8 rounded border border-input bg-background px-2 text-sm text-foreground">
-                        <option value="healthy">Healthy</option><option value="sick">Sick</option><option value="dead">Dead</option>
+                        {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                       </select>
                     </TableCell>
                     <TableCell>{c.location || '-'}</TableCell>
                     <TableCell>{c.date_recorded ? format(new Date(c.date_recorded), 'MMM d, yyyy') : '-'}</TableCell>
+                    <TableCell>
+                      {canEdit('livestock') ? (
+                        <select value={c.mature_for_market ? 'yes' : 'no'}
+                          onChange={(e) => cattleEdit.mutate({ id: c.id, mature_for_market: e.target.value === 'yes' })}
+                          className="h-8 rounded border border-input bg-background px-2 text-sm text-foreground">
+                          <option value="no">No</option><option value="yes">Yes</option>
+                        </select>
+                      ) : (c.mature_for_market ? 'Yes' : 'No')}
+                    </TableCell>
                     <TableCell className="text-right flex gap-1 justify-end">
-                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(c.created_at)} onClick={() => openEditCattle(c)}>Edit</Button>}
-                      {canDelete('livestock') && <Button variant="ghost" size="icon" disabled={!isWithin24h(c.created_at)} onClick={() => { if (confirm('Delete this cattle record?')) cattleDelete.mutate(c.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
+                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => openEditCattle(c)}>Edit</Button>}
+                      {canDelete('livestock') && <Button variant="ghost" size="icon" disabled={!isWithin24h(c.created_at)} onClick={() => openConfirm({ title: 'Delete Record', message: 'Delete this record?', type: 'danger', confirmText: 'Delete', onConfirm: () => cattleDelete.mutate(c.id) })}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                     </TableCell>
                   </TableRow>
                 ))}
-                {!filteredCattle.length && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No cattle records found</TableCell></TableRow>}
+                {!filteredCattle.length && <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No healthy grazing livestock</TableCell></TableRow>}
               </TableBody>
             </Table>
           </Card>
@@ -338,25 +531,41 @@ export default function Livestock() {
           <Card>
             <Table>
               <TableHeader><TableRow>
-                <TableHead>Type</TableHead><TableHead>Batch Number</TableHead><TableHead>Total Birds</TableHead>
-                <TableHead>Female</TableHead><TableHead>Male</TableHead><TableHead>Date</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>Bird ID</TableHead><TableHead>Bird Type</TableHead><TableHead>Weight (kg)</TableHead>
+                <TableHead>Status</TableHead><TableHead>Location</TableHead><TableHead>Gender</TableHead><TableHead>Date</TableHead>
+                <TableHead>Mature for Market</TableHead><TableHead className="text-right">Action</TableHead>
               </TableRow></TableHeader>
               <TableBody>
                 {filteredBirds.map((b) => (
                   <TableRow key={b.id}>
+                    <TableCell className="font-mono text-xs">{b.bird_id || '-'}</TableCell>
                     <TableCell className="font-medium capitalize">{b.bird_type}</TableCell>
-                    <TableCell>{b.batch_number}</TableCell>
-                    <TableCell>{b.number_of_birds}</TableCell>
-                    <TableCell>{b.number_of_female}</TableCell>
-                    <TableCell>{b.number_of_male}</TableCell>
+                    <TableCell>{b.weight_kg != null ? Number(b.weight_kg).toFixed(2) : '-'}</TableCell>
+                    <TableCell>
+                      <select value={b.status ?? 'healthy'}
+                        onChange={(e) => { const ns = e.target.value; if (ns === 'dead') { openConfirm({ title: 'Mark as Dead', message: 'Mark as dead? This bird will move to mortality records.', type: 'danger', confirmText: 'Mark Dead', onConfirm: () => birdEdit.mutate({ id: b.id, status: 'dead' }) }); } else birdEdit.mutate({ id: b.id, status: ns }); }}
+                        className="h-8 rounded border border-input bg-background px-2 text-sm text-foreground">
+                        {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                      </select>
+                    </TableCell>
+                    <TableCell>{b.location || '-'}</TableCell>
+                    <TableCell className="capitalize">{b.gender || '-'}</TableCell>
                     <TableCell>{b.date_recorded ? format(new Date(b.date_recorded), 'MMM d, yyyy') : '-'}</TableCell>
+                    <TableCell>
+                      {canEdit('livestock') ? (
+                        <select value={b.mature_for_market ? 'yes' : 'no'}
+                          onChange={(e) => birdEdit.mutate({ id: b.id, mature_for_market: e.target.value === 'yes' })}
+                          className="h-8 rounded border border-input bg-background px-2 text-sm text-foreground">
+                          <option value="no">No</option><option value="yes">Yes</option>
+                        </select>
+                      ) : (b.mature_for_market ? 'Yes' : 'No')}
+                    </TableCell>
                     <TableCell className="text-right">
-                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(b.created_at)} onClick={() => openEditBird(b)}>Edit</Button>}
+                      {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => openEditBird(b)}>Edit</Button>}
                     </TableCell>
                   </TableRow>
                 ))}
-                {!filteredBirds.length && <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No bird records found</TableCell></TableRow>}
+                {!filteredBirds.length && <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No healthy bird records</TableCell></TableRow>}
               </TableBody>
             </Table>
           </Card>
@@ -409,7 +618,7 @@ export default function Livestock() {
                     <TableCell className="text-right flex gap-1 justify-end">
                       {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => openEditFish(f)}>Edit</Button>}
                       {isWithin24h(f.created_at) && canDelete('livestock') && (
-                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this fish record?')) fishDelete.mutate(f.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                        <Button variant="ghost" size="icon" onClick={() => openConfirm({ title: 'Delete Fish Record', message: 'Delete this fish record?', type: 'danger', confirmText: 'Delete', onConfirm: () => fishDelete.mutate(f.id) })}><Trash2 className="h-4 w-4 text-destructive" /></Button>
                       )}
                     </TableCell>
                   </TableRow>
@@ -441,7 +650,7 @@ export default function Livestock() {
                     <TableCell>{m.date_recorded ? format(new Date(m.date_recorded), 'MMM d, yyyy') : '-'}</TableCell>
                     <TableCell className="text-right flex gap-1 justify-end">
                       {canEdit('livestock') && <Button variant="outline" size="sm" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" disabled={!isWithin24h(m.created_at)} onClick={() => openEditMortality(m)}>Update</Button>}
-                      {canDelete('livestock') && <Button variant="ghost" size="icon" onClick={() => { if (confirm('Cancel this mortality record?')) mortalityCancel.mutate(m.id); }}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
+                      {canDelete('livestock') && <Button variant="ghost" size="icon" onClick={() => openConfirm({ title: 'Cancel Mortality Record', message: 'Cancel this mortality record?', type: 'danger', confirmText: 'Cancel Record', onConfirm: () => mortalityCancel.mutate(m.id) })}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -451,15 +660,51 @@ export default function Livestock() {
           </Card>
         )}
 
-        {/* HEALTH PLACEHOLDER */}
-        {selectedView === 'health' && (
+        {/* HEALTH / ILL / RECOVERING (aggregated across species) */}
+        {selectedView === 'health' && renderAgg(healthyStock.filter((r: any) => withinDays(r.date_recorded ?? r.created_at)), false)}
+        {selectedView === 'ill' && renderAgg(illStock.filter((r: any) => withinDays(r.date_recorded ?? r.created_at)), false)}
+        {selectedView === 'recovering' && renderAgg(recoveringStock.filter((r: any) => withinDays(r.date_recorded ?? r.created_at)), true)}
+
+        {/* LIVESTOCK REQUESTED (from Inventory) */}
+        {selectedView === 'requested' && (
           <Card>
-            <CardContent className="py-16 flex flex-col items-center justify-center gap-4">
-              <Heart className="h-12 w-12 text-success/50" />
-              <p className="text-muted-foreground text-center">Health monitoring module coming in a future phase.</p>
-            </CardContent>
+            <Table>
+              <TableHeader><TableRow>
+                <TableHead>Species</TableHead><TableHead>Name</TableHead><TableHead>Quantity</TableHead>
+                <TableHead>Location</TableHead><TableHead>Detail</TableHead><TableHead>Order Type</TableHead>
+                <TableHead>Status</TableHead><TableHead className="text-right">Action</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {lsRequests.filter((r: any) => r.status !== 'declined').map((r: any) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="font-medium capitalize">{r.species === 'grazing' ? 'Grazing Livestock' : r.species}</TableCell>
+                    <TableCell>{r.name || '-'}</TableCell>
+                    <TableCell>{r.quantity}</TableCell>
+                    <TableCell>{r.location || '-'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {r.species === 'pig' ? `Boars ${r.boars ?? 0} · Sows ${r.sows ?? 0}` : r.sub_type || '-'}
+                    </TableCell>
+                    <TableCell>{r.order_type || '-'}</TableCell>
+                    <TableCell><Badge className={r.status === 'fulfilled' ? 'bg-success/20 text-success' : r.status === 'accepted' ? 'bg-blue-500/20 text-blue-500' : 'bg-warning/20 text-warning'}>{r.status}</Badge></TableCell>
+                    <TableCell className="text-right flex gap-1 justify-end">
+                      {r.status === 'pending' && canEdit('livestock') && (
+                        <>
+                          <Button size="sm" className="gradient-primary text-black" onClick={() => acceptRequest.mutate(r.id)} disabled={acceptRequest.isPending}>Accept</Button>
+                          <Button size="sm" variant="destructive" onClick={() => openConfirm({ title: 'Decline Request', message: 'Decline this request?', type: 'danger', confirmText: 'Decline', onConfirm: () => declineRequest.mutate(r.id) })}>Decline</Button>
+                        </>
+                      )}
+                      {r.status === 'accepted' && canEdit('livestock') && (
+                        <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => startFulfil(r)}>Edit / Fulfil</Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {!lsRequests.filter((r: any) => r.status !== 'declined').length && <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No livestock requests</TableCell></TableRow>}
+              </TableBody>
+            </Table>
           </Card>
         )}
+
       </div>
 
       {/* PIG DIALOG */}
@@ -467,29 +712,35 @@ export default function Livestock() {
       <Dialog open={isPigOpen} onOpenChange={(o) => { setIsPigOpen(o); if (!o) setEditItem(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{editItem ? 'Edit Pig Record' : 'Add Pig'}</DialogTitle></DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); editItem ? pigEdit.mutate({ id: editItem.id, ...pigForm }) : pigAdd.mutate(pigForm); }} className="space-y-4">
+          <form onSubmit={(e) => { e.preventDefault(); if (!pigForm.gender) { toast({ title: 'Select a gender', variant: 'destructive' }); return; } editItem ? pigEdit.mutate({ id: editItem.id, ...pigForm }) : pigAdd.mutate(pigForm); }} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>Pig ID</Label><Input value={pigForm.pig_id} onChange={(e) => setPigForm({ ...pigForm, pig_id: e.target.value })} required disabled={!!editItem} /></div>
-              <div className="space-y-2"><Label>Breed</Label><Input value={pigForm.breed} onChange={(e) => setPigForm({ ...pigForm, breed: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Pig ID (auto)</Label><Input value={pigForm.pig_id} readOnly className="bg-muted" /></div>
+              <div className="space-y-2"><Label>Breed</Label><Input value={pigForm.breed} onChange={(e) => setPigForm({ ...pigForm, breed: e.target.value })} required /></div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Gender</Label>
-                <select value={pigForm.gender} onChange={(e) => setPigForm({ ...pigForm, gender: e.target.value })} className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground">
-                  <option value="unknown">Unknown</option><option value="male">Male</option><option value="female">Female</option>
-                </select>
+                <div className="flex gap-4 items-center h-10">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={pigForm.gender === 'male'} onChange={() => setPigForm({ ...pigForm, gender: 'male' })} className="h-4 w-4 accent-primary" />Male
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={pigForm.gender === 'female'} onChange={() => setPigForm({ ...pigForm, gender: 'female' })} className="h-4 w-4 accent-primary" />Female
+                  </label>
+                </div>
               </div>
               <div className="space-y-2">
                 <Label>Status</Label>
                 <select value={pigForm.status} onChange={(e) => setPigForm({ ...pigForm, status: e.target.value })} className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground">
-                  <option value="healthy">Healthy</option><option value="sick">Sick</option><option value="dead">Dead</option>
+                  {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2"><Label>Pig Pen Number</Label><Input value={pigForm.pen_number} onChange={(e) => setPigForm({ ...pigForm, pen_number: e.target.value })} placeholder="Block A01" /></div>
-              <div className="space-y-2"><Label>Date</Label><Input type="date" value={pigForm.date_recorded} onChange={(e) => setPigForm({ ...pigForm, date_recorded: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Weight (kg)</Label><Input type="number" step="0.01" min="0" value={pigForm.weight_kg} onChange={(e) => setPigForm({ ...pigForm, weight_kg: e.target.value })} required /></div>
+              <div className="space-y-2"><Label>Pig Pen Number</Label><Input value={pigForm.pen_number} onChange={(e) => setPigForm({ ...pigForm, pen_number: e.target.value })} placeholder="Block A01" required /></div>
             </div>
+            <div className="space-y-2"><Label>Date</Label><Input type="date" value={pigForm.date_recorded} onChange={(e) => setPigForm({ ...pigForm, date_recorded: e.target.value })} required /></div>
             <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={pigAdd.isPending || pigEdit.isPending}>{editItem ? 'Save Changes' : 'Add Pig'}</Button>
           </form>
         </DialogContent>
@@ -500,8 +751,8 @@ export default function Livestock() {
       {(editItem ? canEdit('livestock') : canCreate('livestock')) && (
       <Dialog open={isCattleOpen} onOpenChange={(o) => { setIsCattleOpen(o); if (!o) setEditItem(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editItem ? 'Edit Cattle Record' : 'Add Cattle'}</DialogTitle></DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); editItem ? cattleEdit.mutate({ id: editItem.id, ...cattleForm }) : cattleAdd.mutate(cattleForm); }} className="space-y-4">
+          <DialogHeader><DialogTitle>{editItem ? 'Edit Grazing Livestock' : 'Add Grazing Livestock'}</DialogTitle></DialogHeader>
+          <form onSubmit={(e) => { e.preventDefault(); if (!cattleForm.gender) { toast({ title: 'Select a gender', variant: 'destructive' }); return; } editItem ? cattleEdit.mutate({ id: editItem.id, ...cattleForm }) : cattleAdd.mutate(cattleForm); }} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Type</Label>
@@ -509,18 +760,32 @@ export default function Livestock() {
                   <option value="cow">Cow</option><option value="goat">Goat</option><option value="sheep">Sheep</option>
                 </select>
               </div>
-              <div className="space-y-2"><Label>Cattle ID</Label><Input value={cattleForm.cattle_id} onChange={(e) => setCattleForm({ ...cattleForm, cattle_id: e.target.value })} required disabled={!!editItem} /></div>
+              <div className="space-y-2"><Label>ID (auto)</Label><Input value={cattleForm.cattle_id} readOnly className="bg-muted" /></div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
+                <Label>Gender</Label>
+                <div className="flex gap-4 items-center h-10">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={cattleForm.gender === 'male'} onChange={() => setCattleForm({ ...cattleForm, gender: 'male' })} className="h-4 w-4 accent-primary" />Male
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={cattleForm.gender === 'female'} onChange={() => setCattleForm({ ...cattleForm, gender: 'female' })} className="h-4 w-4 accent-primary" />Female
+                  </label>
+                </div>
+              </div>
+              <div className="space-y-2">
                 <Label>Status</Label>
                 <select value={cattleForm.status} onChange={(e) => setCattleForm({ ...cattleForm, status: e.target.value })} className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground">
-                  <option value="healthy">Healthy</option><option value="sick">Sick</option><option value="dead">Dead</option>
+                  {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                 </select>
               </div>
-              <div className="space-y-2"><Label>Location</Label><Input value={cattleForm.location} onChange={(e) => setCattleForm({ ...cattleForm, location: e.target.value })} /></div>
             </div>
-            <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={cattleAdd.isPending || cattleEdit.isPending}>{editItem ? 'Save Changes' : 'Add Cattle'}</Button>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Weight (kg)</Label><Input type="number" step="0.01" min="0" value={cattleForm.weight_kg} onChange={(e) => setCattleForm({ ...cattleForm, weight_kg: e.target.value })} required /></div>
+              <div className="space-y-2"><Label>Location</Label><Input value={cattleForm.location} onChange={(e) => setCattleForm({ ...cattleForm, location: e.target.value })} required /></div>
+            </div>
+            <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={cattleAdd.isPending || cattleEdit.isPending}>{editItem ? 'Save Changes' : 'Add Grazing Livestock'}</Button>
           </form>
         </DialogContent>
       </Dialog>
@@ -530,7 +795,7 @@ export default function Livestock() {
       {(editItem ? canEdit('livestock') : canCreate('livestock')) && (
       <Dialog open={isBirdOpen} onOpenChange={(o) => { setIsBirdOpen(o); if (!o) setEditItem(null); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editItem ? 'Edit Bird Record' : 'Add Birds'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editItem ? 'Edit Bird Record' : 'Add Bird'}</DialogTitle></DialogHeader>
           <form onSubmit={(e) => { e.preventDefault(); editItem ? birdEdit.mutate({ id: editItem.id, ...birdForm }) : birdAdd.mutate(birdForm); }} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -539,14 +804,30 @@ export default function Livestock() {
                   <option value="chicken">Chicken</option><option value="duck">Duck</option>
                 </select>
               </div>
-              <div className="space-y-2"><Label>Batch Number</Label><Input value={birdForm.batch_number} onChange={(e) => setBirdForm({ ...birdForm, batch_number: e.target.value })} required /></div>
+              <div className="space-y-2"><Label>Bird Quantity</Label><Input value={1} readOnly className="bg-muted" /></div>
             </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div className="space-y-2"><Label>Total Birds</Label><Input type="number" value={birdForm.number_of_birds} onChange={(e) => setBirdForm({ ...birdForm, number_of_birds: Number(e.target.value) })} /></div>
-              <div className="space-y-2"><Label>Female</Label><Input type="number" value={birdForm.number_of_female} onChange={(e) => setBirdForm({ ...birdForm, number_of_female: Number(e.target.value) })} /></div>
-              <div className="space-y-2"><Label>Male</Label><Input type="number" value={birdForm.number_of_male} onChange={(e) => setBirdForm({ ...birdForm, number_of_male: Number(e.target.value) })} /></div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Weight (kg)</Label><Input type="number" step="0.01" min="0" value={birdForm.weight_kg} onChange={(e) => setBirdForm({ ...birdForm, weight_kg: e.target.value })} required /></div>
+              <div className="space-y-2"><Label>Location</Label><Input value={birdForm.location} onChange={(e) => setBirdForm({ ...birdForm, location: e.target.value })} required /></div>
             </div>
-            <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={birdAdd.isPending || birdEdit.isPending}>{editItem ? 'Save Changes' : 'Add Birds'}</Button>
+            <div className="space-y-2">
+              <Label>Gender</Label>
+              <div className="flex gap-4 items-center h-10">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={birdForm.gender === 'female'} onChange={() => setBirdForm({ ...birdForm, gender: 'female' })} className="h-4 w-4 accent-primary" />Female
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={birdForm.gender === 'male'} onChange={() => setBirdForm({ ...birdForm, gender: 'male' })} className="h-4 w-4 accent-primary" />Male
+                </label>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <select value={birdForm.status} onChange={(e) => setBirdForm({ ...birdForm, status: e.target.value })} className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                {STATUS_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+            <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={birdAdd.isPending || birdEdit.isPending}>{editItem ? 'Save Changes' : 'Add Bird'}</Button>
           </form>
         </DialogContent>
       </Dialog>
@@ -614,7 +895,7 @@ export default function Livestock() {
             <div className="space-y-2">
               <Label>Livestock Type</Label>
               <select value={mortalityForm.livestock_type} onChange={(e) => setMortalityForm({ ...mortalityForm, livestock_type: e.target.value })} disabled={!!editItem} className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground">
-                <option value="pig">Pig</option><option value="cattle">Cattle</option><option value="fish">Fish</option><option value="bird">Bird</option>
+                <option value="pig">Pig</option><option value="cattle">Grazing Livestock</option><option value="fish">Fish</option><option value="bird">Bird</option>
               </select>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -669,6 +950,87 @@ export default function Livestock() {
               {editItem ? 'Save Changes' : 'Add Mortality Record'}
             </Button>
           </form>
+        </DialogContent>
+      </Dialog>
+      )}
+
+      {/* TREATMENT DIALOG */}
+      {canEdit('livestock') && (
+      <Dialog open={isTreatmentOpen} onOpenChange={(o) => { setIsTreatmentOpen(o); if (!o) setTreatmentForm({ ...BLANK_TREATMENT }); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Treatment</DialogTitle></DialogHeader>
+          <form onSubmit={(e) => { e.preventDefault(); if (!treatmentForm.id) { toast({ title: 'Select a livestock', variant: 'destructive' }); return; } treatmentAdd.mutate(treatmentForm); }} className="space-y-4">
+            <div className="space-y-2">
+              <Label>Select Livestock (ill only)</Label>
+              <select
+                value={treatmentForm.id ? `${treatmentForm.species}:${treatmentForm.id}` : ''}
+                onChange={(e) => { const [sp, id] = e.target.value.split(':'); setTreatmentForm({ ...treatmentForm, species: sp || 'pig', id: id ?? '' }); }}
+                className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+              >
+                <option value="">Choose ill livestock...</option>
+                {illStock.map((r: any) => (
+                  <option key={r.id} value={`${r.species}:${r.id}`}>{r.record_id} — {r.sub_type || r.species}</option>
+                ))}
+              </select>
+              {!illStock.length && <p className="text-xs text-warning">No ill livestock to treat.</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>Treatment Given (max 50 words)</Label>
+              <Input value={treatmentForm.description}
+                onChange={(e) => { const w = e.target.value.trim().split(/\s+/).filter(Boolean); if (w.length <= 50) setTreatmentForm({ ...treatmentForm, description: e.target.value }); }}
+                placeholder="Describe treatment..." />
+              <p className="text-xs text-muted-foreground">{treatmentForm.description.trim().split(/\s+/).filter(Boolean).length}/50 words</p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Date of Treatment</Label><Input type="date" value={treatmentForm.treatment_date} onChange={(e) => setTreatmentForm({ ...treatmentForm, treatment_date: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Expected Recovery Date</Label><Input type="date" value={treatmentForm.expected_recovery_date} onChange={(e) => setTreatmentForm({ ...treatmentForm, expected_recovery_date: e.target.value })} /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2"><Label>Location</Label><Input value={treatmentForm.location} onChange={(e) => setTreatmentForm({ ...treatmentForm, location: e.target.value })} /></div>
+              <div className="space-y-2"><Label>Weight (kg)</Label><Input type="number" step="0.01" min="0" value={treatmentForm.weight_kg} onChange={(e) => setTreatmentForm({ ...treatmentForm, weight_kg: e.target.value })} /></div>
+            </div>
+            <p className="text-xs text-muted-foreground">Saving sets status to <strong>Recovering</strong>. It auto-returns to <strong>Healthy</strong> on the recovery date.</p>
+            <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={treatmentAdd.isPending}>Save Treatment</Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+      )}
+
+      {/* FULFIL REQUEST DIALOG */}
+      {canEdit('livestock') && (
+      <Dialog open={!!fulfilReq} onOpenChange={(o) => { if (!o) { setFulfilReq(null); setFulfilSelected(new Set()); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Fulfil Request{fulfilReq ? ` — ${fulfilReq.quantity} ${fulfilReq.species === 'grazing' ? 'grazing livestock' : fulfilReq.species}` : ''}</DialogTitle></DialogHeader>
+          {fulfilReq && (() => {
+            const pool = healthyStock.filter((h: any) => h.species === fulfilReq.species);
+            return (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">Select up to {fulfilReq.quantity} healthy animal(s) to allocate to inventory. Only healthy stock is eligible.</p>
+                <div className="max-h-64 overflow-y-auto border border-input rounded-md divide-y divide-border">
+                  {pool.map((h: any) => {
+                    const checked = fulfilSelected.has(h.id);
+                    const atLimit = fulfilSelected.size >= fulfilReq.quantity;
+                    return (
+                      <label key={h.id} className="flex items-center gap-3 p-2 text-sm cursor-pointer hover:bg-accent/10">
+                        <input type="checkbox" checked={checked} disabled={!checked && atLimit}
+                          onChange={() => { const next = new Set(fulfilSelected); checked ? next.delete(h.id) : next.add(h.id); setFulfilSelected(next); }}
+                          className="h-4 w-4 accent-primary" />
+                        <span className="font-mono text-xs">{h.record_id}</span>
+                        <span className="capitalize text-muted-foreground">{h.sub_type}</span>
+                        <span className="ml-auto text-xs text-muted-foreground">{h.weight_kg != null ? `${Number(h.weight_kg).toFixed(2)} kg` : ''}</span>
+                      </label>
+                    );
+                  })}
+                  {!pool.length && <p className="p-3 text-sm text-muted-foreground">No healthy stock available for this species.</p>}
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">{fulfilSelected.size}/{fulfilReq.quantity} selected</span>
+                  <Button className="gradient-primary text-black font-medium" disabled={fulfilSelected.size === 0 || fulfilRequest.isPending}
+                    onClick={() => fulfilRequest.mutate({ id: fulfilReq.id, animalIds: Array.from(fulfilSelected) })}>Fulfil</Button>
+                </div>
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
       )}

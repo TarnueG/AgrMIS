@@ -77,6 +77,15 @@ const ROLES: RoleDef[] = [
     },
   },
   {
+    name: 'procurement',
+    description: 'Procurement and supplier management',
+    subsystems: {
+      dashboard: V, procurement: F, inventory: V, finance: V, settings: V,
+      crm: N, marketing: N, sales_order_points: N, production: N,
+      livestock: N, human_capital: N, machinery: N, land_parcels: N, reports: N,
+    },
+  },
+  {
     name: 'customer',
     description: 'Customer portal — own orders and marketing',
     subsystems: {

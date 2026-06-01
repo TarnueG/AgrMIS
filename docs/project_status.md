@@ -226,6 +226,20 @@
 
 ---
 
+## Pre-Presentation Patch Sprint — Complete ✓
+**Date:** 2026-05-18
+
+- [x] `src/pages/Marketing.tsx` — removed Shopping Cart card + all Add to Cart buttons; added Customer ID column; Export CSV button
+- [x] `backend/src/routes/inventory.ts` — `POST /inventory/apply` endpoint: validates, deducts stock, records usage transaction
+- [x] `src/pages/Production.tsx` — date filters (7/30/90/365 days); Export CSV; batch auto-removal 24h after Passed; Chemicals & Feeds card with Add To Apply dialog
+- [x] `src/components/ui/ConfirmModal.tsx` — new reusable themed confirmation dialog (danger/warning/info/success types)
+- [x] `src/contexts/ConfirmContext.tsx` — ConfirmProvider + useConfirm hook
+- [x] `src/App.tsx` — wrapped with ConfirmProvider
+- [x] 11 page files — all `window.confirm()` calls replaced with `openConfirm({...})`
+- [x] `src/pages/SalesOrderPoints.tsx` — Pay button restored; checkout dialog with payment method selector; calls `POST /marketing/checkout`; on success clears cart and switches to pending orders view
+
+---
+
 ## Phase 6 — Not started
 **Goal:** Finance & Quality Control
 

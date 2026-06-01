@@ -611,6 +611,50 @@ router.patch('/proc-requests/:id', async (req, res) => {
   }
 });
 
+// POST /inventory/apply — deduct a chemical/feed item from stock as a production application
+router.post('/apply', async (req, res) => {
+  const schema = z.object({
+    stockItemId: z.string().uuid(),
+    quantity: z.number().positive(),
+    description: z.string().max(400).optional(),
+  });
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  const { stockItemId, quantity, description } = parsed.data;
+  try {
+    const item = await prisma.stock_items.findUnique({
+      where: { id: stockItemId, deleted_at: null, farm_id: req.user!.farmId ?? undefined },
+    });
+    if (!item) return res.status(404).json({ error: 'Item not found', code: 'NOT_FOUND' });
+    const qtyBefore = Number(item.current_quantity);
+    if (quantity >= qtyBefore) {
+      return res.status(400).json({ error: 'Quantity must be less than available stock', code: 'STOCK_LOW' });
+    }
+    const qtyAfter = qtyBefore - quantity;
+    await prisma.$transaction([
+      prisma.stock_transactions.create({
+        data: {
+          stock_item_id: stockItemId,
+          performed_by: req.user!.userId,
+          transaction_type: 'usage',
+          quantity,
+          quantity_before: qtyBefore,
+          quantity_after: qtyAfter,
+          source_module: 'production',
+          notes: description ?? null,
+        },
+      }),
+      prisma.stock_items.update({
+        where: { id: stockItemId },
+        data: { current_quantity: qtyAfter, updated_at: new Date() } as any,
+      }),
+    ]);
+    return res.json({ message: 'Applied successfully', quantityAfter: qtyAfter });
+  } catch {
+    return res.status(500).json({ error: 'Failed to apply', code: 'DB_ERROR' });
+  }
+});
+
 router.delete('/proc-requests/:id', async (req, res) => {
   try {
     const existing = await procReqDb.findUnique({ where: { id: req.params.id } });
@@ -620,6 +664,51 @@ router.delete('/proc-requests/:id', async (req, res) => {
     res.status(204).end();
   } catch {
     res.status(500).json({ error: 'Failed to delete procurement request', code: 'DB_ERROR' });
+  }
+});
+
+// ── Marketing Deductions ────────────────────────────────────────
+
+router.get('/marketing-deductions', async (req, res) => {
+  const productName = req.query.product as string | undefined;
+  try {
+    const items = await prisma.stock_items.findMany({
+      where: {
+        ...(productName ? { name: { contains: productName, mode: 'insensitive' } } : {}),
+        farm_id: req.user!.farmId ?? undefined,
+        deleted_at: null,
+      },
+      select: { id: true, name: true, unit_of_measure: true },
+    });
+
+    if (!items.length) return res.json([]);
+
+    const itemMap: Record<string, { name: string; unit: string }> = {};
+    for (const i of items) itemMap[i.id] = { name: i.name, unit: i.unit_of_measure ?? 'kg' };
+    const itemIds = Object.keys(itemMap);
+
+    const transactions = await prisma.stock_transactions.findMany({
+      where: {
+        stock_item_id: { in: itemIds },
+        source_module: 'marketing',
+        transaction_type: 'usage',
+      },
+      orderBy: { transacted_at: 'desc' },
+    });
+
+    const result = transactions.map(t => ({
+      id: t.id,
+      product_name: itemMap[t.stock_item_id]?.name ?? '',
+      quantity: Number(t.quantity),
+      quantity_unit: itemMap[t.stock_item_id]?.unit ?? 'kg',
+      status: 'marketing_deduction',
+      created_at: t.transacted_at,
+      notes: t.notes,
+    }));
+
+    res.json(result);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch marketing deductions', code: 'DB_ERROR' });
   }
 });
 

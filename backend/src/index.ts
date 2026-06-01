@@ -6,6 +6,7 @@ import authRouter from './routes/auth';
 import inventoryRouter from './routes/inventory';
 import productionRouter from './routes/production';
 import hrRouter from './routes/hr';
+import tasksRouter from './routes/tasks';
 import assetsRouter from './routes/assets';
 import salesRouter from './routes/sales';
 import procurementRouter from './routes/procurement';
@@ -14,6 +15,7 @@ import parcelRequestsRouter from './routes/parcelRequests';
 import landParcelsRouter from './routes/landParcels';
 import livestockRouter from './routes/livestock';
 import marketingRouter from './routes/marketing';
+import { handleStripeWebhook } from './routes/marketingPayments';
 import profileRouter from './routes/profile';
 import accessControlRouter from './routes/accessControl';
 import auditLogRouter from './routes/auditLog';
@@ -33,6 +35,10 @@ app.use(cors({
   },
   credentials: true,
 }));
+
+// Stripe webhook must receive raw body — register BEFORE express.json()
+app.post('/api/v1/marketing/payments/webhook', express.raw({ type: 'application/json' }), handleStripeWebhook);
+
 app.use(express.json());
 
 // Serve uploaded profile pictures
@@ -42,6 +48,7 @@ app.use('/api/v1/auth', authRouter);
 app.use('/api/v1/inventory', inventoryRouter);
 app.use('/api/v1/production', productionRouter);
 app.use('/api/v1/hr', hrRouter);
+app.use('/api/v1/tasks', tasksRouter);
 app.use('/api/v1/assets', assetsRouter);
 app.use('/api/v1/sales', salesRouter);
 app.use('/api/v1/procurement', procurementRouter);

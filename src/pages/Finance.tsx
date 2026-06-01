@@ -6,28 +6,58 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import { TrendingUp, TrendingDown, DollarSign, Package, Wrench, Users } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, Package, Wrench, Users, ShoppingBag, Download, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useConfirm } from '@/contexts/ConfirmContext';
 
-type FinView = 'income' | 'expenses' | 'profit' | 'purchase_requests' | 'contractor' | 'wages' | null;
+type FinView = 'income' | 'expenses' | 'profit' | 'purchase_requests' | 'purchased_orders' | 'contractor' | 'wages' | null;
+
+function exportToCSV(rows: any[], columns: { key: string; label: string }[], filename: string) {
+  const header = columns.map(c => c.label).join(',');
+  const body = rows.map(row =>
+    columns.map(c => {
+      const val = row[c.key] ?? '';
+      const str = String(val).replace(/"/g, '""');
+      return str.includes(',') || str.includes('"') || str.includes('\n') ? `"${str}"` : str;
+    }).join(',')
+  ).join('\n');
+  const blob = new Blob([header + '\n' + body], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function Finance() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { canEdit, canViewCard } = usePermissions();
+  const { openConfirm } = useConfirm();
   const [finView, setFinView] = useState<FinView>(null);
+  const [dateFilter, setDateFilter] = useState<'all' | '7' | '30' | '90' | '365'>('all');
+  const [payPOItem, setPayPOItem] = useState<any | null>(null);
+  const [payMethod, setPayMethod] = useState<'bank' | 'mobile_money'>('bank');
+
+  const DAYS_MAP: Record<string, number> = { '7': 7, '30': 30, '90': 90, '365': 365 };
+  const withinDays = (dateStr?: string) => {
+    if (dateFilter === 'all') return true;
+    if (!dateStr) return false;
+    return Date.now() - new Date(dateStr).getTime() <= DAYS_MAP[dateFilter] * 24 * 60 * 60 * 1000;
+  };
 
   const { data: marketingOrders = [] } = useQuery<any[]>({
     queryKey: ['marketing-orders'],
     queryFn: () => api.get('/marketing/orders'),
   });
 
-  const { data: procRequests = [] } = useQuery<any[]>({
-    queryKey: ['proc-requests-fin'],
-    queryFn: () => api.get('/inventory/proc-requests'),
+  const { data: purchaseOrders = [] } = useQuery<any[]>({
+    queryKey: ['finance-purchase-orders'],
+    queryFn: () => api.get('/procurement/purchase-orders'),
   });
 
   const { data: employees = [] } = useQuery<any[]>({
@@ -35,12 +65,12 @@ export default function Finance() {
     queryFn: () => api.get('/hr/employees'),
   });
 
-  const { data: contractorPayments = [], refetch: refetchContractorPayments } = useQuery<any[]>({
+  const { data: contractorPayments = [] } = useQuery<any[]>({
     queryKey: ['finance-contractor-payments'],
     queryFn: () => api.get('/hr/contractor-payments'),
   });
 
-  const { data: personnelWages = [], refetch: refetchWages } = useQuery<any[]>({
+  const { data: personnelWages = [] } = useQuery<any[]>({
     queryKey: ['finance-wages'],
     queryFn: () => api.get('/hr/wages'),
   });
@@ -63,44 +93,43 @@ export default function Finance() {
     onError: (e: any) => toast({ title: e.message || 'Error', variant: 'destructive' }),
   });
 
+  const payPO = useMutation({
+    mutationFn: ({ id, paymentMethod }: { id: string; paymentMethod: 'bank' | 'mobile_money' }) =>
+      api.post<any>(`/finance/purchase-orders/${id}/pay`, { paymentMethod }),
+    onSuccess: (data: any) => {
+      qc.invalidateQueries({ queryKey: ['finance-purchase-orders'] });
+      qc.invalidateQueries({ queryKey: ['purchase-orders'] });
+      qc.invalidateQueries({ queryKey: ['procurement-analytics'] });
+      qc.invalidateQueries({ queryKey: ['procurement-analytics-items'] });
+      qc.invalidateQueries({ queryKey: ['marketing-orders'] });
+      qc.invalidateQueries({ queryKey: ['finance-wages'] });
+      qc.invalidateQueries({ queryKey: ['finance-contractor-payments'] });
+      setPayPOItem(null);
+      const ref    = data?.transactionRef ?? '';
+      const method = data?.paymentMethod === 'mobile_money' ? 'Mobile Money' : 'Bank Transfer';
+      toast({ title: `Payment Successful via ${method}`, description: ref ? `Ref: ${ref}` : undefined });
+    },
+    onError: (e: any) => {
+      toast({ title: e.message ?? 'Payment failed', variant: 'destructive' });
+    },
+  });
+
   // Income: only sold/delivered orders
   const soldOrders = marketingOrders.filter((o: any) => o.status === 'completed' || o.status === 'delivered');
   const totalIncome = soldOrders.reduce((s: number, o: any) => s + Number(o.amount), 0);
 
-  // Expenses: paid wages + paid contractor payments
+  // Expenses: paid wages + paid contractor payments + paid POs
   const paidWagesTotal = personnelWages.filter((w: any) => w.payment_status === 'paid').reduce((s: number, w: any) => s + Number(w.amount), 0);
   const paidContractorTotal = contractorPayments.filter((c: any) => c.payment_status === 'paid').reduce((s: number, c: any) => s + Number(c.amount), 0);
-  const totalExpenses = paidWagesTotal + paidContractorTotal;
+  const paidPOs = purchaseOrders.filter((p: any) => p.payment_status === 'paid');
+  const paidPOsTotal = paidPOs.reduce((s: number, p: any) => s + Number(p.total_amount), 0);
+  const totalExpenses = paidWagesTotal + paidContractorTotal + paidPOsTotal;
   const netProfit = totalIncome - totalExpenses;
 
-  // Contractor / wages card values
+  const pendingPOs = purchaseOrders.filter((p: any) => p.status !== 'cancelled' && p.payment_status !== 'paid');
+
   const pendingContractorTotal = contractorPayments.filter((c: any) => c.payment_status === 'pending').reduce((s: number, c: any) => s + Number(c.amount), 0);
   const pendingWagesTotal = personnelWages.filter((w: any) => w.payment_status === 'pending').reduce((s: number, w: any) => s + Number(w.amount), 0);
-
-  // Legacy fallback for expenses panel
-  const totalWages = employees.reduce((s: number, e: any) => {
-    if (e.monthly_salary) return s + Number(e.monthly_salary);
-    if (e.daily_wage) return s + Number(e.daily_wage) * 22;
-    return s;
-  }, 0);
-
-  const uniqueMonths = [...new Set(
-    soldOrders.filter((o: any) => o.date).map((o: any) => format(new Date(o.date), 'MMM yyyy'))
-  )];
-  const monthlyExpense = uniqueMonths.length > 0 ? totalExpenses / uniqueMonths.length : 0;
-
-  const chartData = soldOrders.reduce((acc: any[], o: any) => {
-    const date = o.date ? format(new Date(o.date), 'MMM yyyy') : 'Unknown';
-    const existing = acc.find((a: any) => a.date === date);
-    if (existing) {
-      existing.income += Number(o.amount);
-      existing.profit = existing.income - existing.expenses;
-    } else {
-      const exp = Math.round(monthlyExpense);
-      acc.push({ date, income: Number(o.amount), expenses: exp, profit: Number(o.amount) - exp });
-    }
-    return acc;
-  }, []);
 
   function fmt(n: number) {
     return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -114,58 +143,68 @@ export default function Finance() {
     { key: 'income' as FinView, label: 'Total Income', value: fmt(totalIncome), Icon: TrendingUp, color: 'bg-success/10 border-success/20 text-success' },
     { key: 'expenses' as FinView, label: 'Total Expenses', value: fmt(totalExpenses), Icon: TrendingDown, color: 'bg-destructive/10 border-destructive/20 text-destructive' },
     { key: 'profit' as FinView, label: 'Net Profit', value: fmt(netProfit), Icon: DollarSign, color: netProfit >= 0 ? 'bg-primary/10 border-primary/20 text-primary' : 'bg-warning/10 border-warning/20 text-warning' },
-    { key: 'purchase_requests' as FinView, label: 'Purchase Requests', value: String(procRequests.length), Icon: Package, color: 'bg-blue-500/10 border-blue-500/20 text-blue-400' },
+    { key: 'purchase_requests' as FinView, label: 'Purchase Requests', value: String(pendingPOs.length), Icon: Package, color: 'bg-blue-500/10 border-blue-500/20 text-blue-400' },
+    { key: 'purchased_orders' as FinView, label: 'Purchased Order', value: String(paidPOs.length), Icon: ShoppingBag, color: 'bg-success/10 border-success/20 text-success' },
     { key: 'contractor' as FinView, label: 'Contractor Payment', value: fmt(pendingContractorTotal), Icon: Wrench, color: 'bg-orange-500/10 border-orange-500/20 text-orange-400' },
     { key: 'wages' as FinView, label: 'Personnel Wages', value: fmt(pendingWagesTotal), Icon: Users, color: 'bg-purple-500/10 border-purple-500/20 text-purple-400' },
+  ];
+
+  // Build total expenses rows for export
+  const totalExpensesRows = [
+    ...paidPOs.map((p: any) => ({ id: p.po_number, name: p.commodity ?? '-', type: 'Purchased', amount: Number(p.total_amount).toFixed(2), date: p.created_at ? format(new Date(p.created_at), 'MMM d, yyyy') : '-' })),
+    ...personnelWages.filter((w: any) => w.payment_status === 'paid').map((w: any) => ({ id: w.personnel_id ?? '-', name: w.full_name, type: 'Wage', amount: Number(w.amount).toFixed(2), date: w.paid_at ? format(new Date(w.paid_at), 'MMM d, yyyy') : '-' })),
+    ...contractorPayments.filter((c: any) => c.payment_status === 'paid').map((c: any) => ({ id: c.id?.substring(0, 8).toUpperCase() ?? '-', name: c.contractor_name, type: 'Contractor', amount: Number(c.amount).toFixed(2), date: c.paid_at ? format(new Date(c.paid_at), 'MMM d, yyyy') : '-' })),
   ];
 
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        <div>
-          <h1 className="text-3xl font-bold">Finance & Accounting</h1>
-          <p className="text-muted-foreground">Track income, expenses, and profitability</p>
-        </div>
+        {/* Dashboard: cards only */}
+        {!finView && (
+          <>
+            <div>
+              <h1 className="text-3xl font-bold">Finance & Accounting</h1>
+              <p className="text-muted-foreground">Track income, expenses, and profitability</p>
+            </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          {CARDS.filter(({ key }) => canViewCard(`finance.${key}`)).map(({ key, label, value, Icon, color }) => (
-            <Card key={key} className={`border ${color} ${cardClass(key)}`} onClick={() => setFinView(prev => prev === key ? null : key)}>
-              <CardContent className="p-6">
-                <div className="flex items-center gap-4">
-                  <div className={`p-3 rounded-xl ${color.replace('border-', 'bg-').replace('/10', '/20').replace('/20', '/30')}`}>
-                    <Icon className="h-6 w-6" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">{label}</p>
-                    <p className="text-2xl font-bold">{value}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {CARDS.filter(({ key }) => canViewCard(`finance.${key}`)).map(({ key, label, value, Icon, color }) => (
+                <Card key={key} className={`border ${color} ${cardClass(key)}`} onClick={() => setFinView(key)}>
+                  <CardContent className="p-6">
+                    <div className="flex items-center gap-4">
+                      <div className={`p-3 rounded-xl ${color.replace('border-', 'bg-').replace('/10', '/20').replace('/20', '/30')}`}>
+                        <Icon className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">{label}</p>
+                        <p className="text-2xl font-bold">{value}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </>
+        )}
 
-        {/* Financial Overview */}
-        <Card>
-          <CardHeader><CardTitle>Financial Overview</CardTitle></CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 20%, 20%)" />
-                <XAxis dataKey="date" stroke="hsl(220, 10%, 55%)" tick={{ fontSize: 12 }} />
-                <YAxis stroke="hsl(220, 10%, 55%)" tick={{ fontSize: 12 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                <Tooltip
-                  contentStyle={{ backgroundColor: 'hsl(220, 25%, 12%)', border: '1px solid hsl(220, 20%, 20%)', borderRadius: '8px' }}
-                  formatter={(v: number) => `$${v.toLocaleString()}`}
-                />
-                <Legend />
-                <Line type="monotone" dataKey="income" stroke="hsl(142, 70%, 50%)" name="Income" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="expenses" stroke="hsl(0, 72%, 51%)" name="Expenses" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="profit" stroke="hsl(217, 91%, 60%)" name="Net Profit" strokeWidth={2} dot={false} strokeDasharray="5 5" />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+        {/* Detail page header: back arrow + time filter */}
+        {finView && (
+          <div className="flex justify-between items-center flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="icon" onClick={() => { setFinView(null); setDateFilter('all'); }} aria-label="Back to finance" className="text-muted-foreground hover:text-foreground">
+                <ArrowLeft className="h-5 w-5" />
+              </Button>
+              <h1 className="text-2xl font-bold">{CARDS.find(c => c.key === finView)?.label ?? 'Detail'}</h1>
+            </div>
+            <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value as typeof dateFilter)} className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground">
+              <option value="all">All time</option>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="90">Last 90 days</option>
+              <option value="365">Last 365 days</option>
+            </select>
+          </div>
+        )}
 
         {/* ── Income Panel ── */}
         {finView === 'income' && (
@@ -173,10 +212,9 @@ export default function Finance() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">Total Income — Marketing Orders</CardTitle>
-                <div className="flex gap-4 text-sm text-muted-foreground">
-                  <span className="text-success font-medium">{soldOrders.length} Sold</span>
-                  <span>{marketingOrders.length - soldOrders.length} Processing</span>
-                </div>
+                <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => exportToCSV(marketingOrders.map((o: any) => ({ order_id: o.order_id, item: o.item_name, qty: o.quantity, status: o.status, date: o.date ? format(new Date(o.date), 'MMM d, yyyy') : '-', amount: Number(o.amount).toFixed(2) })), [{ key: 'order_id', label: 'Order ID' }, { key: 'item', label: 'Item' }, { key: 'qty', label: 'Quantity' }, { key: 'status', label: 'Status' }, { key: 'date', label: 'Date' }, { key: 'amount', label: 'Amount' }], 'finance_income.csv')}>
+                  <Download className="h-4 w-4 mr-1" />Export CSV
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -192,7 +230,7 @@ export default function Finance() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {marketingOrders.map((o: any) => {
+                  {marketingOrders.filter((o: any) => withinDays(o.date)).map((o: any) => {
                     const isSold = o.status === 'completed' || o.status === 'delivered';
                     return (
                       <TableRow key={o.id} className={isSold ? '' : 'opacity-50'}>
@@ -216,12 +254,6 @@ export default function Finance() {
                   )}
                 </TableBody>
               </Table>
-              {marketingOrders.length > 0 && (
-                <div className="p-4 border-t flex justify-end gap-8 text-sm">
-                  <span className="text-muted-foreground">Processing: <span className="font-medium">${marketingOrders.filter((o: any) => o.status !== 'completed' && o.status !== 'delivered').reduce((s: number, o: any) => s + Number(o.amount), 0).toFixed(2)}</span></span>
-                  <span className="text-success font-bold">Recognised Income: ${totalIncome.toFixed(2)}</span>
-                </div>
-              )}
             </CardContent>
           </Card>
         )}
@@ -229,39 +261,44 @@ export default function Finance() {
         {/* ── Expenses Panel ── */}
         {finView === 'expenses' && (
           <Card>
-            <CardHeader><CardTitle className="text-base">Total Expenses — Payroll Summary</CardTitle></CardHeader>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Total Expenses</CardTitle>
+                <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => exportToCSV(totalExpensesRows, [{ key: 'id', label: 'ID' }, { key: 'name', label: 'Name/Commodity' }, { key: 'type', label: 'Type' }, { key: 'amount', label: 'Amount' }, { key: 'date', label: 'Date' }], 'finance_expenses.csv')}>
+                  <Download className="h-4 w-4 mr-1" />Export CSV
+                </Button>
+              </div>
+            </CardHeader>
             <CardContent className="p-0">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Employee</TableHead>
-                    <TableHead>Job Title</TableHead>
+                    <TableHead>ID</TableHead>
+                    <TableHead>Name / Commodity</TableHead>
                     <TableHead>Type</TableHead>
-                    <TableHead>Sector</TableHead>
-                    <TableHead className="text-right">Monthly Cost</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {employees.map((e: any) => {
-                    const cost = e.monthly_salary ? Number(e.monthly_salary) : (e.daily_wage ? Number(e.daily_wage) * 22 : 0);
-                    return (
-                      <TableRow key={e.id}>
-                        <TableCell className="font-medium">{e.full_name}</TableCell>
-                        <TableCell>{e.job_title || '-'}</TableCell>
-                        <TableCell><Badge className="bg-muted text-muted-foreground capitalize">{e.employment_type}</Badge></TableCell>
-                        <TableCell className="capitalize">{e.sector || '-'}</TableCell>
-                        <TableCell className="text-right font-medium text-destructive">${cost.toFixed(2)}</TableCell>
-                      </TableRow>
-                    );
-                  })}
-                  {!employees.length && (
-                    <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground">No employee records</TableCell></TableRow>
+                  {totalExpensesRows.map((row, idx) => (
+                    <TableRow key={idx}>
+                      <TableCell className="font-mono text-xs">{row.id}</TableCell>
+                      <TableCell className="font-medium">{row.name}</TableCell>
+                      <TableCell><Badge className="bg-muted text-muted-foreground">{row.type}</Badge></TableCell>
+                      <TableCell className="text-right font-medium text-destructive">${row.amount}</TableCell>
+                      <TableCell>{row.date}</TableCell>
+                    </TableRow>
+                  ))}
+                  {!totalExpensesRows.length && (
+                    <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground">No expense records</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
               <div className="p-4 border-t flex justify-end gap-8 text-sm">
                 <span className="text-muted-foreground">Paid Wages: <span className="font-medium text-destructive">${paidWagesTotal.toFixed(2)}</span></span>
                 <span className="text-muted-foreground">Paid Contractors: <span className="font-medium text-destructive">${paidContractorTotal.toFixed(2)}</span></span>
+                <span className="text-muted-foreground">Purchased Orders: <span className="font-medium text-destructive">${paidPOsTotal.toFixed(2)}</span></span>
                 <span className="text-destructive font-bold">Total Paid: ${totalExpenses.toFixed(2)}</span>
               </div>
             </CardContent>
@@ -271,7 +308,14 @@ export default function Finance() {
         {/* ── Profit Panel ── */}
         {finView === 'profit' && (
           <Card>
-            <CardHeader><CardTitle className="text-base">Net Profit — Summary</CardTitle></CardHeader>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Net Profit — Summary</CardTitle>
+                <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => exportToCSV([{ income: totalIncome.toFixed(2), expenses: totalExpenses.toFixed(2), net_profit: netProfit.toFixed(2) }], [{ key: 'income', label: 'Total Income' }, { key: 'expenses', label: 'Total Expenses' }, { key: 'net_profit', label: 'Net Profit' }], 'finance_profit.csv')}>
+                  <Download className="h-4 w-4 mr-1" />Export CSV
+                </Button>
+              </div>
+            </CardHeader>
             <CardContent>
               <div className="grid grid-cols-3 gap-4">
                 <div className="rounded-lg bg-success/10 border border-success/20 p-4">
@@ -294,34 +338,106 @@ export default function Finance() {
         {/* ── Purchase Requests Panel ── */}
         {finView === 'purchase_requests' && (
           <Card>
-            <CardHeader><CardTitle className="text-base">Purchase Requests — Inventory</CardTitle></CardHeader>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Purchase Requests</CardTitle>
+                <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => exportToCSV(pendingPOs.map((p: any) => ({ po_number: p.po_number, supplier: p.suppliers?.name ?? '-', commodity: p.commodity ?? '-', quantity: p.quantity != null ? Number(p.quantity).toFixed(2) : '-', amount: Number(p.total_amount).toFixed(2), payment_method: p.suppliers?.payment_method?.replace('_', ' ') ?? '-', account_number: p.suppliers?.account_number ?? '-', status: p.status, date: p.created_at ? format(new Date(p.created_at), 'MMM d, yyyy') : '-' })), [{ key: 'po_number', label: 'PO Number' }, { key: 'supplier', label: 'Supplier' }, { key: 'commodity', label: 'Commodity' }, { key: 'quantity', label: 'Quantity' }, { key: 'amount', label: 'Amount' }, { key: 'payment_method', label: 'Payment Method' }, { key: 'account_number', label: 'Account Number' }, { key: 'status', label: 'Status' }, { key: 'date', label: 'Date' }], 'finance_purchase_requests.csv')}>
+                  <Download className="h-4 w-4 mr-1" />Export CSV
+                </Button>
+              </div>
+            </CardHeader>
             <CardContent className="p-0">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Item Name</TableHead>
-                    <TableHead>Category</TableHead>
+                    <TableHead>PO Number</TableHead>
+                    <TableHead>Supplier Name</TableHead>
+                    <TableHead>Commodity</TableHead>
                     <TableHead>Quantity</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Payment Method</TableHead>
+                    <TableHead>Account Number</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Date</TableHead>
+                    {canEdit('finance') && <TableHead>Action</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {pendingPOs.filter((p: any) => withinDays(p.created_at)).map((p: any) => (
+                    <TableRow key={p.id}>
+                      <TableCell className="font-mono text-sm">{p.po_number}</TableCell>
+                      <TableCell className="font-medium">{p.suppliers?.name ?? '-'}</TableCell>
+                      <TableCell>{p.commodity ?? '-'}</TableCell>
+                      <TableCell>{p.quantity != null ? Number(p.quantity).toFixed(2) : '-'}</TableCell>
+                      <TableCell className="font-medium">${Number(p.total_amount).toFixed(2)}</TableCell>
+                      <TableCell className="capitalize">{p.suppliers?.payment_method?.replace('_', ' ') ?? '-'}</TableCell>
+                      <TableCell>{p.suppliers?.account_number ?? '-'}</TableCell>
+                      <TableCell>
+                        <Badge className={p.status === 'submitted' ? 'bg-blue-500/20 text-blue-500' : 'bg-warning/20 text-warning'}>
+                          {p.status === 'submitted' ? 'Submitted' : 'Pending Payment'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{p.created_at ? format(new Date(p.created_at), 'MMM d, yyyy') : '-'}</TableCell>
+                      {canEdit('finance') && (
+                        <TableCell>
+                          <Button size="sm" className="gradient-primary text-black font-medium text-xs" onClick={() => setPayPOItem(p)}>
+                            Make Payment
+                          </Button>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))}
+                  {!pendingPOs.length && (
+                    <TableRow><TableCell colSpan={canEdit('finance') ? 10 : 9} className="text-center py-6 text-muted-foreground">No purchase requests</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── Purchased Orders Panel ── */}
+        {finView === 'purchased_orders' && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Purchased Orders</CardTitle>
+                <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => exportToCSV(paidPOs.map((p: any) => ({ po_number: p.po_number, supplier: p.suppliers?.name ?? '-', commodity: p.commodity ?? '-', quantity: p.quantity != null ? Number(p.quantity).toFixed(2) : '-', amount: Number(p.total_amount).toFixed(2), payment_method: p.suppliers?.payment_method?.replace('_', ' ') ?? '-', account_number: p.suppliers?.account_number ?? '-', status: 'Paid', date: p.created_at ? format(new Date(p.created_at), 'MMM d, yyyy') : '-' })), [{ key: 'po_number', label: 'PO Number' }, { key: 'supplier', label: 'Supplier' }, { key: 'commodity', label: 'Commodity' }, { key: 'quantity', label: 'Quantity' }, { key: 'amount', label: 'Amount' }, { key: 'payment_method', label: 'Payment Method' }, { key: 'account_number', label: 'Account Number' }, { key: 'status', label: 'Status' }, { key: 'date', label: 'Date' }], 'finance_purchased_orders.csv')}>
+                  <Download className="h-4 w-4 mr-1" />Export CSV
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>PO Number</TableHead>
+                    <TableHead>Supplier Name</TableHead>
+                    <TableHead>Commodity</TableHead>
+                    <TableHead>Quantity</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Payment Method</TableHead>
+                    <TableHead>Account Number</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {procRequests.map((r: any) => (
-                    <TableRow key={r.id}>
-                      <TableCell className="font-medium">{r.item_name}</TableCell>
-                      <TableCell className="capitalize">{r.category?.replace(/_/g, ' ')}</TableCell>
-                      <TableCell>{Number(r.quantity).toFixed(2)} {r.quantity_unit}</TableCell>
-                      <TableCell>
-                        <Badge className={r.status === 'received' ? 'bg-success/20 text-success' : r.status === 'cancelled' ? 'bg-destructive/20 text-destructive' : 'bg-warning/20 text-warning'}>
-                          {r.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>{r.created_at ? format(new Date(r.created_at), 'MMM d, yyyy') : '-'}</TableCell>
+                  {paidPOs.filter((p: any) => withinDays(p.created_at)).map((p: any) => (
+                    <TableRow key={p.id}>
+                      <TableCell className="font-mono text-sm">{p.po_number}</TableCell>
+                      <TableCell className="font-medium">{p.suppliers?.name ?? '-'}</TableCell>
+                      <TableCell>{p.commodity ?? '-'}</TableCell>
+                      <TableCell>{p.quantity != null ? Number(p.quantity).toFixed(2) : '-'}</TableCell>
+                      <TableCell className="font-medium">${Number(p.total_amount).toFixed(2)}</TableCell>
+                      <TableCell className="capitalize">{p.suppliers?.payment_method?.replace('_', ' ') ?? '-'}</TableCell>
+                      <TableCell>{p.suppliers?.account_number ?? '-'}</TableCell>
+                      <TableCell><Badge className="bg-success/20 text-success">Paid</Badge></TableCell>
+                      <TableCell>{p.created_at ? format(new Date(p.created_at), 'MMM d, yyyy') : '-'}</TableCell>
                     </TableRow>
                   ))}
-                  {!procRequests.length && (
-                    <TableRow><TableCell colSpan={5} className="text-center py-6 text-muted-foreground">No purchase requests</TableCell></TableRow>
+                  {!paidPOs.length && (
+                    <TableRow><TableCell colSpan={9} className="text-center py-6 text-muted-foreground">No purchased orders</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -332,7 +448,14 @@ export default function Finance() {
         {/* ── Contractor Payment Panel ── */}
         {finView === 'contractor' && (
           <Card>
-            <CardHeader><CardTitle className="text-base">Contractor Payment</CardTitle></CardHeader>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Contractor Payment</CardTitle>
+                <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => exportToCSV(contractorPayments.map((c: any) => ({ name: c.contractor_name, type: c.contract_type ?? '-', sector: c.sector ?? '-', amount: Number(c.amount).toFixed(2), bank_id: c.bank_id ?? '-', status: c.payment_status === 'paid' ? 'Paid' : 'Pending', date: c.paid_at ? format(new Date(c.paid_at), 'MMM d, yyyy') : '-' })), [{ key: 'name', label: 'Contractor Name' }, { key: 'type', label: 'Contract Type' }, { key: 'sector', label: 'Sector' }, { key: 'amount', label: 'Amount' }, { key: 'bank_id', label: 'Bank ID' }, { key: 'status', label: 'Payment Status' }, { key: 'date', label: 'Date' }], 'finance_contractors.csv')}>
+                  <Download className="h-4 w-4 mr-1" />Export CSV
+                </Button>
+              </div>
+            </CardHeader>
             <CardContent className="p-0">
               <Table>
                 <TableHeader>
@@ -342,34 +465,32 @@ export default function Finance() {
                     <TableHead>Sector</TableHead>
                     <TableHead>Amount</TableHead>
                     <TableHead>Bank ID</TableHead>
-                    <TableHead>Start Date</TableHead>
-                    <TableHead>End Date</TableHead>
                     <TableHead>Payment Status</TableHead>
+                    <TableHead>Date</TableHead>
                     <TableHead>Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {contractorPayments.map((c: any) => (
+                  {contractorPayments.filter((c: any) => withinDays(c.paid_at ?? c.created_at)).map((c: any) => (
                     <TableRow key={c.id} className={c.payment_status === 'paid' ? 'opacity-60' : ''}>
                       <TableCell className="font-medium">{c.contractor_name}</TableCell>
                       <TableCell>{c.contract_type ?? '-'}</TableCell>
                       <TableCell className="capitalize">{c.sector ?? '-'}</TableCell>
                       <TableCell className="font-medium">${Number(c.amount).toFixed(2)}</TableCell>
                       <TableCell>{c.bank_id ?? '-'}</TableCell>
-                      <TableCell>{c.start_date ? format(new Date(c.start_date), 'MMM d, yyyy') : '-'}</TableCell>
-                      <TableCell>{c.end_date ? format(new Date(c.end_date), 'MMM d, yyyy') : '-'}</TableCell>
                       <TableCell>
                         <Badge className={c.payment_status === 'paid' ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'}>
                           {c.payment_status === 'paid' ? 'Paid' : 'Pending'}
                         </Badge>
                       </TableCell>
+                      <TableCell>{c.paid_at ? format(new Date(c.paid_at), 'MMM d, yyyy') : '-'}</TableCell>
                       <TableCell>
                         {c.payment_status === 'paid' ? (
                           <Badge className="bg-success/20 text-success text-xs">Paid</Badge>
                         ) : canEdit('finance') ? (
                           <Button size="sm" className="gradient-primary text-black font-medium text-xs"
                             disabled={payContractor.isPending}
-                            onClick={() => { if (confirm(`Make payment of $${Number(c.amount).toFixed(2)} to ${c.contractor_name}?`)) payContractor.mutate(c.id); }}>
+                            onClick={() => openConfirm({ title: 'Make Payment', message: `Make payment of $${Number(c.amount).toFixed(2)} to ${c.contractor_name}?`, type: 'info', confirmText: 'Pay', onConfirm: () => payContractor.mutate(c.id) })}>
                             Make Payment
                           </Button>
                         ) : null}
@@ -377,7 +498,7 @@ export default function Finance() {
                     </TableRow>
                   ))}
                   {!contractorPayments.length && (
-                    <TableRow><TableCell colSpan={9} className="text-center py-6 text-muted-foreground">No contractor payments pending</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={8} className="text-center py-6 text-muted-foreground">No contractor payments pending</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -388,7 +509,14 @@ export default function Finance() {
         {/* ── Personnel Wages Panel ── */}
         {finView === 'wages' && (
           <Card>
-            <CardHeader><CardTitle className="text-base">Personnel Wages</CardTitle></CardHeader>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Personnel Wages</CardTitle>
+                <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => exportToCSV(personnelWages.map((w: any) => ({ personnel_id: w.personnel_id ?? '-', name: w.full_name, type: w.employment_type, sector: w.sector ?? '-', pay_period: w.pay_period, days: w.days_worked, amount: Number(w.amount).toFixed(2), bank_id: w.bank_id ?? '-', status: w.payment_status === 'paid' ? 'Paid' : 'Pending', date: w.paid_at ? format(new Date(w.paid_at), 'MMM d, yyyy') : '-' })), [{ key: 'personnel_id', label: 'Personnel ID' }, { key: 'name', label: 'Full Name' }, { key: 'type', label: 'Employment Type' }, { key: 'sector', label: 'Sector' }, { key: 'pay_period', label: 'Pay Period' }, { key: 'days', label: 'Days Worked' }, { key: 'amount', label: 'Amount' }, { key: 'bank_id', label: 'Bank ID' }, { key: 'status', label: 'Payment Status' }, { key: 'date', label: 'Date' }], 'finance_wages.csv')}>
+                  <Download className="h-4 w-4 mr-1" />Export CSV
+                </Button>
+              </div>
+            </CardHeader>
             <CardContent className="p-0">
               <Table>
                 <TableHeader>
@@ -402,11 +530,11 @@ export default function Finance() {
                     <TableHead>Amount</TableHead>
                     <TableHead>Bank ID</TableHead>
                     <TableHead>Payment Status</TableHead>
-                    <TableHead>Action</TableHead>
+                    <TableHead>Date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {personnelWages.map((w: any) => (
+                  {personnelWages.filter((w: any) => withinDays(w.paid_at ?? w.created_at)).map((w: any) => (
                     <TableRow key={w.id} className={w.payment_status === 'paid' ? 'opacity-60' : ''}>
                       <TableCell className="font-mono text-xs">{w.personnel_id ?? '-'}</TableCell>
                       <TableCell className="font-medium">{w.full_name}</TableCell>
@@ -421,17 +549,7 @@ export default function Finance() {
                           {w.payment_status === 'paid' ? 'Paid' : 'Pending'}
                         </Badge>
                       </TableCell>
-                      <TableCell>
-                        {w.payment_status === 'paid' || w.immutable ? (
-                          <Badge className="bg-success/20 text-success text-xs">Paid</Badge>
-                        ) : canEdit('finance') ? (
-                          <Button size="sm" className="gradient-primary text-black font-medium text-xs"
-                            disabled={payWage.isPending}
-                            onClick={() => { if (confirm(`Make payment of $${Number(w.amount).toFixed(2)} to ${w.full_name}?`)) payWage.mutate(w.id); }}>
-                            Make Payment
-                          </Button>
-                        ) : null}
-                      </TableCell>
+                      <TableCell>{w.paid_at ? format(new Date(w.paid_at), 'MMM d, yyyy') : '-'}</TableCell>
                     </TableRow>
                   ))}
                   {!personnelWages.length && (
@@ -442,6 +560,61 @@ export default function Finance() {
             </CardContent>
           </Card>
         )}
+
+        {/* ── PO Payment Modal ── */}
+        <Dialog open={!!payPOItem} onOpenChange={(o) => { if (!o) { setPayPOItem(null); setPayMethod('bank'); } }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Make Payment</DialogTitle></DialogHeader>
+            {payPOItem && (
+              <div className="space-y-4">
+                <div className="rounded-lg bg-muted/30 border border-border p-4 space-y-2 text-sm">
+                  <div className="flex justify-between"><span className="text-muted-foreground">PO Number</span><span className="font-medium">{payPOItem.po_number}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Supplier</span><span className="font-medium">{payPOItem.suppliers?.name ?? '-'}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Commodity</span><span className="font-medium">{payPOItem.commodity ?? '-'}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Amount</span><span className="font-bold text-lg">${Number(payPOItem.total_amount).toFixed(2)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Account Number</span><span>{payPOItem.suppliers?.account_number ?? '-'}</span></div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Net Profit Balance</span>
+                    <span className={`font-semibold ${netProfit >= Number(payPOItem.total_amount) ? 'text-success' : 'text-destructive'}`}>
+                      ${netProfit.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+
+                {Number(payPOItem.total_amount) > netProfit && (
+                  <p className="text-xs text-destructive font-medium rounded border border-destructive/30 bg-destructive/10 px-3 py-2">
+                    Insufficient fund to process payment — balance ${netProfit.toFixed(2)} is less than ${Number(payPOItem.total_amount).toFixed(2)}.
+                  </p>
+                )}
+
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground font-medium">Payment Method</label>
+                  <select
+                    value={payMethod}
+                    onChange={(e) => setPayMethod(e.target.value as 'bank' | 'mobile_money')}
+                    className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                  >
+                    <option value="bank">Bank Transfer</option>
+                    <option value="mobile_money">Mobile Money</option>
+                  </select>
+                </div>
+
+                <div className="flex gap-3">
+                  <Button
+                    className="flex-1 gradient-primary text-black font-medium"
+                    disabled={payPO.isPending || Number(payPOItem.total_amount) > netProfit}
+                    onClick={() => payPO.mutate({ id: payPOItem.id, paymentMethod: payMethod })}
+                  >
+                    {payPO.isPending ? 'Processing...' : 'Confirm Payment'}
+                  </Button>
+                  <Button variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => { setPayPOItem(null); setPayMethod('bank'); }}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );

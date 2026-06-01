@@ -47,6 +47,8 @@ function AdminDashboard() {
 
   const { data: stats } = useQuery({
     queryKey: ['dashboard-stats'],
+    refetchInterval: 30000,
+    staleTime: 0,
     queryFn: async () => {
       const [pigs, machinery, inventoryItems, customers, prodBatches, landParcels, marketingOrders, wages, contractorPayments] = await Promise.all([
         api.get<any[]>('/livestock/pigs').catch(() => []),
@@ -60,7 +62,13 @@ function AdminDashboard() {
         api.get<any[]>('/hr/contractor-payments').catch(() => []),
       ]);
 
-      const inStock = (inventoryItems as any[]).filter(i => Number(i.quantity || 0) > Number(i.threshold || 0)).length;
+      // Group stock_items by name, sum quantities, count those with total > 30
+      const grouped: Record<string, number> = {};
+      for (const i of inventoryItems as any[]) {
+        const name = (i.name ?? '').trim();
+        grouped[name] = (grouped[name] || 0) + Number(i.current_quantity || 0);
+      }
+      const inStock = Object.values(grouped).filter(qty => qty > 30).length;
 
       const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
       const now = new Date();
@@ -92,8 +100,8 @@ function AdminDashboard() {
         return { month: MONTHS[parseInt(m) - 1], ...val };
       });
       const totalRevenue = (marketingOrders as any[])
-        .filter(o => ['completed', 'delivered'].includes(o.status))
-        .reduce((s, o) => s + Number(o.amount || 0), 0);
+        .filter((o: any) => o.status === 'completed' || o.status === 'delivered')
+        .reduce((s: number, o: any) => s + Number(o.amount || 0), 0);
 
       return { pigs: pigs.length, machinery: machinery.length, inStock, customers: customers.length, productionBatches: prodBatches.length, totalParcel: landParcels.length, revenue: totalRevenue, revenueData };
     },
@@ -123,7 +131,7 @@ function AdminDashboard() {
         <div onClick={() => navigate('/customers')} className="cursor-pointer">
           <StatCard title="Customers" value={stats?.customers || 0} icon={Users} variant="default" />
         </div>
-        <div onClick={() => navigate('/orders')} className="cursor-pointer">
+        <div onClick={() => navigate('/finance')} className="cursor-pointer">
           <StatCard title="Total Revenue" value={`$${(stats?.revenue || 0).toLocaleString()}`} icon={DollarSign} variant="success" trend={{ value: 8.2, isPositive: true }} />
         </div>
         <div onClick={() => navigate('/production')} className="cursor-pointer">

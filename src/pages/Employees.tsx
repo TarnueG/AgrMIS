@@ -10,11 +10,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Users, CalendarDays, ClipboardCheck, UserCheck, UserX, Briefcase, HardHat, DollarSign, Search, Pencil, Ban } from 'lucide-react';
+import { Plus, Users, CalendarDays, ClipboardCheck, UserCheck, UserX, Briefcase, HardHat, DollarSign, Search, Pencil, Ban, ListChecks, CheckCircle2, ArrowLeft } from 'lucide-react';
 import { format } from 'date-fns';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useConfirm } from '@/contexts/ConfirmContext';
 
-type EmpView = 'contractor' | 'suspension' | 'active' | 'inactive' | 'employee' | 'daily' | 'salary' | 'attendance_rate' | 'daily_log' | null;
+type EmpView = 'contractor' | 'suspension' | 'active' | 'inactive' | 'employee' | 'daily' | 'salary' | 'attendance_rate' | 'daily_log' | 'task_schedule' | null;
+
+const BLANK_TASK = { taskName: '', location: '', menRequired: 1, personnelId: '', equipmentId: '', startDate: '', endDate: '' };
 
 const ns = 'w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground';
 
@@ -45,12 +48,16 @@ export default function Employees() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
+  const { openConfirm } = useConfirm();
 
   const [view, setView] = useState<EmpView>(null);
+  const [dateFilter, setDateFilter] = useState<'all' | '7' | '30' | '90' | '365'>('all');
   const [personnelSearch, setPersonnelSearch] = useState('');
   const [attendTypeFilter, setAttendTypeFilter] = useState('all');
   const [salaryMonthFilter, setSalaryMonthFilter] = useState('');
   const [dailyLogSelected, setDailyLogSelected] = useState<Set<string>>(new Set());
+  const [isTaskOpen, setIsTaskOpen] = useState(false);
+  const [taskForm, setTaskForm] = useState({ ...BLANK_TASK });
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editEmp, setEditEmp] = useState<any>(null);
@@ -87,6 +94,54 @@ export default function Employees() {
   const { data: salaryData = [] } = useQuery<any[]>({
     queryKey: ['hr-salary'],
     queryFn: () => api.get('/hr/salary'),
+  });
+
+  const { data: dailyLogStatus = [] } = useQuery<{ employeeId: string; submittedAt: string; resetsAt: string }[]>({
+    queryKey: ['daily-log-status'],
+    queryFn: () => api.get('/hr/daily-log/status'),
+    refetchInterval: 60_000,
+  });
+
+  const { data: tasks = [] } = useQuery<any[]>({
+    queryKey: ['farm-tasks'],
+    queryFn: () => api.get('/tasks'),
+    refetchInterval: 60_000,
+  });
+
+  const { data: taskResources = { personnel: [], equipment: [] } } = useQuery<{ personnel: any[]; equipment: any[] }>({
+    queryKey: ['task-resources'],
+    queryFn: () => api.get('/tasks/available'),
+    enabled: isTaskOpen,
+  });
+
+  const createTask = useMutation({
+    mutationFn: (d: typeof taskForm) => api.post('/tasks', {
+      taskName: d.taskName,
+      location: d.location || undefined,
+      menRequired: Number(d.menRequired) || 1,
+      personnelId: d.personnelId || undefined,
+      equipmentId: d.equipmentId || undefined,
+      startDate: d.startDate || undefined,
+      endDate: d.endDate || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['farm-tasks'] });
+      qc.invalidateQueries({ queryKey: ['task-resources'] });
+      toast({ title: 'Task scheduled' });
+      setIsTaskOpen(false);
+      setTaskForm({ ...BLANK_TASK });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const completeTask = useMutation({
+    mutationFn: (id: string) => api.patch(`/tasks/${id}/complete`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['farm-tasks'] });
+      qc.invalidateQueries({ queryKey: ['task-resources'] });
+      toast({ title: 'Task marked completed' });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
   const addEmployee = useMutation({
@@ -184,11 +239,15 @@ export default function Employees() {
       qc.invalidateQueries({ queryKey: ['employees-all'] });
       qc.invalidateQueries({ queryKey: ['attendance-summary'] });
       qc.invalidateQueries({ queryKey: ['hr-stats'] });
-      toast({ title: `Daily log submitted — ${data.submitted} logged, ${data.skipped} already done today` });
+      qc.invalidateQueries({ queryKey: ['daily-log-status'] });
+      toast({ title: `Daily log submitted — ${data.submitted} logged, ${data.skipped} already logged (within 24h)` });
       setDailyLogSelected(new Set());
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
+
+  // ── daily-log lookup: personnel still inside their rolling 24h window ──
+  const submittedLog = new Map(dailyLogStatus.map(s => [s.employeeId, s.resetsAt]));
 
   // ── derived lists ──
   const activeEmps = employees.filter(e => e.status === 'active');
@@ -215,13 +274,17 @@ export default function Employees() {
     { key: 'salary' as EmpView, label: 'Salary', count: salaryData.filter(s => s.action === 'qualified').length, Icon: DollarSign, color: 'bg-purple-500/10 border-purple-500/20 text-purple-400' },
     { key: 'attendance_rate' as EmpView, label: 'Attendance Log', count: attendanceSummary.length, Icon: ClipboardCheck, color: 'bg-blue-500/10 border-blue-500/20 text-blue-400' },
     { key: 'daily_log' as EmpView, label: 'Daily Log', count: stats?.presentToday ?? 0, Icon: CalendarDays, color: 'bg-teal-500/10 border-teal-500/20 text-teal-400' },
+    { key: 'task_schedule' as EmpView, label: 'Task Schedule', count: tasks.filter((t: any) => t.status === 'active').length, Icon: ListChecks, color: 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' },
   ];
 
-  const btnLabel = view === 'contractor' ? 'Add Contract' : view === 'salary' ? 'Send For Payment' : view === 'daily_log' ? 'Add Personnel' : 'Add Personnel';
+  const btnLabel = view === 'contractor' ? 'Add Contract' : view === 'salary' ? 'Send For Payment' : view === 'task_schedule' ? 'Add Task' : 'Add Personnel';
 
   function handlePrimaryBtn() {
     if (view === 'salary') {
-      if (confirm('Send all qualified personnel to Finance for payment?')) sendForPayment.mutate();
+      openConfirm({ title: 'Send for Payment', message: 'Send all qualified personnel to Finance for payment?', type: 'info', confirmText: 'Send', onConfirm: () => sendForPayment.mutate() });
+    } else if (view === 'task_schedule') {
+      setTaskForm({ ...BLANK_TASK });
+      setIsTaskOpen(true);
     } else {
       setIsAddOpen(true);
     }
@@ -243,8 +306,16 @@ export default function Employees() {
     return base.filter(e => e.full_name.toLowerCase().includes(q) || (e.personnel_id ?? '').toLowerCase().includes(q));
   }
 
-  const showPersonnelTable = view !== 'contractor' && view !== 'salary' && view !== 'attendance_rate' && view !== 'daily_log';
+  const DAYS_MAP: Record<string, number> = { '7': 7, '30': 30, '90': 90, '365': 365 };
+  const withinDays = (dateStr?: string) => {
+    if (dateFilter === 'all') return true;
+    if (!dateStr) return false;
+    return Date.now() - new Date(dateStr).getTime() <= DAYS_MAP[dateFilter] * 24 * 60 * 60 * 1000;
+  };
+
+  const showPersonnelTable = view !== null && view !== 'contractor' && view !== 'salary' && view !== 'attendance_rate' && view !== 'daily_log' && view !== 'task_schedule';
   const showDailyLogView = view === 'daily_log';
+  const showTaskView = view === 'task_schedule';
   const showAttendanceView = view === 'attendance_rate';
   const showContractorView = view === 'contractor';
   const showSalaryView = view === 'salary';
@@ -260,45 +331,65 @@ export default function Employees() {
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
         <div className="flex justify-between items-center flex-wrap gap-3">
-          <div>
-            <h1 className="text-3xl font-bold">Human Capital</h1>
-            <p className="text-muted-foreground">Workforce management, payroll, and contractor oversight</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by name..."
-                value={personnelSearch}
-                onChange={e => setPersonnelSearch(e.target.value)}
-                onBlur={() => setPersonnelSearch('')}
-                className="pl-9 w-52 text-white placeholder:text-white/50"
-              />
-            </div>
-            {(view === 'salary' ? canCreate('human_capital') : canCreate('human_capital')) && (
-              <Button className="gradient-primary text-black font-medium" onClick={handlePrimaryBtn} disabled={view === 'salary' && sendForPayment.isPending}>
-                <Plus className="h-4 w-4 mr-2" />{btnLabel}
+          {view ? (
+            <div className="flex items-center gap-3">
+              <Button variant="ghost" size="icon" onClick={() => { setView(null); setDateFilter('all'); setPersonnelSearch(''); }} aria-label="Back to human capital" className="text-muted-foreground hover:text-foreground">
+                <ArrowLeft className="h-5 w-5" />
               </Button>
-            )}
-          </div>
+              <h1 className="text-2xl font-bold">{CARDS.find(c => c.key === view)?.label ?? 'Detail'}</h1>
+            </div>
+          ) : (
+            <div>
+              <h1 className="text-3xl font-bold">Human Capital</h1>
+              <p className="text-muted-foreground">Workforce management, payroll, and contractor oversight</p>
+            </div>
+          )}
+          {view && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name..."
+                  value={personnelSearch}
+                  onChange={e => setPersonnelSearch(e.target.value)}
+                  onBlur={() => setPersonnelSearch('')}
+                  className="pl-9 w-52 text-white placeholder:text-white/50"
+                />
+              </div>
+              <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value as typeof dateFilter)} className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                <option value="all">All time</option>
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="365">Last 365 days</option>
+              </select>
+              {canCreate('human_capital') && (
+                <Button className="gradient-primary text-black font-medium" onClick={handlePrimaryBtn} disabled={view === 'salary' && sendForPayment.isPending}>
+                  <Plus className="h-4 w-4 mr-2" />{btnLabel}
+                </Button>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* 9 Cards */}
-        <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-9 gap-3">
-          {CARDS.filter(({ key }) => canViewCard(`human_capital.${key}`)).map(({ key, label, count, Icon, color }) => (
-            <Card key={key} className={`border ${color} ${cardClass(key)}`} onClick={() => setView(view === key ? null : key)}>
-              <CardContent className="p-4">
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <Icon className="h-6 w-6" />
-                  <div>
-                    <p className="text-xs font-medium leading-tight">{label}</p>
-                    <p className="text-xl font-bold">{count}</p>
+        {/* Cards — dashboard only */}
+        {!view && (
+          <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-5 gap-3">
+            {CARDS.filter(({ key }) => canViewCard(`human_capital.${key}`)).map(({ key, label, count, Icon, color }) => (
+              <Card key={key} className={`border ${color} ${cardClass(key)}`} onClick={() => setView(key)}>
+                <CardContent className="p-4">
+                  <div className="flex flex-col items-center gap-2 text-center">
+                    <Icon className="h-6 w-6" />
+                    <div>
+                      <p className="text-xs font-medium leading-tight">{label}</p>
+                      <p className="text-xl font-bold">{count}</p>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
 
         {/* ── Contractor View ── */}
         {showContractorView && (
@@ -320,7 +411,7 @@ export default function Employees() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredContractors.map((c: any) => (
+                  {filteredContractors.filter((c: any) => withinDays(c.created_at ?? c.start_date)).map((c: any) => (
                     <TableRow key={c.id}>
                       <TableCell className="font-mono text-xs">{c.contractor_id}</TableCell>
                       <TableCell className="font-medium">{c.contractor_name}</TableCell>
@@ -335,7 +426,7 @@ export default function Employees() {
                         {!c.payment_sent ? (
                           canEdit('human_capital') && (
                             <Button size="sm" className="gradient-primary text-black font-medium text-xs"
-                              onClick={() => { if (confirm('Mark contract as finished and send payment request to Finance?')) finishContract.mutate(c.id); }}
+                              onClick={() => openConfirm({ title: 'Finish Contract', message: 'Mark contract as finished and send payment request to Finance?', type: 'warning', confirmText: 'Finish', onConfirm: () => finishContract.mutate(c.id) })}
                               disabled={finishContract.isPending}>
                               Finish
                             </Button>
@@ -383,7 +474,7 @@ export default function Employees() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredSalary.map((s: any) => (
+                  {filteredSalary.filter((s: any) => withinDays(s.date_hired)).map((s: any) => (
                     <TableRow key={s.id}>
                       <TableCell className="font-mono text-xs">{s.personnel_id ?? '-'}</TableCell>
                       <TableCell className="font-medium">{s.full_name}</TableCell>
@@ -429,18 +520,24 @@ export default function Employees() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {employees.filter(e => e.status === 'active').map((emp: any) => (
+                  {employees.filter(e => e.status === 'active').map((emp: any) => {
+                    const resetsAt = submittedLog.get(emp.id);
+                    const locked = !!resetsAt;
+                    return (
                     <TableRow key={emp.id}>
                       <TableCell>
                         <input
                           type="checkbox"
-                          checked={dailyLogSelected.has(emp.id)}
+                          checked={locked || dailyLogSelected.has(emp.id)}
+                          disabled={locked}
+                          title={locked ? `Submitted — resets ${format(new Date(resetsAt!), 'MMM d, h:mm a')}` : undefined}
                           onChange={ev => {
+                            if (locked) return;
                             const next = new Set(dailyLogSelected);
                             if (ev.target.checked) next.add(emp.id); else next.delete(emp.id);
                             setDailyLogSelected(next);
                           }}
-                          className="h-4 w-4 accent-primary cursor-pointer"
+                          className="h-4 w-4 accent-primary cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
                         />
                       </TableCell>
                       <TableCell className="font-mono text-xs">{emp.personnel_id ?? '-'}</TableCell>
@@ -448,7 +545,8 @@ export default function Employees() {
                       <TableCell className="capitalize text-xs">{emp.employment_type}</TableCell>
                       <TableCell className="capitalize text-xs">{emp.sector ?? '-'}</TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                   {!employees.filter(e => e.status === 'active').length && (
                     <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No active personnel</TableCell></TableRow>
                   )}
@@ -460,14 +558,72 @@ export default function Employees() {
                     className="gradient-primary text-black font-medium"
                     disabled={submitDailyLog.isPending}
                     onClick={() => {
-                      if (dailyLogSelected.size === 0) { toast({ title: 'Select at least one personnel', variant: 'destructive' }); return; }
-                      if (confirm(`Submit daily log for ${dailyLogSelected.size} personnel?`)) submitDailyLog.mutate(Array.from(dailyLogSelected));
+                      const toSubmit = Array.from(dailyLogSelected).filter(id => !submittedLog.has(id));
+                      if (toSubmit.length === 0) { toast({ title: 'Select at least one personnel', variant: 'destructive' }); return; }
+                      openConfirm({ title: 'Submit Daily Log', message: `Submit daily log for ${toSubmit.length} personnel?`, type: 'info', confirmText: 'Submit', onConfirm: () => submitDailyLog.mutate(toSubmit) });
                     }}
                   >
                     Submit Daily Log
                   </Button>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* ── Task Schedule View ── */}
+        {showTaskView && (
+          <Card>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Task</TableHead>
+                    <TableHead>Location</TableHead>
+                    <TableHead>Men</TableHead>
+                    <TableHead>Personnel</TableHead>
+                    <TableHead>Equipment</TableHead>
+                    <TableHead>Start</TableHead>
+                    <TableHead>End</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {tasks.map((t: any) => (
+                    <TableRow key={t.id}>
+                      <TableCell className="font-medium">{t.task_name}</TableCell>
+                      <TableCell>{t.location ?? '-'}</TableCell>
+                      <TableCell>{t.men_required ?? '-'}</TableCell>
+                      <TableCell>{t.personnel_name ?? '-'}</TableCell>
+                      <TableCell>{t.equipment_name ?? '-'}</TableCell>
+                      <TableCell>{t.start_date ? format(new Date(t.start_date), 'MMM d, yyyy') : '-'}</TableCell>
+                      <TableCell>{t.end_date ? format(new Date(t.end_date), 'MMM d, yyyy') : '-'}</TableCell>
+                      <TableCell>
+                        <Badge className={t.status === 'completed' ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'}>
+                          {t.status === 'completed' ? 'Completed' : 'Active'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {t.status === 'active' && canEdit('human_capital') && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground"
+                            disabled={completeTask.isPending}
+                            onClick={() => openConfirm({ title: 'Complete Task', message: 'Mark this task as completed? Assigned personnel and equipment will be released.', type: 'success', confirmText: 'Complete', onConfirm: () => completeTask.mutate(t.id) })}
+                          >
+                            <CheckCircle2 className="h-4 w-4 mr-1" />Complete
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {!tasks.length && (
+                    <TableRow><TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No tasks scheduled</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
         )}
@@ -588,14 +744,14 @@ export default function Employees() {
                               ) : view === 'suspension' ? (
                                 canEdit('human_capital') && (
                                   <Button size="sm" variant="outline" className="text-xs text-white border-input"
-                                    onClick={() => { if (confirm('Cancel suspension and restore Active?')) cancelSuspension.mutate(emp.id); }}>
+                                    onClick={() => openConfirm({ title: 'Cancel Suspension', message: 'Cancel suspension and restore personnel to Active?', type: 'warning', confirmText: 'Restore', onConfirm: () => cancelSuspension.mutate(emp.id) })}>
                                     Cancel Suspension
                                   </Button>
                                 )
                               ) : emp.status === 'inactive' ? (
                                 canEdit('human_capital') && (
                                   <Button size="sm" variant="outline" className="text-xs text-white border-input"
-                                    onClick={() => { if (confirm('Restore this personnel to Active?')) unterminate.mutate(emp.id); }}>
+                                    onClick={() => openConfirm({ title: 'Un-terminate', message: 'Restore this personnel to Active status?', type: 'warning', confirmText: 'Restore', onConfirm: () => unterminate.mutate(emp.id) })}>
                                     Un-terminate
                                   </Button>
                                 )
@@ -609,7 +765,7 @@ export default function Employees() {
                                   )}
                                   {canDelete('human_capital') && (
                                     <Button size="sm" variant="destructive" className="text-xs"
-                                      onClick={() => { if (confirm('Terminate this personnel? Record becomes immutable after 48 hours.')) terminate.mutate(emp.id); }}>
+                                      onClick={() => openConfirm({ title: 'Terminate Personnel', message: 'Terminate this personnel? The record will become immutable after 48 hours.', type: 'danger', confirmText: 'Terminate', onConfirm: () => terminate.mutate(emp.id) })}>
                                       Terminate
                                     </Button>
                                   )}
@@ -633,6 +789,66 @@ export default function Employees() {
             </Card>
           </>
         )}
+
+        {/* ── Add Task Dialog ── */}
+        {canCreate('human_capital') && <Dialog open={isTaskOpen} onOpenChange={o => { setIsTaskOpen(o); if (!o) setTaskForm({ ...BLANK_TASK }); }}>
+          <DialogContent className="max-h-[85vh] overflow-y-auto">
+            <DialogHeader><DialogTitle>Add Task</DialogTitle></DialogHeader>
+            <form onSubmit={e => { e.preventDefault(); if (!taskForm.taskName.trim()) { toast({ title: 'Task name is required', variant: 'destructive' }); return; } createTask.mutate(taskForm); }} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Task Name</Label>
+                <Input value={taskForm.taskName} onChange={e => setTaskForm({ ...taskForm, taskName: e.target.value })} required />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Location</Label>
+                  <Input value={taskForm.location} onChange={e => setTaskForm({ ...taskForm, location: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Number of Men Required</Label>
+                  <Input type="number" min="1" value={taskForm.menRequired} onChange={e => setTaskForm({ ...taskForm, menRequired: Number(e.target.value) })} />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Personnel <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <select
+                  value={taskForm.personnelId}
+                  onChange={e => setTaskForm({ ...taskForm, personnelId: e.target.value })}
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                >
+                  <option value="">Unassigned</option>
+                  {taskResources.personnel.map((p: any) => (
+                    <option key={p.id} value={p.id}>{p.full_name} ({p.employment_type})</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label>Equipment <span className="text-muted-foreground text-xs">(operational only)</span></Label>
+                <select
+                  value={taskForm.equipmentId}
+                  onChange={e => setTaskForm({ ...taskForm, equipmentId: e.target.value })}
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                >
+                  <option value="">None</option>
+                  {taskResources.equipment.map((eq: any) => (
+                    <option key={eq.id} value={eq.id}>{eq.name}{eq.model ? ` (${eq.model})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Start Date</Label>
+                  <Input type="date" value={taskForm.startDate} onChange={e => setTaskForm({ ...taskForm, startDate: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>End Date</Label>
+                  <Input type="date" value={taskForm.endDate} onChange={e => setTaskForm({ ...taskForm, endDate: e.target.value })} />
+                </div>
+              </div>
+              <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={createTask.isPending}>Save Task</Button>
+            </form>
+          </DialogContent>
+        </Dialog>}
 
         {/* ── Add Personnel / Add Contract Dialog ── */}
         {canCreate('human_capital') && <Dialog open={isAddOpen} onOpenChange={o => { setIsAddOpen(o); if (!o) { setEmpForm({ ...BLANK_EMP }); setContractForm({ ...BLANK_CONTRACT }); } }}>

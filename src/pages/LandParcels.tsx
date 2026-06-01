@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Wheat, Search, Trash2, MapPin, Edit, ClipboardList } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useConfirm } from '@/contexts/ConfirmContext';
 
 type ParcelView = 'requested' | 'active' | 'inactive' | 'total';
 
@@ -21,6 +22,7 @@ export default function LandParcels() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
+  const { openConfirm } = useConfirm();
   const [selectedView, setSelectedView] = useState<ParcelView>('requested');
   const [search, setSearch] = useState('');
   const [totalFilter, setTotalFilter] = useState('');
@@ -227,7 +229,7 @@ export default function LandParcels() {
                         </Button>
                       )}
                       {canDelete('land_parcels') && (
-                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this parcel request?')) deleteRequestMutation.mutate(r.id); }}>
+                        <Button variant="ghost" size="icon" onClick={() => openConfirm({ title: 'Delete Request', message: 'Delete this parcel request?', type: 'danger', confirmText: 'Delete', onConfirm: () => deleteRequestMutation.mutate(r.id) })}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       )}
@@ -280,7 +282,7 @@ export default function LandParcels() {
                       {canEdit('land_parcels') ? (
                         <select
                           value={p.status}
-                          onChange={(e) => { const ns = e.target.value; if (confirm(`Change status to "${ns}"?`)) updateStatusMutation.mutate({ id: p.id, status: ns }); }}
+                          onChange={(e) => { const ns = e.target.value; openConfirm({ title: 'Change Status', message: `Change status to "${ns}"?`, type: 'warning', confirmText: 'Change', onConfirm: () => updateStatusMutation.mutate({ id: p.id, status: ns }) }); }}
                           className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
                         >
                           {['active', 'inactive', 'fallow', 'preparation', 'harvested'].map(s => <option key={s} value={s}>{s}</option>)}
@@ -291,7 +293,7 @@ export default function LandParcels() {
                     </TableCell>
                     <TableCell className="text-right">
                       {canDelete('land_parcels') && (
-                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this land parcel?')) deleteMutation.mutate(p.id); }}>
+                        <Button variant="ghost" size="icon" onClick={() => openConfirm({ title: 'Delete Parcel', message: 'Delete this land parcel?', type: 'danger', confirmText: 'Delete', onConfirm: () => deleteMutation.mutate(p.id) })}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       )}
@@ -342,7 +344,7 @@ export default function LandParcels() {
                       {canEdit('land_parcels') ? (
                         <select
                           value={p.status}
-                          onChange={(e) => { const ns = e.target.value; if (confirm(`Change status to "${ns}"?`)) updateStatusMutation.mutate({ id: p.id, status: ns }); }}
+                          onChange={(e) => { const ns = e.target.value; openConfirm({ title: 'Change Status', message: `Change status to "${ns}"?`, type: 'warning', confirmText: 'Change', onConfirm: () => updateStatusMutation.mutate({ id: p.id, status: ns }) }); }}
                           className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
                         >
                           {['inactive', 'fallow', 'preparation', 'harvested', 'active'].map(s => <option key={s} value={s}>{s}</option>)}

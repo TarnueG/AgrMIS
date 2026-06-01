@@ -9,13 +9,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { ShoppingCart, Tag, CheckCircle, Loader2, Plus, Trash2, CreditCard, Smartphone, Clock, Navigation, Search } from 'lucide-react';
+import { Tag, CheckCircle, Loader2, Plus, Clock, Navigation, Download, ShoppingCart, Trash2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { usePermissions } from '@/hooks/usePermissions';
 
-type MarketingView = 'cart' | 'prices' | 'pending' | 'in_route' | 'in_process' | 'completed';
-type PaymentStep = 'none' | 'method' | 'form' | 'success';
-type PaymentMethod = 'mastercard' | 'visa' | 'mtn' | null;
+type MarketingView = 'prices' | 'cart' | 'pending' | 'in_route' | 'in_process' | 'completed';
 
 const PRICE_ITEMS = [
   'Cocoa Beans', 'Palm Oil', 'Fresh Fish', 'Dry Fish',
@@ -25,28 +23,31 @@ const PRICE_ITEMS = [
 const UNITS = ['kg', 'ltr', 'pairs', 'units', 'bag', 'crate'];
 
 const BLANK_PRICE = { itemName: '', pricePerUnit: 0, quantityUnit: 'kg' };
-const BLANK_CART = { itemName: '', quantity: 0 };
-const BLANK_PAYMENT = { name: '', cardNumber: '', cvv: '', expiry: '', totalAmount: 0 };
+const BLANK_CART = { itemName: '', quantity: 1 };
+
+function exportToCSV(filename: string, rows: Record<string, any>[]) {
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const csv = [headers.join(','), ...rows.map(r => headers.map(h => JSON.stringify(r[h] ?? '')).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function Marketing() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
-  const [view, setView] = useState<MarketingView>('cart');
+  const { canCreate, canEdit, canViewCard } = usePermissions();
+  const [view, setView] = useState<MarketingView>('pending');
   const [priceOpen, setPriceOpen] = useState(false);
   const [editPrice, setEditPrice] = useState<any>(null);
   const [priceForm, setPriceForm] = useState({ ...BLANK_PRICE });
   const [cartOpen, setCartOpen] = useState(false);
   const [cartForm, setCartForm] = useState({ ...BLANK_CART });
-  const [payStep, setPayStep] = useState<PaymentStep>('none');
-  const [payMethod, setPayMethod] = useState<PaymentMethod>(null);
-  const [payForm, setPayForm] = useState({ ...BLANK_PAYMENT });
-  const [cartSearch, setCartSearch] = useState('');
-
-  const { data: cart = [] } = useQuery<any[]>({
-    queryKey: ['marketing-cart'],
-    queryFn: () => api.get('/marketing/cart'),
-  });
 
   const { data: prices = [] } = useQuery<any[]>({
     queryKey: ['marketing-prices'],
@@ -58,20 +59,41 @@ export default function Marketing() {
     queryFn: () => api.get('/marketing/orders'),
   });
 
-  const { data: availableItems = [] } = useQuery<any[]>({
-    queryKey: ['marketing-available-items'],
-    queryFn: () => api.get('/marketing/available-items'),
+  const { data: cartItems = [] } = useQuery<any[]>({
+    queryKey: ['marketing-cart'],
+    queryFn: () => api.get('/marketing/cart'),
   });
-
-  const cartTotal = cart.reduce((s: number, i: any) => s + Number(i.total_amount), 0);
 
   const pendingOrders   = orders.filter((o: any) => o.status === 'pending');
   const enRouteOrders   = orders.filter((o: any) => o.status === 'en_route');
   const inProcessOrders = orders.filter((o: any) => o.status === 'in_process' || o.status === 'processing');
   const completedOrders = orders.filter((o: any) => o.status === 'completed' || o.status === 'delivered');
 
-  const selectedItemPrice = prices.find((p: any) => p.item_name === cartForm.itemName);
-  const calculatedCost = selectedItemPrice ? cartForm.quantity * Number(selectedItemPrice.price_per_unit) : 0;
+  const cartTotal = cartItems.reduce((sum: number, item: any) => {
+    const price = prices.find((p: any) => p.item_name.toLowerCase() === item.item_name.toLowerCase());
+    return sum + (price ? Number(price.price_per_unit) * Number(item.quantity) : 0);
+  }, 0);
+
+  const addToCart = useMutation({
+    mutationFn: (data: typeof cartForm) => {
+      const price = prices.find((p: any) => p.item_name.toLowerCase() === data.itemName.toLowerCase());
+      const unitPrice = price ? Number(price.price_per_unit) : 0;
+      return api.post('/marketing/cart', { itemName: data.itemName, quantity: data.quantity, unitPrice });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['marketing-cart'] });
+      toast({ title: 'Added to cart' });
+      setCartOpen(false);
+      setCartForm({ ...BLANK_CART });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const removeFromCart = useMutation({
+    mutationFn: (id: string) => api.delete(`/marketing/cart/${id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['marketing-cart'] }),
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
 
   const savePrice = useMutation({
     mutationFn: (data: typeof priceForm) => editPrice
@@ -87,38 +109,18 @@ export default function Marketing() {
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
-  const addToCart = useMutation({
-    mutationFn: (data: { itemName: string; quantity: number; unitPrice: number }) =>
-      api.post('/marketing/cart', data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['marketing-cart'] });
-      toast({ title: 'Added to cart' });
-      setCartOpen(false);
-      setCartForm({ ...BLANK_CART });
-    },
-    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
-  });
-
-  const removeFromCart = useMutation({
-    mutationFn: (id: string) => api.delete(`/marketing/cart/${id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['marketing-cart'] }),
-  });
-
-  const checkout = useMutation({
-    mutationFn: () => api.post('/marketing/checkout', {}),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['marketing-cart'] });
-      queryClient.invalidateQueries({ queryKey: ['marketing-orders'] });
-      setPayStep('success');
-    },
-    onError: (e: any) => toast({ title: 'Checkout failed', description: e.message, variant: 'destructive' }),
-  });
-
   const updateOrderStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       api.patch(`/marketing/orders/${id}`, { status }),
-    onSuccess: () => {
+    onSuccess: (_, { status }) => {
       queryClient.invalidateQueries({ queryKey: ['marketing-orders'] });
+      if (status === 'completed') {
+        // Completed orders deduct from inventory — refresh inventory and dashboard
+        queryClient.invalidateQueries({ queryKey: ['inventory'] });
+        queryClient.invalidateQueries({ queryKey: ['marketing-deductions'] });
+        queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+        queryClient.invalidateQueries({ queryKey: ['ls-by-status'] });
+      }
       toast({ title: 'Order status updated' });
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
@@ -130,18 +132,9 @@ export default function Marketing() {
     setPriceOpen(true);
   };
 
-  const handlePaySubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (payForm.totalAmount < cartTotal) {
-      toast({ title: 'Amount mismatch', description: 'Paid amount is less than cart total', variant: 'destructive' });
-      return;
-    }
-    checkout.mutate();
-  };
-
   const CARDS = [
-    { key: 'cart' as MarketingView, label: 'Shopping Cart', count: cart.length, Icon: ShoppingCart, color: 'bg-primary/10 border-primary/20 text-primary' },
     { key: 'prices' as MarketingView, label: 'Prices', count: prices.length, Icon: Tag, color: 'bg-warning/10 border-warning/20 text-warning' },
+    { key: 'cart' as MarketingView, label: 'Cart', count: cartItems.length, Icon: ShoppingCart, color: 'bg-purple-500/10 border-purple-500/20 text-purple-400' },
     { key: 'pending' as MarketingView, label: 'Pending', count: pendingOrders.length, Icon: Clock, color: 'bg-orange-500/10 border-orange-500/20 text-orange-400' },
     { key: 'in_route' as MarketingView, label: 'In Route', count: enRouteOrders.length, Icon: Navigation, color: 'bg-blue-500/10 border-blue-500/20 text-blue-400' },
     { key: 'in_process' as MarketingView, label: 'In Process', count: inProcessOrders.length, Icon: Loader2, color: 'bg-info/10 border-info/20 text-info' },
@@ -155,7 +148,29 @@ export default function Marketing() {
     completed: completedOrders,
   };
 
-  const isOrderView = ['pending', 'in_route', 'in_process', 'completed'].includes(view);
+  const isOrderView = (['pending', 'in_route', 'in_process', 'completed'] as MarketingView[]).includes(view);
+
+  const handleExportCSV = () => {
+    if (view === 'prices') {
+      exportToCSV('prices.csv', prices.map(p => ({
+        'Item Name': p.item_name,
+        'Quantity Unit': p.quantity_unit,
+        'Price Per Unit': Number(p.price_per_unit).toFixed(2),
+        'Last Updated': p.updated_at ? format(new Date(p.updated_at), 'MMM d, yyyy') : '',
+      })));
+    } else {
+      const rows = orderViewData[view] ?? [];
+      exportToCSV(`${view}-orders.csv`, rows.map(o => ({
+        'Order ID': o.order_id,
+        'Customer ID': o.payment_id ? o.payment_id.slice(0, 8).toUpperCase() : 'N/A',
+        'Item Name': o.item_name,
+        'Quantity': `${Number(o.quantity).toFixed(2)} ${o.quantity_unit ?? ''}`,
+        'Amount': Number(o.amount).toFixed(2),
+        'Date': o.date ? format(new Date(o.date), 'MMM d, yyyy') : '',
+        'Status': o.status,
+      })));
+    }
+  };
 
   return (
     <DashboardLayout>
@@ -165,23 +180,25 @@ export default function Marketing() {
             <h1 className="text-3xl font-bold">Marketing</h1>
             <p className="text-muted-foreground">Manage sales, pricing, and orders</p>
           </div>
-          {view === 'prices' ? (
-            canCreate('marketing') && (
+          <div className="flex gap-2">
+            <Button variant="outline" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={handleExportCSV}>
+              <Download className="h-4 w-4 mr-2" />Export CSV
+            </Button>
+            {view === 'prices' && canCreate('marketing') && (
               <Button className="gradient-primary text-black font-medium" onClick={() => { setEditPrice(null); setPriceForm({ ...BLANK_PRICE }); setPriceOpen(true); }}>
                 <Plus className="h-4 w-4 mr-2" />Set Price
               </Button>
-            )
-          ) : (
-            canCreate('marketing') && (
-              <Button className="gradient-primary text-black font-medium" onClick={() => { setCartForm({ ...BLANK_CART }); setCartOpen(true); }}>
-                <Plus className="h-4 w-4 mr-2" />Add to Cart
+            )}
+            {view === 'cart' && canCreate('marketing') && (
+              <Button variant="outline" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => { setCartForm({ ...BLANK_CART }); setCartOpen(true); }}>
+                <Plus className="h-4 w-4 mr-2" />Add Item
               </Button>
-            )
-          )}
+            )}
+          </div>
         </div>
 
         {/* Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           {CARDS.filter(({ key }) => canViewCard(`marketing.${key}`)).map(({ key, label, count, Icon, color }) => (
             <Card
               key={key}
@@ -200,72 +217,6 @@ export default function Marketing() {
             </Card>
           ))}
         </div>
-
-        {/* Shopping Cart View */}
-        {view === 'cart' && (
-          <Card>
-            <div className="p-4 border-b">
-              <div className="relative max-w-sm">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search by item name..."
-                  value={cartSearch}
-                  onChange={e => setCartSearch(e.target.value)}
-                  onBlur={() => setCartSearch('')}
-                  className="pl-9 text-white placeholder:text-white/50"
-                />
-              </div>
-            </div>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Item Name</TableHead>
-                    <TableHead>Quantity</TableHead>
-                    <TableHead>Unit Price</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {cart.filter((item: any) => !cartSearch || item.item_name.toLowerCase().includes(cartSearch.toLowerCase())).map((item: any) => (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">{item.item_name}</TableCell>
-                      <TableCell>{Number(item.quantity).toFixed(2)}</TableCell>
-                      <TableCell>${Number(item.unit_price).toFixed(2)}</TableCell>
-                      <TableCell className="font-medium">${Number(item.total_amount).toFixed(2)}</TableCell>
-                      <TableCell className="text-right">
-                        {canDelete('marketing') && (
-                          <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remove from cart?')) removeFromCart.mutate(item.id); }}>
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {!cart.length && (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Cart is empty</TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
-              {cart.length > 0 && (
-                <div className="p-4 border-t flex flex-col items-center gap-3">
-                  <p className="text-lg font-bold">Total: ${cartTotal.toFixed(2)}</p>
-                  {canEdit('marketing') && (
-                    <Button
-                      className="gradient-primary text-black font-medium px-8"
-                      onClick={() => { setPayForm({ ...BLANK_PAYMENT, totalAmount: cartTotal }); setPayStep('method'); setPayMethod(null); }}
-                    >
-                      Pay
-                    </Button>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
 
         {/* Prices View */}
         {view === 'prices' && (
@@ -308,6 +259,62 @@ export default function Marketing() {
           </Card>
         )}
 
+        {/* Cart View — tracking only; payment happens at Sales & Order Points */}
+        {view === 'cart' && (
+          <div className="space-y-4">
+            <div className="rounded-md border border-blue-500/40 bg-blue-500/10 px-4 py-3 text-sm text-blue-300 font-medium">
+              This cart tracks customer shopping carts only. Payment is processed at Sales &amp; Order Points.
+            </div>
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Item</TableHead>
+                      <TableHead>Quantity</TableHead>
+                      <TableHead>Unit Price</TableHead>
+                      <TableHead className="text-right">Line Total</TableHead>
+                      <TableHead className="text-right">Action</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {cartItems.map((item: any) => {
+                      const price = prices.find((p: any) => p.item_name.toLowerCase() === item.item_name.toLowerCase());
+                      const unitPrice = price ? Number(price.price_per_unit) : 0;
+                      const lineTotal = unitPrice * Number(item.quantity);
+                      return (
+                        <TableRow key={item.id}>
+                          <TableCell className="font-medium">{item.item_name}</TableCell>
+                          <TableCell>{Number(item.quantity).toFixed(2)} {price?.quantity_unit ?? ''}</TableCell>
+                          <TableCell>${unitPrice.toFixed(2)}</TableCell>
+                          <TableCell className="text-right">${lineTotal.toFixed(2)}</TableCell>
+                          <TableCell className="text-right">
+                            <Button variant="ghost" size="sm" onClick={() => { if (confirm('Remove from cart?')) removeFromCart.mutate(item.id); }}>
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                    {!cartItems.length && (
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">Cart is empty — add items from the Prices view</TableCell>
+                      </TableRow>
+                    )}
+                    {cartItems.length > 0 && (
+                      <TableRow className="border-t-2">
+                        <TableCell colSpan={3} className="font-bold text-right">Total</TableCell>
+                        <TableCell className="text-right font-bold text-lg">${cartTotal.toFixed(2)}</TableCell>
+                        <TableCell />
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
         {/* Order Views: Pending, In Route, In Process, Completed */}
         {isOrderView && (
           <Card>
@@ -316,6 +323,7 @@ export default function Marketing() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Order ID</TableHead>
+                    <TableHead>Customer ID</TableHead>
                     <TableHead>Item Name</TableHead>
                     <TableHead>Quantity</TableHead>
                     <TableHead>Amount</TableHead>
@@ -327,6 +335,7 @@ export default function Marketing() {
                   {(orderViewData[view] ?? []).map((o: any) => (
                     <TableRow key={o.id}>
                       <TableCell className="font-mono text-sm">{o.order_id}</TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">{o.payment_id ? o.payment_id.slice(0, 8).toUpperCase() : 'N/A'}</TableCell>
                       <TableCell className="font-medium">{o.item_name}</TableCell>
                       <TableCell>{Number(o.quantity).toFixed(2)} {o.quantity_unit}</TableCell>
                       <TableCell>${Number(o.amount).toFixed(2)}</TableCell>
@@ -357,13 +366,54 @@ export default function Marketing() {
                   ))}
                   {!(orderViewData[view] ?? []).length && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No orders</TableCell>
+                      <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No orders</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
             </CardContent>
           </Card>
+        )}
+
+        {/* Add to Cart Dialog */}
+        {canCreate('marketing') && (
+        <Dialog open={cartOpen} onOpenChange={(o) => { setCartOpen(o); if (!o) setCartForm({ ...BLANK_CART }); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add Item to Cart</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={(e) => { e.preventDefault(); addToCart.mutate(cartForm); }} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Item</Label>
+                <select
+                  value={cartForm.itemName}
+                  onChange={(e) => setCartForm({ ...cartForm, itemName: e.target.value })}
+                  required
+                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                >
+                  <option value="">Select item</option>
+                  {prices.map((p: any) => (
+                    <option key={p.id} value={p.item_name}>{p.item_name} — ${Number(p.price_per_unit).toFixed(2)}/{p.quantity_unit}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <Label>Quantity</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={cartForm.quantity}
+                  onChange={(e) => setCartForm({ ...cartForm, quantity: Number(e.target.value) })}
+                  required
+                />
+              </div>
+              <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={addToCart.isPending}>
+                Add to Cart
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
         )}
 
         {/* Set Price Dialog */}
@@ -426,160 +476,6 @@ export default function Marketing() {
           </DialogContent>
         </Dialog>
         )}
-
-        {/* Add to Cart Dialog */}
-        {canCreate('marketing') && (
-        <Dialog open={cartOpen} onOpenChange={(o) => { setCartOpen(o); if (!o) setCartForm({ ...BLANK_CART }); }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add to Cart</DialogTitle>
-            </DialogHeader>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const unitPrice = selectedItemPrice ? Number(selectedItemPrice.price_per_unit) : 0;
-                addToCart.mutate({ itemName: cartForm.itemName, quantity: cartForm.quantity, unitPrice });
-              }}
-              className="space-y-4"
-            >
-              <div className="space-y-2">
-                <Label>Select Item (In Stock)</Label>
-                <select
-                  value={cartForm.itemName}
-                  onChange={(e) => setCartForm({ ...cartForm, itemName: e.target.value })}
-                  required
-                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                >
-                  <option value="">Select inventory item</option>
-                  {availableItems.map((item: any) => (
-                    <option key={item.id} value={item.name}>
-                      {item.name} (Stock: {Number(item.current_quantity).toFixed(2)} {item.units_of_measure?.symbol ?? ''})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label>Quantity</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={cartForm.quantity || ''}
-                  onChange={(e) => setCartForm({ ...cartForm, quantity: Number(e.target.value) })}
-                  required
-                />
-              </div>
-              {cartForm.itemName && (
-                <div className="rounded-md bg-muted p-3 text-sm space-y-1">
-                  <p>Unit Price: <span className="font-medium">${selectedItemPrice ? Number(selectedItemPrice.price_per_unit).toFixed(2) : '0.00'} / {selectedItemPrice?.quantity_unit ?? 'unit'}</span></p>
-                  <p>Total Cost: <span className="font-bold text-primary">${calculatedCost.toFixed(2)}</span></p>
-                  {!selectedItemPrice && <p className="text-warning text-xs">No price set for this item. Cost will be $0.00.</p>}
-                </div>
-              )}
-              <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={addToCart.isPending}>
-                Add to Cart
-              </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
-        )}
-
-        {/* Payment Dialog — Method Selection */}
-        {canEdit('marketing') && (
-        <Dialog open={payStep === 'method'} onOpenChange={(o) => { if (!o) setPayStep('none'); }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Select Payment Method</DialogTitle>
-            </DialogHeader>
-            <div className="grid grid-cols-3 gap-4 py-4">
-              {([
-                { key: 'mastercard', label: 'MasterCard', Icon: CreditCard },
-                { key: 'visa', label: 'Visa', Icon: CreditCard },
-                { key: 'mtn', label: 'MTN MoMo', Icon: Smartphone },
-              ] as const).map(({ key, label, Icon }) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => { setPayMethod(key); setPayStep('form'); }}
-                  className="flex flex-col items-center gap-2 p-4 rounded-lg border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors"
-                >
-                  <Icon className="h-8 w-8" />
-                  <span className="text-sm font-medium">{label}</span>
-                </button>
-              ))}
-            </div>
-          </DialogContent>
-        </Dialog>
-        )}
-
-        {/* Payment Dialog — Form */}
-        {canEdit('marketing') && (
-        <Dialog open={payStep === 'form'} onOpenChange={(o) => { if (!o) setPayStep('none'); }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>{payMethod === 'mtn' ? 'MTN Mobile Money' : payMethod === 'visa' ? 'Visa Card' : 'MasterCard'} Payment</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handlePaySubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label>Name on Card</Label>
-                <Input value={payForm.name} onChange={(e) => setPayForm({ ...payForm, name: e.target.value })} required placeholder="Full name" />
-              </div>
-              <div className="space-y-2">
-                <Label>{payMethod === 'mtn' ? 'Phone Number' : 'Card Number'}</Label>
-                <Input
-                  value={payForm.cardNumber}
-                  onChange={(e) => setPayForm({ ...payForm, cardNumber: e.target.value })}
-                  required
-                  placeholder={payMethod === 'mtn' ? '024XXXXXXX' : '•••• •••• •••• ••••'}
-                  maxLength={payMethod === 'mtn' ? 15 : 19}
-                />
-              </div>
-              {payMethod !== 'mtn' && (
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>CVV</Label>
-                    <Input value={payForm.cvv} onChange={(e) => setPayForm({ ...payForm, cvv: e.target.value })} required placeholder="•••" maxLength={4} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Expiry Date</Label>
-                    <Input value={payForm.expiry} onChange={(e) => setPayForm({ ...payForm, expiry: e.target.value })} required placeholder="MM/YY" maxLength={5} />
-                  </div>
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label>Total Amount ($)</Label>
-                <Input type="number" value={payForm.totalAmount} readOnly className="bg-muted font-bold text-primary" />
-              </div>
-              <div className="flex gap-2">
-                <Button type="button" variant="outline" className="flex-1 border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => setPayStep('method')}>
-                  Back
-                </Button>
-                <Button type="submit" className="flex-1 gradient-primary text-black font-medium" disabled={checkout.isPending}>
-                  {checkout.isPending ? 'Processing...' : 'Confirm Payment'}
-                </Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
-        )}
-
-        {/* Payment Success Dialog */}
-        <Dialog open={payStep === 'success'} onOpenChange={(o) => { if (!o) { setPayStep('none'); setView('pending'); } }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Payment Successful</DialogTitle>
-            </DialogHeader>
-            <div className="flex flex-col items-center gap-4 py-6">
-              <div className="h-16 w-16 rounded-full bg-success/20 flex items-center justify-center">
-                <CheckCircle className="h-10 w-10 text-success" />
-              </div>
-              <p className="text-center text-muted-foreground">Your payment has been processed. Orders have been created and are now pending.</p>
-              <Button className="gradient-primary text-black font-medium px-8" onClick={() => { setPayStep('none'); setView('pending'); }}>
-                View Orders
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
       </div>
     </DashboardLayout>
   );

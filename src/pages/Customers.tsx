@@ -10,18 +10,41 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Users, Search, Mail, Phone, Building2, User, ArrowLeft } from 'lucide-react';
+import { Plus, Users, Search, Mail, Phone, Building2, User, ArrowLeft, ChevronDown, ChevronRight, Download } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { usePermissions } from '@/hooks/usePermissions';
+import { format } from 'date-fns';
+import { useConfirm } from '@/contexts/ConfirmContext';
 
-type CrmView = 'all' | 'business' | 'individual';
+type CrmView = 'all' | 'business' | 'individual' | 'purchased';
+
+function exportToCSV(rows: any[], columns: { key: string; label: string }[], filename: string) {
+  const header = columns.map(c => c.label).join(',');
+  const body = rows.map(row =>
+    columns.map(c => {
+      const val = row[c.key] ?? '';
+      const str = String(val).replace(/"/g, '""');
+      return str.includes(',') || str.includes('"') || str.includes('\n') ? `"${str}"` : str;
+    }).join(',')
+  ).join('\n');
+  const blob = new Blob([header + '\n' + body], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function Customers() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { canCreate, canEdit, canDelete } = usePermissions();
-  const [crmView, setCrmView] = useState<CrmView | null>(null);
+  const { openConfirm } = useConfirm();
+  // Default view = Total Customers (all)
+  const [crmView, setCrmView] = useState<CrmView | null>('all');
   const [selectedCustomer, setSelectedCustomer] = useState<any>(null);
+  const [expandedPurchasedId, setExpandedPurchasedId] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [isOpen, setIsOpen] = useState(false);
@@ -43,6 +66,12 @@ export default function Customers() {
     queryKey: ['customer-orders', selectedCustomer?.id],
     queryFn: () => api.get<any[]>(`/sales/customers/${selectedCustomer!.id}/orders`),
     enabled: !!selectedCustomer,
+  });
+
+  // All marketing orders for the Purchased card
+  const { data: allOrders = [] } = useQuery<any[]>({
+    queryKey: ['crm-all-orders'],
+    queryFn: () => api.get('/marketing/orders'),
   });
 
   const addMutation = useMutation({
@@ -105,6 +134,31 @@ export default function Customers() {
 
   const showActions = canEdit('crm') || canDelete('crm');
 
+  // Build purchased summary per customer
+  const completedOrders = allOrders.filter((o: any) => o.status === 'completed' || o.status === 'delivered');
+  const customerOrderMap: Record<string, any[]> = {};
+  completedOrders.forEach((o: any) => {
+    const cid = o.customer_id ?? o.customerId;
+    if (!cid) return;
+    if (!customerOrderMap[cid]) customerOrderMap[cid] = [];
+    customerOrderMap[cid].push(o);
+  });
+
+  const purchasedCustomers = activeCustomers
+    .filter(c => customerOrderMap[c.id]?.length > 0)
+    .map(c => {
+      const orders = customerOrderMap[c.id] ?? [];
+      const pendingOrders = allOrders.filter((o: any) => (o.customer_id ?? o.customerId) === c.id && o.status === 'pending');
+      return {
+        ...c,
+        completedOrders: orders,
+        pendingCount: pendingOrders.length,
+        completedCount: orders.length,
+        totalQty: orders.reduce((s: number, o: any) => s + Number(o.quantity ?? 0), 0),
+        lastOrderDate: orders.sort((a: any, b: any) => new Date(b.date ?? b.created_at).getTime() - new Date(a.date ?? a.created_at).getTime())[0]?.date ?? null,
+      };
+    });
+
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
@@ -113,59 +167,66 @@ export default function Customers() {
             <h1 className="text-3xl font-bold">Customer Relationship Management</h1>
             <p className="text-muted-foreground">Manage your customers and contacts</p>
           </div>
-          {canCreate('crm') && (
-            <Dialog open={isOpen} onOpenChange={setIsOpen}>
-              <DialogTrigger asChild>
-                <Button className="gradient-primary text-black font-medium">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Customer
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Add New Customer</DialogTitle>
-                </DialogHeader>
-                <form onSubmit={(e) => { e.preventDefault(); addMutation.mutate(formData); }} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Customer Name</Label>
-                    <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required className="text-white" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Email</Label>
-                      <Input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="text-white" />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Phone</Label>
-                      <Input value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} className="text-white" />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Type</Label>
-                    <select
-                      value={formData.customer_type}
-                      onChange={(e) => setFormData({ ...formData, customer_type: e.target.value })}
-                      className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                    >
-                      <option value="individual">Individual</option>
-                      <option value="business">Business</option>
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Address</Label>
-                    <Textarea value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} className="text-white" />
-                  </div>
-                  <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={addMutation.isPending}>
+          <div className="flex gap-2">
+            {canCreate('crm') && (
+              <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => exportToCSV(activeCustomers.map(c => ({ id: c.display_id ?? `CUST-${c.id.substring(0,6).toUpperCase()}`, name: c.name, email: c.email ?? '-', phone: c.phone ?? '-', type: c.customer_type, address: c.address ?? '-', date: new Date(c.created_at).toLocaleDateString() })), [{ key: 'id', label: 'Customer ID' }, { key: 'name', label: 'Name' }, { key: 'email', label: 'Email' }, { key: 'phone', label: 'Phone' }, { key: 'type', label: 'Type' }, { key: 'address', label: 'Address' }, { key: 'date', label: 'Date' }], 'crm_customers.csv')}>
+                <Download className="h-4 w-4 mr-1" />Export CSV
+              </Button>
+            )}
+            {canCreate('crm') && (
+              <Dialog open={isOpen} onOpenChange={setIsOpen}>
+                <DialogTrigger asChild>
+                  <Button className="gradient-primary text-black font-medium">
+                    <Plus className="h-4 w-4 mr-2" />
                     Add Customer
                   </Button>
-                </form>
-              </DialogContent>
-            </Dialog>
-          )}
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Add New Customer</DialogTitle>
+                  </DialogHeader>
+                  <form onSubmit={(e) => { e.preventDefault(); addMutation.mutate(formData); }} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Customer Name</Label>
+                      <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required className="text-white" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Email</Label>
+                        <Input type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} className="text-white" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Phone</Label>
+                        <Input value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} className="text-white" />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Type</Label>
+                      <select
+                        value={formData.customer_type}
+                        onChange={(e) => setFormData({ ...formData, customer_type: e.target.value })}
+                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                      >
+                        <option value="individual">Individual</option>
+                        <option value="business">Business</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Address</Label>
+                      <Textarea value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} className="text-white" />
+                    </div>
+                    <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={addMutation.isPending}>
+                      Add Customer
+                    </Button>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            )}
+          </div>
         </div>
 
         {/* ── Cards ─────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card className={`bg-primary/10 border-primary/20 ${cardClass('all')}`} onClick={() => handleCardClick('all')}>
             <CardContent className="p-6">
               <div className="flex items-center gap-4">
@@ -195,6 +256,17 @@ export default function Customers() {
                 <div>
                   <p className="text-sm text-muted-foreground">Individual</p>
                   <p className="text-2xl font-bold">{individualCount}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className={`bg-success/10 border-success/20 ${cardClass('purchased')}`} onClick={() => handleCardClick('purchased')}>
+            <CardContent className="p-6">
+              <div className="flex items-center gap-4">
+                <div className="p-3 rounded-xl bg-success/20"><Users className="h-6 w-6 text-success" /></div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Purchased</p>
+                  <p className="text-2xl font-bold">{purchasedCustomers.length}</p>
                 </div>
               </div>
             </CardContent>
@@ -254,8 +326,78 @@ export default function Customers() {
           </div>
         )}
 
+        {/* ── Purchased Card View ────────────────────────────────── */}
+        {crmView === 'purchased' && !selectedCustomer && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <p className="font-semibold text-sm">Customers with Completed Orders</p>
+                <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => exportToCSV(purchasedCustomers.map(c => ({ customer_id: c.display_id ?? `CUST-${c.id.substring(0,6).toUpperCase()}`, name: c.name, completed: c.completedCount, pending: c.pendingCount, total_qty: c.totalQty.toFixed(2), date: c.lastOrderDate ? format(new Date(c.lastOrderDate), 'MMM d, yyyy') : '-' })), [{ key: 'customer_id', label: 'Customer ID' }, { key: 'name', label: 'Customer Name' }, { key: 'completed', label: 'Completed Orders' }, { key: 'pending', label: 'Pending Orders' }, { key: 'total_qty', label: 'Total Quantity' }, { key: 'date', label: 'Date' }], 'crm_purchased.csv')}>
+                  <Download className="h-4 w-4 mr-1" />Export CSV
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-8"></TableHead>
+                    <TableHead>Customer ID</TableHead>
+                    <TableHead>Customer Name</TableHead>
+                    <TableHead>Order ID</TableHead>
+                    <TableHead>Completed Orders</TableHead>
+                    <TableHead>Pending Orders</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>Total Quantity</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {purchasedCustomers.map((c) => (
+                    <>
+                      <TableRow
+                        key={c.id}
+                        className="cursor-pointer hover:bg-accent/30"
+                        onClick={() => setExpandedPurchasedId(expandedPurchasedId === c.id ? null : c.id)}
+                      >
+                        <TableCell>
+                          {expandedPurchasedId === c.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">{c.display_id ?? `CUST-${c.id.substring(0,6).toUpperCase()}`}</TableCell>
+                        <TableCell className="font-medium">{c.name}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs">{c.completedOrders[0]?.order_id ?? '-'}</TableCell>
+                        <TableCell>{c.completedCount}</TableCell>
+                        <TableCell>{c.pendingCount}</TableCell>
+                        <TableCell>{c.lastOrderDate ? format(new Date(c.lastOrderDate), 'MMM d, yyyy') : '-'}</TableCell>
+                        <TableCell>{c.totalQty.toFixed(2)}</TableCell>
+                      </TableRow>
+                      {expandedPurchasedId === c.id && c.completedOrders.map((o: any) => (
+                        <TableRow key={o.id} className="bg-muted/10">
+                          <TableCell></TableCell>
+                          <TableCell colSpan={2} className="pl-6 text-xs text-muted-foreground">↳ {o.order_id}</TableCell>
+                          <TableCell className="text-xs">{o.item_name}</TableCell>
+                          <TableCell className="text-xs">{Number(o.quantity).toFixed(2)} {o.quantity_unit}</TableCell>
+                          <TableCell className="text-xs">${Number(o.amount).toFixed(2)}</TableCell>
+                          <TableCell className="text-xs">{o.date ? format(new Date(o.date), 'MMM d, yyyy') : '-'}</TableCell>
+                          <TableCell>
+                            <Badge className="bg-success/20 text-success text-xs">Completed</Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </>
+                  ))}
+                  {!purchasedCustomers.length && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No customers with completed orders</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
+
         {/* ── CRM Card View Table ────────────────────────────────── */}
-        {crmView && !selectedCustomer && (
+        {crmView && crmView !== 'purchased' && !selectedCustomer && (
           <Card>
             <CardHeader>
               <div className="flex flex-wrap gap-3 items-center justify-between">
@@ -325,7 +467,7 @@ export default function Customers() {
                             <Button
                               size="sm"
                               variant="destructive"
-                              onClick={() => { if (confirm(`Delete ${customer.name}?`)) deleteMutation.mutate(customer.id); }}
+                              onClick={() => openConfirm({ title: 'Delete Customer', message: `Delete ${customer.name}? This cannot be undone.`, type: 'danger', confirmText: 'Delete', onConfirm: () => deleteMutation.mutate(customer.id) })}
                             >
                               Delete
                             </Button>
@@ -404,7 +546,7 @@ export default function Customers() {
                             <Button
                               size="sm"
                               variant="destructive"
-                              onClick={() => { if (confirm(`Delete ${customer.name}?`)) deleteMutation.mutate(customer.id); }}
+                              onClick={() => openConfirm({ title: 'Delete Customer', message: `Delete ${customer.name}? This cannot be undone.`, type: 'danger', confirmText: 'Delete', onConfirm: () => deleteMutation.mutate(customer.id) })}
                             >
                               Delete
                             </Button>

@@ -124,12 +124,28 @@ router.get('/users', isAdmin, async (req, res) => {
   }
 });
 
+async function checkRoleCapacity(roleId: string, excludeUserId?: string): Promise<string | null> {
+  const role = await prisma.roles.findUnique({ where: { id: roleId } });
+  if (!role || role.name === 'customer') return null;
+  const count = await (prisma as any).users.count({
+    where: {
+      role_id: roleId,
+      deleted_at: null,
+      ...(excludeUserId && { id: { not: excludeUserId } }),
+    },
+  });
+  if (count >= 1) return `The "${role.name}" role already has an active account. Each role (except Customer) can only have one user.`;
+  return null;
+}
+
 // PATCH /api/v1/access-control/users/:id/role
 router.patch('/users/:id/role', isAdmin, async (req, res) => {
   const schema = z.object({ roleId: z.string().uuid() });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
   try {
+    const conflict = await checkRoleCapacity(parsed.data.roleId, String(req.params.id));
+    if (conflict) return res.status(409).json({ error: conflict, code: 'ROLE_CAPACITY_EXCEEDED' });
     await prisma.users.update({
       where: { id: String(req.params.id) },
       data: { role_id: parsed.data.roleId, updated_at: new Date() },
@@ -287,6 +303,11 @@ router.post('/create-account', isAdmin, async (req, res) => {
     return res.status(409).json({ error: 'An account with this email already exists', code: 'EMAIL_TAKEN' });
   }
 
+  const conflict = await checkRoleCapacity(roleId);
+  if (conflict) {
+    return res.status(409).json({ error: conflict, code: 'ROLE_CAPACITY_EXCEEDED' });
+  }
+
   // Generate username: first name + first letter of last name, lowercase
   const parts = fullName.trim().split(/\s+/);
   const base =
@@ -411,6 +432,35 @@ router.put('/cards', isAdmin, async (req, res) => {
     return res.json({ message: 'Card permissions updated' });
   } catch {
     return res.status(500).json({ error: 'Failed to update card permissions', code: 'DB_ERROR' });
+  }
+});
+
+// POST /api/v1/access-control/users/:id/reset-password
+router.post('/users/:id/reset-password', isAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const user = await (prisma as any).users.findUnique({ where: { id } });
+    if (!user) return res.status(404).json({ error: 'User not found', code: 'NOT_FOUND' });
+    const rawPassword = generatePassword();
+    const passwordHash = hashPassword(rawPassword);
+    await (prisma as any).users.update({
+      where: { id },
+      data: { password_hash: passwordHash, updated_at: new Date() },
+    });
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({
+      actorUserId: req.user!.userId,
+      targetUserId: String(id),
+      eventType: 'settings_changed',
+      subsystem: 'settings',
+      description: `Password reset for ${user.full_name} (${user.email})`,
+      metadata: {},
+      ipAddress: ip,
+      userAgent,
+    });
+    return res.json({ newPassword: rawPassword, username: user.username, fullName: user.full_name });
+  } catch {
+    return res.status(500).json({ error: 'Failed to reset password', code: 'DB_ERROR' });
   }
 });
 

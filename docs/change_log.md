@@ -2,6 +2,17 @@
 
 ---
 
+## 2026-05-18 — Pre-Presentation Production Patch
+
+- `src/pages/Marketing.tsx` — removed Shopping Cart card (grid shrunk to 5 cols), all Add to Cart buttons, cart-related state/queries/mutations; added Customer ID column (payment_id.slice(0,8).toUpperCase()); Export CSV button
+- `backend/src/routes/inventory.ts` — `POST /inventory/apply`: validates stockItemId + quantity + description (≤400 chars); checks quantity < current_quantity; atomic prisma.$transaction creates usage transaction + decrements stock_items.current_quantity
+- `src/pages/Production.tsx` — DateFilter type (all/7/30/90/365); date filter select beside search bar; Export CSV header button; isExpiredPassed() hides batches 24h after status=passed; Chemicals & Feeds card + view; Add To Apply dialog (item selector, qty, ≤50-word description); applyChemFeed mutation → POST /inventory/apply
+- `src/components/ui/ConfirmModal.tsx` — new Dialog-based confirmation modal; 4 type configs (danger/warning/info/success) with matching icon + button style
+- `src/contexts/ConfirmContext.tsx` — ConfirmProvider wraps app; useConfirm() hook returns openConfirm(); replaces all window.confirm() calls site-wide
+- `src/App.tsx` — ConfirmProvider added around app tree
+- 11 pages (Customers, Employees, Finance, LandParcels, Livestock, Machinery, Orders, Procurement, Production, SalesOrderPoints, Settings) — window.confirm() removed; openConfirm({title, message, type, confirmText, onConfirm}) used throughout
+- `src/pages/SalesOrderPoints.tsx` — payOpen/payMethod state added; checkout mutation (POST /marketing/checkout); Pay button in cart footer; Pay dialog with order summary + payment method selector (cash/bank_transfer/mobile_money); on success invalidates cart+orders queries, shows toast, switches to pending view
+
 ## 2026-05-15 — Card-Level Access Control, Admin Session Fix, Dead Code Removal
 
 ### Problem 1: Admin UI leakage (session cache race condition)

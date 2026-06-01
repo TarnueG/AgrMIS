@@ -4,6 +4,26 @@ import { randomUUID } from 'crypto';
 import prisma from '../lib/prisma';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
+import paymentRouter from './marketingPayments';
+
+// Maps a sold marketing item to a livestock species/source so a completed order
+// marks that many Healthy animals as 'sold' (mirrors raw-material stock deduction).
+async function sellLivestock(farmId: string | undefined, itemName: string, qty: number) {
+  const name = (itemName || '').toLowerCase().trim();
+  const n = Math.max(0, Math.floor(qty));
+  if (!farmId || n <= 0) return;
+  let ids: any[] = [];
+  if (name.includes('pig') || name.includes('piglet')) {
+    ids = await prisma.$queryRaw<any[]>`SELECT id FROM pigs WHERE farm_id = ${farmId}::uuid AND status = 'healthy' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT ${n}`;
+    for (const r of ids) await prisma.$executeRaw`UPDATE pigs SET status = 'sold', updated_at = NOW() WHERE id = ${r.id}::uuid`;
+  } else if (name === 'chicken' || name === 'duck') {
+    ids = await prisma.$queryRaw<any[]>`SELECT id FROM birds WHERE farm_id = ${farmId}::uuid AND status = 'healthy' AND bird_type = ${name} AND deleted_at IS NULL ORDER BY created_at ASC LIMIT ${n}`;
+    for (const r of ids) await prisma.$executeRaw`UPDATE birds SET status = 'sold', updated_at = NOW() WHERE id = ${r.id}::uuid`;
+  } else if (name === 'cow' || name === 'goat' || name === 'sheep') {
+    ids = await prisma.$queryRaw<any[]>`SELECT id FROM cattle WHERE farm_id = ${farmId}::uuid AND status = 'healthy' AND cattle_type = ${name} AND deleted_at IS NULL ORDER BY created_at ASC LIMIT ${n}`;
+    for (const r of ids) await prisma.$executeRaw`UPDATE cattle SET status = 'sold', updated_at = NOW() WHERE id = ${r.id}::uuid`;
+  }
+}
 
 const router = Router();
 router.use(requireAuth);
@@ -209,27 +229,45 @@ router.patch('/orders/:id', async (req, res) => {
     const order = await (prisma as any).marketing_orders.findUnique({ where: { id: req.params.id } });
     if (!order) return res.status(404).json({ error: 'Order not found', code: 'NOT_FOUND' });
 
-    // Stock deduction runs when first moving to processing/in_process — isolated so it never blocks the status update
-    if ((status === 'processing' || status === 'in_process') && order.status !== 'processing' && order.status !== 'in_process') {
+    // Stock deduction triggers when order is first marked completed — best-effort, never blocks status update
+    if (status === 'completed' && order.status !== 'completed' && order.status !== 'delivered') {
       try {
+        // Prefer the stock item with the highest available quantity for the deduction
         const stockItem = await prisma.stock_items.findFirst({
           where: {
             name: { contains: order.item_name, mode: 'insensitive' },
             farm_id: req.user!.farmId ?? undefined,
             deleted_at: null,
           },
+          orderBy: { current_quantity: 'desc' },
         });
-        if (stockItem && stockItem.current_quantity !== null) {
+        if (stockItem) {
           const currentQty = Number(stockItem.current_quantity) || 0;
           const orderQty = Number(order.quantity) || 0;
           const newQty = Math.max(0, currentQty - orderQty);
-          await prisma.stock_items.update({
-            where: { id: stockItem.id },
-            data: { current_quantity: newQty } as any,
-          });
+          await prisma.$transaction([
+            prisma.stock_items.update({
+              where: { id: stockItem.id },
+              data: { current_quantity: newQty, updated_at: new Date() } as any,
+            }),
+            prisma.stock_transactions.create({
+              data: {
+                stock_item_id: stockItem.id,
+                performed_by: req.user!.userId,
+                transaction_type: 'usage',
+                quantity: orderQty,
+                quantity_before: currentQty,
+                quantity_after: newQty,
+                source_module: 'marketing',
+                notes: `Marketing order ${order.order_id} completed`,
+              },
+            }),
+          ]);
         }
+        // Livestock sale: mark the ordered quantity of Healthy animals as 'sold'
+        await sellLivestock(req.user!.farmId ?? undefined, order.item_name, Number(order.quantity) || 0);
       } catch {
-        // stock deduction is best-effort; never block the status update
+        // best-effort; never block the status update
       }
     }
 
@@ -242,6 +280,10 @@ router.patch('/orders/:id', async (req, res) => {
     res.status(500).json({ error: 'Failed to update order', code: 'DB_ERROR' });
   }
 });
+
+// ── Payment routes (Stripe) ──────────────────────────────────────
+
+router.use(paymentRouter);
 
 // ── Available Inventory Items ─────────────────────────────────────
 

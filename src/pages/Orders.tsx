@@ -14,6 +14,7 @@ import { Plus, Search, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { format } from 'date-fns';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useConfirm } from '@/contexts/ConfirmContext';
 
 const statusColors: Record<string, string> = {
   pending: 'bg-warning/20 text-warning border-warning/30',
@@ -27,6 +28,7 @@ export default function Orders() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { canCreate, canEdit, canDelete } = usePermissions();
+  const { openConfirm } = useConfirm();
   const [search, setSearch] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -226,7 +228,7 @@ export default function Orders() {
                     </TableCell>
                     <TableCell className="text-right">
                       {canDelete('sales_order_points') && (
-                        <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this order?')) deleteMutation.mutate(order.id); }}>
+                        <Button variant="ghost" size="icon" onClick={() => openConfirm({ title: 'Delete Order', message: 'Delete this order?', type: 'danger', confirmText: 'Delete', onConfirm: () => deleteMutation.mutate(order.id) })}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       )}

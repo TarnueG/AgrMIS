@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { useTheme } from '@/hooks/useTheme';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useConfirm } from '@/contexts/ConfirmContext';
 import {
   User, Edit2, LogOut, Sun, Moon, Shield, Check,
   Camera, Briefcase, Building2, Calendar, Mail, Hash,
@@ -314,6 +315,7 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user: currentUser } = useAuth();
+  const { openConfirm } = useConfirm();
   const [search, setSearch] = useState('');
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -321,7 +323,9 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
   const [createRoleId, setCreateRoleId] = useState('');
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
   const [createdCreds, setCreatedCreds] = useState<{ username: string; password: string; fullName: string } | null>(null);
+  const [resetCreds, setResetCreds] = useState<{ username: string; password: string; fullName: string } | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   const { data: usersData } = useQuery({
     queryKey: ['ac-users-list'],
@@ -353,6 +357,14 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
     onSuccess: (_d, vars) => {
       queryClient.invalidateQueries({ queryKey: ['ac-users-list'] });
       toast({ title: vars.activate ? 'User activated' : 'User deactivated' });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const resetPassword = useMutation({
+    mutationFn: (id: string) => api.post<any>(`/access-control/users/${id}/reset-password`, {}),
+    onSuccess: (data: any) => {
+      setResetCreds({ username: data.username, password: data.newPassword, fullName: data.fullName });
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
@@ -394,10 +406,29 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
           <h2 className="text-2xl font-bold">Users</h2>
           <p className="text-muted-foreground">Browse and manage system user accounts</p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} className="gradient-primary text-black font-medium">
-          <UserPlus className="h-4 w-4 mr-2" />
-          Create Users
-        </Button>
+        <div className="flex gap-2">
+          {selectedUser && selectedUser.id !== currentUser?.id && (
+            <Button
+              variant="outline"
+              className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground"
+              disabled={resetPassword.isPending}
+              onClick={() => openConfirm({
+                title: 'Reset Password',
+                message: `Reset password for ${selectedUser.fullName}? A new temporary password will be generated.`,
+                type: 'warning',
+                confirmText: 'Reset',
+                onConfirm: () => resetPassword.mutate(selectedUser.id),
+              })}
+            >
+              <Key className="h-4 w-4 mr-2" />
+              Reset Password
+            </Button>
+          )}
+          <Button onClick={() => setCreateOpen(true)} className="gradient-primary text-black font-medium">
+            <UserPlus className="h-4 w-4 mr-2" />
+            Create Users
+          </Button>
+        </div>
       </div>
 
       <div className="relative max-w-xs">
@@ -457,7 +488,7 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
                               const msg = isActive
                                 ? `Deactivate ${u.fullName}? They will be logged out immediately.`
                                 : `Reactivate ${u.fullName}?`;
-                              if (confirm(msg)) toggleActive.mutate({ id: u.id, activate: !isActive });
+                              openConfirm({ title: isActive ? 'Deactivate User' : 'Reactivate User', message: msg, type: isActive ? 'danger' : 'warning', confirmText: isActive ? 'Deactivate' : 'Reactivate', onConfirm: () => toggleActive.mutate({ id: u.id, activate: !isActive }) });
                             }}
                             className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${u.isActive !== false ? 'bg-primary' : 'bg-border'}`}
                           >
@@ -644,6 +675,57 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
                 Cancel
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Reset Password Dialog ──────────────────────────────── */}
+      <Dialog open={!!resetCreds} onOpenChange={() => { setResetCreds(null); setShowResetPassword(false); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Password Reset</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Password reset for <strong>{resetCreds?.fullName}</strong>. Share these credentials securely.
+            </p>
+            <div className="p-4 rounded-lg bg-card border border-border space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-muted-foreground">Username</p>
+                  <p className="font-mono font-medium">{resetCreds?.username}</p>
+                </div>
+                <Button size="icon" variant="ghost" onClick={() => copyToClipboard(resetCreds?.username ?? '')}>
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <p className="text-xs text-muted-foreground">New Temporary Password</p>
+                  <p className="font-mono font-medium">
+                    {showResetPassword ? resetCreds?.password : '••••••••••••'}
+                  </p>
+                </div>
+                <div className="flex gap-1">
+                  <Button size="icon" variant="ghost" onClick={() => setShowResetPassword(p => !p)}>
+                    {showResetPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                  <Button size="icon" variant="ghost" onClick={() => copyToClipboard(resetCreds?.password ?? '')}>
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Key className="h-3 w-3" />
+              User should change this password after next login.
+            </p>
+            <Button
+              onClick={() => { setResetCreds(null); setShowResetPassword(false); }}
+              className="w-full border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground"
+            >
+              Done
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -1147,6 +1229,7 @@ function CardAccessSection({ roleId, roleName }: { roleId: string; roleName: str
 function AccessControlContent() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { openConfirm } = useConfirm();
   const [roleFilter, setRoleFilter] = useState('');
   const [roleDialogOpen, setRoleDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<any>(null);
@@ -1370,9 +1453,7 @@ function AccessControlContent() {
               <Button
                 onClick={() => {
                   if (!newRoleId) return;
-                  if (confirm(`Assign role to ${selectedUser?.fullName}?`)) {
-                    updateRole.mutate({ userId: selectedUser.id, roleId: newRoleId });
-                  }
+                  openConfirm({ title: 'Assign Role', message: `Assign role to ${selectedUser?.fullName}?`, type: 'warning', confirmText: 'Assign', onConfirm: () => updateRole.mutate({ userId: selectedUser.id, roleId: newRoleId }) });
                 }}
                 disabled={updateRole.isPending || !newRoleId}
                 className="gradient-primary text-black font-medium"
@@ -1398,6 +1479,7 @@ export function Settings() {
   const { signOut } = useAuth();
   const { theme } = useTheme();
   const { isAdmin } = usePermissions();
+  const { openConfirm } = useConfirm();
 
   const navSections = [
     {
@@ -1464,9 +1546,7 @@ export function Settings() {
           <div className="px-2 pt-2 border-t border-border mt-2">
             <button
               onClick={() => {
-                if (confirm('Sign out of AMIS?')) {
-                  signOut();
-                }
+                openConfirm({ title: 'Sign Out', message: 'Sign out of AMIS?', type: 'warning', confirmText: 'Sign Out', onConfirm: () => signOut() });
               }}
               className="w-full flex items-center gap-2 px-2 py-2 rounded-md text-sm text-destructive hover:bg-destructive/10 transition-colors"
             >

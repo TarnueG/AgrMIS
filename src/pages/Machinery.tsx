@@ -13,6 +13,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Plus, Tractor, Search, Trash2, Wrench, AlertTriangle, CheckCircle, XCircle, PackageCheck } from 'lucide-react';
 import { format } from 'date-fns';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useConfirm } from '@/contexts/ConfirmContext';
 
 type View = 'total' | 'operational' | 'active' | 'maintenance' | 'lost' | 'retired' | 'sold' | 'requests';
 
@@ -42,6 +43,7 @@ export default function Machinery() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
+  const { openConfirm } = useConfirm();
   const [search, setSearch] = useState('');
   const [selectedView, setSelectedView] = useState<View>('total');
 
@@ -262,7 +264,7 @@ export default function Machinery() {
             )}
             {!['operational', 'active', 'maintenance', 'lost', 'retired'].includes(selectedView) && canCreate('machinery') && (
               <Button className="gradient-primary text-black" onClick={() => setIsRequestOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />Pending Request
+                <Plus className="h-4 w-4 mr-2" />Request Equipment
               </Button>
             )}
           </div>
@@ -357,7 +359,7 @@ export default function Machinery() {
                           </Button>
                         )}
                         {canDelete('machinery') && (
-                          <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this equipment?')) deleteMutation.mutate(m.id); }}>
+                          <Button variant="ghost" size="icon" onClick={() => openConfirm({ title: 'Delete Equipment', message: 'Delete this equipment?', type: 'danger', confirmText: 'Delete', onConfirm: () => deleteMutation.mutate(m.id) })}>
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
                         )}
@@ -400,7 +402,7 @@ export default function Machinery() {
                       <TableCell>{r.created_at ? format(new Date(r.created_at), 'MMM d, yyyy') : '-'}</TableCell>
                       <TableCell className="text-right flex gap-1 justify-end items-center">
                         {r.status === 'approved' && canEdit('machinery') && (
-                          <Button size="sm" variant="outline" className="text-white" onClick={() => { if (confirm('Mark this request as delivered?')) markDeliveredMutation.mutate(r.id); }} disabled={markDeliveredMutation.isPending}>
+                          <Button size="sm" variant="outline" className="text-white" onClick={() => openConfirm({ title: 'Mark Delivered', message: 'Mark this request as delivered?', type: 'success', confirmText: 'Confirm', onConfirm: () => markDeliveredMutation.mutate(r.id) })} disabled={markDeliveredMutation.isPending}>
                             Mark Delivered
                           </Button>
                         )}
@@ -410,7 +412,7 @@ export default function Machinery() {
                           </Button>
                         )}
                         {r.status === 'pending' && canDelete('machinery') && (
-                          <Button variant="ghost" size="icon" onClick={() => { if (confirm('Delete this request?')) deleteRequestMutation.mutate(r.id); }}>
+                          <Button variant="ghost" size="icon" onClick={() => openConfirm({ title: 'Delete Request', message: 'Delete this request?', type: 'danger', confirmText: 'Delete', onConfirm: () => deleteRequestMutation.mutate(r.id) })}>
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
                         )}

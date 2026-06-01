@@ -540,15 +540,51 @@ router.post('/attendance', async (req, res) => {
   }
 });
 
+// Returns each personnel whose last daily-log submission is still inside its rolling
+// 24h window. The frontend uses this to keep those rows checked and locked until the
+// window elapses (per-personnel, not a global midnight reset).
+router.get('/daily-log/status', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  try {
+    const logs = await prisma.attendance_logs.findMany({
+      where: {
+        created_at: { gte: since },
+        employees: { farm_id: farmId, deleted_at: null },
+      },
+      select: { employee_id: true, created_at: true },
+      orderBy: { created_at: 'desc' },
+    });
+    const latest = new Map<string, Date>();
+    for (const l of logs) if (!latest.has(l.employee_id)) latest.set(l.employee_id, l.created_at);
+    res.json(
+      Array.from(latest.entries()).map(([employeeId, submittedAt]) => ({
+        employeeId,
+        submittedAt: submittedAt.toISOString(),
+        resetsAt: new Date(submittedAt.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      }))
+    );
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch daily log status', code: 'DB_ERROR' });
+  }
+});
+
 router.post('/daily-log', async (req, res) => {
   const schema = z.object({ employeeIds: z.array(z.string().uuid()).min(1) });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   let submitted = 0;
   let skipped = 0;
   for (const employeeId of parsed.data.employeeIds) {
+    // Rolling 24h guard: skip if this personnel already submitted within the last 24h.
+    const recent = await prisma.attendance_logs.findFirst({
+      where: { employee_id: employeeId, created_at: { gte: since } },
+      select: { id: true },
+    });
+    if (recent) { skipped++; continue; }
     try {
       await prisma.attendance_logs.create({
         data: { employee_id: employeeId, recorded_by: req.user!.userId, log_date: today, status: 'present' },

@@ -5,7 +5,7 @@ const ADMIN_ROLES = new Set(['admin']);
 
 export const VALID_ROLE_NAMES = new Set([
   'admin', 'field_supervisor', 'asset_manager', 'production_manager',
-  'accountant', 'marketing_manager', 'human_resource', 'customer',
+  'accountant', 'marketing_manager', 'human_resource', 'procurement', 'customer',
 ]);
 
 export interface SubsystemAccess {

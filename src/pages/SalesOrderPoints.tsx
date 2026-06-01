@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
@@ -9,9 +10,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
-import { Clock, Loader2, Navigation, PackageCheck, Search, ShoppingCart, Plus, Trash2 } from 'lucide-react';
+import { Clock, Loader2, Navigation, PackageCheck, Search, ShoppingCart, Plus, Trash2, CreditCard } from 'lucide-react';
 import { format } from 'date-fns';
 import { usePermissions } from '@/hooks/usePermissions';
+import { useConfirm } from '@/contexts/ConfirmContext';
 
 type SOPView = 'pending' | 'processing' | 'en_route' | 'purchase' | 'shopping_cart';
 
@@ -30,12 +32,15 @@ const BLANK_CART = { itemName: '', quantity: 0 };
 export default function SalesOrderPoints() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
+  const { openConfirm } = useConfirm();
   const [view, setView] = useState<SOPView>('pending');
   const [search, setSearch] = useState('');
   const [cartSearch, setCartSearch] = useState('');
   const [cartOpen, setCartOpen] = useState(false);
   const [cartForm, setCartForm] = useState({ ...BLANK_CART });
+  const [checkingOut, setCheckingOut] = useState(false);
 
   const { data: orders = [] } = useQuery<any[]>({
     queryKey: ['marketing-orders'],
@@ -83,8 +88,13 @@ export default function SalesOrderPoints() {
   const updateStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       api.patch(`/marketing/orders/${id}`, { status }),
-    onSuccess: () => {
+    onSuccess: (_data, { status }) => {
       queryClient.invalidateQueries({ queryKey: ['marketing-orders'] });
+      if (status === 'completed') {
+        queryClient.invalidateQueries({ queryKey: ['inventory'] });
+        queryClient.invalidateQueries({ queryKey: ['marketing-deductions'] });
+        queryClient.invalidateQueries({ queryKey: ['ls-by-status'] });
+      }
       toast({ title: 'Status updated' });
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
@@ -106,6 +116,21 @@ export default function SalesOrderPoints() {
     mutationFn: (id: string) => api.delete(`/marketing/cart/${id}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['marketing-cart'] }),
   });
+
+  // Stripe (Test Mode) checkout — server computes the amount from the cart and
+  // returns a PaymentIntent client secret; the /checkout page renders the Element.
+  const proceedToCheckout = async () => {
+    if (!cart.length) return toast({ title: 'Cart is empty', variant: 'destructive' });
+    setCheckingOut(true);
+    try {
+      const result = await api.post<any>('/marketing/payments/create-payment-intent', {});
+      navigate('/checkout', { state: { clientSecret: result.clientSecret, paymentIntentId: result.paymentIntentId, lineItems: result.lineItems, amount: result.amount } });
+    } catch (e: any) {
+      toast({ title: 'Checkout failed', description: e.message, variant: 'destructive' });
+    } finally {
+      setCheckingOut(false);
+    }
+  };
 
   const CARDS = [
     { key: 'pending' as SOPView, label: 'Pending Order', count: pendingOrders.length, Icon: Clock, color: 'bg-warning/10 border-warning/20 text-warning' },
@@ -154,6 +179,9 @@ export default function SalesOrderPoints() {
         {/* Shopping Cart View */}
         {view === 'shopping_cart' && (
           <Card>
+            <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 m-4 text-sm text-yellow-300 font-medium">
+              TEST MODE — No real money will be charged. Use card 4242 4242 4242 4242 to test.
+            </div>
             <div className="p-4 border-b">
               <div className="relative max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -186,7 +214,7 @@ export default function SalesOrderPoints() {
                       <TableCell className="font-medium">${Number(item.total_amount).toFixed(2)}</TableCell>
                       <TableCell className="text-right">
                         {canDelete('sales_order_points') && (
-                          <Button variant="ghost" size="icon" onClick={() => { if (confirm('Remove from cart?')) removeFromCart.mutate(item.id); }}>
+                          <Button variant="ghost" size="icon" onClick={() => openConfirm({ title: 'Remove Item', message: 'Remove this item from cart?', type: 'danger', confirmText: 'Remove', onConfirm: () => removeFromCart.mutate(item.id) })}>
                             <Trash2 className="h-4 w-4 text-destructive" />
                           </Button>
                         )}
@@ -201,8 +229,14 @@ export default function SalesOrderPoints() {
                 </TableBody>
               </Table>
               {cart.length > 0 && (
-                <div className="p-4 border-t text-right">
+                <div className="p-4 border-t flex justify-between items-center">
                   <p className="font-bold text-primary">Total: ${cartTotal.toFixed(2)}</p>
+                  {canCreate('sales_order_points') && (
+                    <Button className="gradient-primary text-black font-medium px-8" onClick={proceedToCheckout} disabled={checkingOut}>
+                      {checkingOut ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CreditCard className="h-4 w-4 mr-2" />}
+                      Proceed to Payment
+                    </Button>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -250,9 +284,7 @@ export default function SalesOrderPoints() {
                             value={o.status}
                             onChange={(e) => {
                               if (e.target.value === 'completed') {
-                                if (confirm(`Mark order ${o.order_id} as Delivered?`)) {
-                                  updateStatus.mutate({ id: o.id, status: 'completed' });
-                                }
+                                openConfirm({ title: 'Mark Delivered', message: `Mark order ${o.order_id} as Delivered?`, type: 'success', confirmText: 'Deliver', onConfirm: () => updateStatus.mutate({ id: o.id, status: 'completed' }) });
                               } else {
                                 updateStatus.mutate({ id: o.id, status: e.target.value });
                               }

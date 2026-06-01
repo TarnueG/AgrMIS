@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { ThemeProvider } from "@/hooks/useTheme";
+import { ConfirmProvider } from "@/contexts/ConfirmContext";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Auth from "./pages/Auth";
 import Dashboard from "./pages/Dashboard";
@@ -15,11 +16,15 @@ import Production from "./pages/Production";
 import Finance from "./pages/Finance";
 import Reports from "./pages/Reports";
 import Procurement from "./pages/Procurement";
+import ProcurementAnalytics from "./pages/ProcurementAnalytics";
+import ProcurementAnalyticsDrilldown from "./pages/ProcurementAnalyticsDrilldown";
 import Employees from "./pages/Employees";
 import LandParcels from "./pages/LandParcels";
 import Machinery from "./pages/Machinery";
 import Livestock from "./pages/Livestock";
 import Marketing from "./pages/Marketing";
+import CheckoutPage from "./pages/CheckoutPage";
+import PaymentSuccessPage from "./pages/PaymentSuccessPage";
 import SalesOrderPoints from "./pages/SalesOrderPoints";
 import { Settings, AccessControl } from "./pages/Settings";
 import NotFound from "./pages/NotFound";
@@ -30,6 +35,7 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
     <AuthProvider>
+      <ConfirmProvider>
       <TooltipProvider>
         <Toaster />
         <Sonner />
@@ -46,11 +52,15 @@ const App = () => (
             <Route path="/finance" element={<ProtectedRoute subsystem="finance"><Finance /></ProtectedRoute>} />
             <Route path="/reports" element={<ProtectedRoute subsystem="reports"><Reports /></ProtectedRoute>} />
             <Route path="/procurement" element={<ProtectedRoute subsystem="procurement"><Procurement /></ProtectedRoute>} />
+            <Route path="/procurement/analytics" element={<ProtectedRoute subsystem="procurement"><ProcurementAnalytics /></ProtectedRoute>} />
+            <Route path="/procurement/analytics/:metric" element={<ProtectedRoute subsystem="procurement"><ProcurementAnalyticsDrilldown /></ProtectedRoute>} />
             <Route path="/employees" element={<ProtectedRoute subsystem="human_capital"><Employees /></ProtectedRoute>} />
             <Route path="/assets/land" element={<ProtectedRoute subsystem="land_parcels"><LandParcels /></ProtectedRoute>} />
             <Route path="/assets/machinery" element={<ProtectedRoute subsystem="machinery"><Machinery /></ProtectedRoute>} />
             <Route path="/assets/livestock" element={<ProtectedRoute subsystem="livestock"><Livestock /></ProtectedRoute>} />
             <Route path="/marketing" element={<ProtectedRoute subsystem="marketing"><Marketing /></ProtectedRoute>} />
+            <Route path="/checkout" element={<ProtectedRoute subsystem="sales_order_points"><CheckoutPage /></ProtectedRoute>} />
+            <Route path="/payment-success" element={<ProtectedRoute subsystem="sales_order_points"><PaymentSuccessPage /></ProtectedRoute>} />
             <Route path="/sales-order-points" element={<ProtectedRoute subsystem="sales_order_points"><SalesOrderPoints /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute subsystem="settings"><Settings /></ProtectedRoute>} />
             <Route path="/access-control" element={<ProtectedRoute subsystem="settings"><AccessControl /></ProtectedRoute>} />
@@ -59,6 +69,7 @@ const App = () => (
           </Routes>
         </BrowserRouter>
       </TooltipProvider>
+      </ConfirmProvider>
     </AuthProvider>
     </ThemeProvider>
   </QueryClientProvider>

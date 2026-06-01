@@ -17,20 +17,38 @@ function within24h(createdAt: Date | string) {
   return Date.now() - new Date(createdAt).getTime() < 24 * HOUR_MS;
 }
 
+// Canonical livestock statuses. Legacy 'sick' maps to 'ill'.
+const statusEnum = z.enum(['healthy', 'recovering', 'ill', 'dead', 'sick']).transform(s => (s === 'sick' ? 'ill' : s));
+const normStatus = (s: any): string | null => (s == null ? null : s === 'sick' ? 'ill' : s);
+
+// Recovering animals whose expected recovery date has arrived auto-heal back to
+// 'healthy' (and thereby return to Inventory). Run at the top of read endpoints.
+async function autoHealRecovered(farmId: string | undefined) {
+  await prisma.$executeRaw`UPDATE pigs   SET status = 'healthy', updated_at = NOW()
+    WHERE farm_id = ${farmId}::uuid AND status = 'recovering' AND expected_recovery_date IS NOT NULL AND expected_recovery_date <= CURRENT_DATE AND deleted_at IS NULL`;
+  await prisma.$executeRaw`UPDATE cattle SET status = 'healthy', updated_at = NOW()
+    WHERE farm_id = ${farmId}::uuid AND status = 'recovering' AND expected_recovery_date IS NOT NULL AND expected_recovery_date <= CURRENT_DATE AND deleted_at IS NULL`;
+  await prisma.$executeRaw`UPDATE birds  SET status = 'healthy', updated_at = NOW()
+    WHERE farm_id = ${farmId}::uuid AND status = 'recovering' AND expected_recovery_date IS NOT NULL AND expected_recovery_date <= CURRENT_DATE AND deleted_at IS NULL`;
+}
+
 // ─── PIGS ────────────────────────────────────────────────────────────────────
 
 const pigSchema = z.object({
   pig_id: z.string().min(1),
   breed: z.string().optional(),
   gender: z.enum(['male', 'female', 'unknown']).default('unknown'),
-  status: z.enum(['healthy', 'sick', 'dead']).default('healthy'),
+  status: statusEnum.default('healthy'),
+  weight_kg: z.number().nonnegative().optional(),
   pen_number: z.string().optional(),
+  location: z.string().optional(),
   date_recorded: z.string().optional(),
 });
 
 router.get('/pigs', async (req, res) => {
   const farmId = req.user!.farmId;
   try {
+    await autoHealRecovered(farmId);
     const rows = await prisma.$queryRaw<any[]>`
       SELECT * FROM pigs
       WHERE farm_id = ${farmId}::uuid AND deleted_at IS NULL
@@ -50,8 +68,9 @@ router.post('/pigs', async (req, res) => {
   const userId = req.user!.userId;
   try {
     const rows = await prisma.$queryRaw<any[]>`
-      INSERT INTO pigs (farm_id, pig_id, breed, gender, status, pen_number, date_recorded, created_by)
-      VALUES (${farmId}::uuid, ${d.pig_id}, ${d.breed ?? null}, ${d.gender}, ${d.status}, ${d.pen_number ?? null},
+      INSERT INTO pigs (farm_id, pig_id, breed, gender, status, weight_kg, pen_number, location, date_recorded, created_by)
+      VALUES (${farmId}::uuid, ${d.pig_id}, ${d.breed ?? null}, ${d.gender}, ${d.status}, ${d.weight_kg ?? null},
+              ${d.pen_number ?? null}, ${d.location ?? null},
               ${d.date_recorded ? new Date(d.date_recorded) : new Date()}::date, ${userId}::uuid)
       RETURNING *
     `;
@@ -66,11 +85,12 @@ router.patch('/pigs/:id', async (req, res) => {
   const farmId = req.user!.farmId;
   const userId = req.user!.userId;
   const { id } = req.params;
-  const { breed, gender, status, pen_number } = req.body;
+  const { breed, gender, pen_number, weight_kg, location } = req.body;
+  const mature_for_market = typeof req.body.mature_for_market === 'boolean' ? req.body.mature_for_market : null;
+  const status = normStatus(req.body.status);
   try {
     const existing = await prisma.$queryRaw<any[]>`SELECT * FROM pigs WHERE id = ${id}::uuid AND farm_id = ${farmId}::uuid AND deleted_at IS NULL`;
     if (!existing.length) return res.status(404).json({ error: 'Pig not found', code: 'NOT_FOUND' });
-    if (!within24h(existing[0].created_at)) return res.status(403).json({ error: 'Record cannot be modified after 24 hours', code: 'IMMUTABLE' });
 
     if (status === 'dead') {
       await prisma.$transaction(async (tx) => {
@@ -89,7 +109,10 @@ router.patch('/pigs/:id', async (req, res) => {
         breed = COALESCE(${breed ?? null}, breed),
         gender = COALESCE(${gender ?? null}, gender),
         status = COALESCE(${status ?? null}, status),
+        weight_kg = COALESCE(${weight_kg ?? null}, weight_kg),
         pen_number = COALESCE(${pen_number ?? null}, pen_number),
+        location = COALESCE(${location ?? null}, location),
+        mature_for_market = COALESCE(${mature_for_market}, mature_for_market),
         updated_at = NOW()
       WHERE id = ${id}::uuid AND farm_id = ${farmId}::uuid
       RETURNING *
@@ -119,7 +142,9 @@ router.delete('/pigs/:id', async (req, res) => {
 const cattleSchema = z.object({
   cattle_id: z.string().min(1),
   cattle_type: z.enum(['goat', 'sheep', 'cow']),
-  status: z.enum(['healthy', 'sick', 'dead']).default('healthy'),
+  gender: z.enum(['male', 'female']).optional(),
+  status: statusEnum.default('healthy'),
+  weight_kg: z.number().nonnegative().optional(),
   location: z.string().optional(),
   date_recorded: z.string().optional(),
 });
@@ -127,6 +152,7 @@ const cattleSchema = z.object({
 router.get('/cattle', async (req, res) => {
   const farmId = req.user!.farmId;
   try {
+    await autoHealRecovered(farmId);
     const rows = await prisma.$queryRaw<any[]>`
       SELECT * FROM cattle WHERE farm_id = ${farmId}::uuid AND deleted_at IS NULL ORDER BY created_at DESC
     `;
@@ -144,8 +170,8 @@ router.post('/cattle', async (req, res) => {
   const userId = req.user!.userId;
   try {
     const rows = await prisma.$queryRaw<any[]>`
-      INSERT INTO cattle (farm_id, cattle_id, cattle_type, status, location, date_recorded, created_by)
-      VALUES (${farmId}::uuid, ${d.cattle_id}, ${d.cattle_type}, ${d.status}, ${d.location ?? null},
+      INSERT INTO cattle (farm_id, cattle_id, cattle_type, gender, status, weight_kg, location, date_recorded, created_by)
+      VALUES (${farmId}::uuid, ${d.cattle_id}, ${d.cattle_type}, ${d.gender ?? null}, ${d.status}, ${d.weight_kg ?? null}, ${d.location ?? null},
               ${d.date_recorded ? new Date(d.date_recorded) : new Date()}::date, ${userId}::uuid)
       RETURNING *
     `;
@@ -160,11 +186,12 @@ router.patch('/cattle/:id', async (req, res) => {
   const farmId = req.user!.farmId;
   const userId = req.user!.userId;
   const { id } = req.params;
-  const { cattle_type, status, location } = req.body;
+  const { cattle_type, location, weight_kg, gender } = req.body;
+  const mature_for_market = typeof req.body.mature_for_market === 'boolean' ? req.body.mature_for_market : null;
+  const status = normStatus(req.body.status);
   try {
     const existing = await prisma.$queryRaw<any[]>`SELECT * FROM cattle WHERE id = ${id}::uuid AND farm_id = ${farmId}::uuid AND deleted_at IS NULL`;
     if (!existing.length) return res.status(404).json({ error: 'Cattle not found', code: 'NOT_FOUND' });
-    if (!within24h(existing[0].created_at)) return res.status(403).json({ error: 'Record cannot be modified after 24 hours', code: 'IMMUTABLE' });
 
     if (status === 'dead') {
       await prisma.$transaction(async (tx) => {
@@ -181,8 +208,11 @@ router.patch('/cattle/:id', async (req, res) => {
     const rows = await prisma.$queryRaw<any[]>`
       UPDATE cattle SET
         cattle_type = COALESCE(${cattle_type ?? null}, cattle_type),
+        gender = COALESCE(${gender ?? null}, gender),
         status = COALESCE(${status ?? null}, status),
+        weight_kg = COALESCE(${weight_kg ?? null}, weight_kg),
         location = COALESCE(${location ?? null}, location),
+        mature_for_market = COALESCE(${mature_for_market}, mature_for_market),
         updated_at = NOW()
       WHERE id = ${id}::uuid AND farm_id = ${farmId}::uuid
       RETURNING *
@@ -209,12 +239,13 @@ router.delete('/cattle/:id', async (req, res) => {
 
 // ─── BIRDS ───────────────────────────────────────────────────────────────────
 
+// Birds are individual records now (one row = one bird).
 const birdSchema = z.object({
   bird_type: z.enum(['chicken', 'duck']),
-  batch_number: z.string().min(1),
-  number_of_birds: z.number().int().min(0),
-  number_of_female: z.number().int().min(0),
-  number_of_male: z.number().int().min(0),
+  gender: z.enum(['male', 'female']).optional(),
+  weight_kg: z.number().nonnegative().optional(),
+  location: z.string().optional(),
+  status: statusEnum.default('healthy'),
   date_recorded: z.string().optional(),
 });
 
@@ -222,6 +253,7 @@ router.get('/birds', async (req, res) => {
   const farmId = req.user!.farmId;
   const type = req.query.type as string | undefined;
   try {
+    await autoHealRecovered(farmId);
     const rows = type
       ? await prisma.$queryRaw<any[]>`SELECT * FROM birds WHERE farm_id = ${farmId}::uuid AND bird_type = ${type} AND deleted_at IS NULL ORDER BY created_at DESC`
       : await prisma.$queryRaw<any[]>`SELECT * FROM birds WHERE farm_id = ${farmId}::uuid AND deleted_at IS NULL ORDER BY created_at DESC`;
@@ -237,11 +269,12 @@ router.post('/birds', async (req, res) => {
   const d = parsed.data;
   const farmId = req.user!.farmId;
   const userId = req.user!.userId;
+  const birdId = `BIRD-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
   try {
     const rows = await prisma.$queryRaw<any[]>`
-      INSERT INTO birds (farm_id, bird_type, batch_number, number_of_birds, number_of_female, number_of_male, date_recorded, created_by)
-      VALUES (${farmId}::uuid, ${d.bird_type}, ${d.batch_number}, ${d.number_of_birds}, ${d.number_of_female},
-              ${d.number_of_male}, ${d.date_recorded ? new Date(d.date_recorded) : new Date()}::date, ${userId}::uuid)
+      INSERT INTO birds (farm_id, bird_id, bird_type, gender, weight_kg, location, status, number_of_birds, date_recorded, created_by)
+      VALUES (${farmId}::uuid, ${birdId}, ${d.bird_type}, ${d.gender ?? null}, ${d.weight_kg ?? null}, ${d.location ?? null},
+              ${d.status}, 1, ${d.date_recorded ? new Date(d.date_recorded) : new Date()}::date, ${userId}::uuid)
       RETURNING *
     `;
     res.status(201).json(rows[0]);
@@ -252,19 +285,35 @@ router.post('/birds', async (req, res) => {
 
 router.patch('/birds/:id', async (req, res) => {
   const farmId = req.user!.farmId;
+  const userId = req.user!.userId;
   const { id } = req.params;
-  const { bird_type, batch_number, number_of_birds, number_of_female, number_of_male } = req.body;
+  const { bird_type, gender, weight_kg, location } = req.body;
+  const mature_for_market = typeof req.body.mature_for_market === 'boolean' ? req.body.mature_for_market : null;
+  const status = normStatus(req.body.status);
   try {
-    const existing = await prisma.$queryRaw<any[]>`SELECT created_at FROM birds WHERE id = ${id}::uuid AND farm_id = ${farmId}::uuid AND deleted_at IS NULL`;
+    const existing = await prisma.$queryRaw<any[]>`SELECT * FROM birds WHERE id = ${id}::uuid AND farm_id = ${farmId}::uuid AND deleted_at IS NULL`;
     if (!existing.length) return res.status(404).json({ error: 'Bird record not found', code: 'NOT_FOUND' });
-    if (!within24h(existing[0].created_at)) return res.status(403).json({ error: 'Cannot modify after 24 hours', code: 'IMMUTABLE' });
+
+    if (status === 'dead') {
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`
+          INSERT INTO mortality_records (farm_id, livestock_type, breed_or_type, record_id, pen_or_location, cause_of_death, source_table, source_id, created_by)
+          VALUES (${farmId}::uuid, 'bird', ${existing[0].bird_type}, ${existing[0].bird_id ?? existing[0].batch_number ?? ''}, ${existing[0].location ?? ''},
+                  ${req.body.cause_of_death ?? null}, 'birds', ${id}::uuid, ${userId}::uuid)
+        `;
+        await tx.$executeRaw`UPDATE birds SET deleted_at = NOW(), updated_at = NOW() WHERE id = ${id}::uuid`;
+      });
+      return res.json({ migrated: true, message: 'Bird moved to mortality records' });
+    }
+
     const rows = await prisma.$queryRaw<any[]>`
       UPDATE birds SET
         bird_type = COALESCE(${bird_type ?? null}, bird_type),
-        batch_number = COALESCE(${batch_number ?? null}, batch_number),
-        number_of_birds = COALESCE(${number_of_birds ?? null}, number_of_birds),
-        number_of_female = COALESCE(${number_of_female ?? null}, number_of_female),
-        number_of_male = COALESCE(${number_of_male ?? null}, number_of_male),
+        gender = COALESCE(${gender ?? null}, gender),
+        weight_kg = COALESCE(${weight_kg ?? null}, weight_kg),
+        location = COALESCE(${location ?? null}, location),
+        status = COALESCE(${status ?? null}, status),
+        mature_for_market = COALESCE(${mature_for_market}, mature_for_market),
         updated_at = NOW()
       WHERE id = ${id}::uuid AND farm_id = ${farmId}::uuid
       RETURNING *
@@ -477,12 +526,14 @@ router.post('/mortality', async (req, res) => {
         const match = await prisma.$queryRaw<any[]>`SELECT id FROM cattle WHERE cattle_id = ${d.record_id} AND farm_id = ${farmId}::uuid AND deleted_at IS NULL`;
         if (match.length) { sourceId = match[0].id; sourceTable = 'cattle'; }
       } else if (d.livestock_type === 'bird') {
-        const match = await prisma.$queryRaw<any[]>`SELECT id FROM birds WHERE batch_number = ${d.record_id} AND farm_id = ${farmId}::uuid AND deleted_at IS NULL LIMIT 1`;
+        const match = await prisma.$queryRaw<any[]>`SELECT id FROM birds WHERE (bird_id = ${d.record_id} OR batch_number = ${d.record_id}) AND farm_id = ${farmId}::uuid AND deleted_at IS NULL LIMIT 1`;
         if (match.length) { sourceId = match[0].id; sourceTable = 'birds'; }
       } else if (d.livestock_type === 'fish') {
         const match = await prisma.$queryRaw<any[]>`SELECT fs.id FROM fish_stock fs JOIN fish_ponds fp ON fp.id = fs.pond_id WHERE fs.batch_number = ${d.record_id} AND fp.farm_id = ${farmId}::uuid AND fs.deleted_at IS NULL LIMIT 1`;
         if (match.length) { sourceId = match[0].id; sourceTable = 'fish_stock'; }
       }
+      // ID was supplied but no live record matched it
+      if (!sourceId) return res.status(404).json({ error: 'Livestock does not exist', code: 'NOT_FOUND' });
     }
 
     const rows = await prisma.$transaction(async (tx) => {
@@ -541,6 +592,172 @@ router.delete('/mortality/:id', async (req, res) => {
     res.status(204).end();
   } catch {
     res.status(500).json({ error: 'Failed to delete mortality record', code: 'DB_ERROR' });
+  }
+});
+
+// ─── LIVESTOCK REQUESTS (Inventory → Production fulfilment pipeline) ──────────
+
+const lsRequestSchema = z.object({
+  species: z.enum(['pig', 'bird', 'grazing']),
+  name: z.string().optional(),
+  quantity: z.number().int().min(1).default(1),
+  location: z.string().optional(),
+  boars: z.number().int().min(0).optional(),
+  sows: z.number().int().min(0).optional(),
+  sub_type: z.string().optional(),
+  order_type: z.string().optional(),
+});
+
+router.get('/requests', async (req, res) => {
+  const farmId = req.user!.farmId;
+  try {
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT * FROM livestock_requests WHERE farm_id = ${farmId}::uuid ORDER BY created_at DESC`;
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch livestock requests', code: 'DB_ERROR' });
+  }
+});
+
+router.post('/requests', async (req, res) => {
+  const parsed = lsRequestSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  const d = parsed.data;
+  const farmId = req.user!.farmId;
+  const userId = req.user!.userId;
+  try {
+    const rows = await prisma.$queryRaw<any[]>`
+      INSERT INTO livestock_requests (farm_id, species, name, quantity, location, boars, sows, sub_type, order_type, created_by)
+      VALUES (${farmId}::uuid, ${d.species}, ${d.name ?? null}, ${d.quantity}, ${d.location ?? null},
+              ${d.boars ?? null}, ${d.sows ?? null}, ${d.sub_type ?? null}, ${d.order_type ?? 'Make to Order'}, ${userId}::uuid)
+      RETURNING *`;
+    res.status(201).json(rows[0]);
+  } catch {
+    res.status(500).json({ error: 'Failed to create livestock request', code: 'DB_ERROR' });
+  }
+});
+
+router.patch('/requests/:id/accept', async (req, res) => {
+  const farmId = req.user!.farmId;
+  try {
+    const rows = await prisma.$queryRaw<any[]>`
+      UPDATE livestock_requests SET status = 'accepted', updated_at = NOW()
+      WHERE id = ${req.params.id}::uuid AND farm_id = ${farmId}::uuid AND status = 'pending' RETURNING *`;
+    if (!rows.length) return res.status(404).json({ error: 'Pending request not found', code: 'NOT_FOUND' });
+    res.json(rows[0]);
+  } catch {
+    res.status(500).json({ error: 'Failed to accept request', code: 'DB_ERROR' });
+  }
+});
+
+router.patch('/requests/:id/decline', async (req, res) => {
+  const farmId = req.user!.farmId;
+  try {
+    const rows = await prisma.$queryRaw<any[]>`
+      UPDATE livestock_requests SET status = 'declined', updated_at = NOW()
+      WHERE id = ${req.params.id}::uuid AND farm_id = ${farmId}::uuid AND status IN ('pending','accepted') RETURNING *`;
+    if (!rows.length) return res.status(404).json({ error: 'Request not found', code: 'NOT_FOUND' });
+    res.json(rows[0]);
+  } catch {
+    res.status(500).json({ error: 'Failed to decline request', code: 'DB_ERROR' });
+  }
+});
+
+// Fulfil by confirming the selected healthy animals (already in inventory once healthy).
+router.post('/requests/:id/fulfil', async (req, res) => {
+  const farmId = req.user!.farmId;
+  const animalIds: string[] = Array.isArray(req.body.animalIds) ? req.body.animalIds : [];
+  if (!animalIds.length) return res.status(400).json({ error: 'Select at least one animal to fulfil', code: 'VALIDATION_ERROR' });
+  try {
+    const rows = await prisma.$queryRaw<any[]>`
+      UPDATE livestock_requests SET status = 'fulfilled', updated_at = NOW()
+      WHERE id = ${req.params.id}::uuid AND farm_id = ${farmId}::uuid AND status IN ('pending','accepted') RETURNING *`;
+    if (!rows.length) return res.status(404).json({ error: 'Request not found', code: 'NOT_FOUND' });
+    res.json({ ...rows[0], fulfilled_count: animalIds.length });
+  } catch {
+    res.status(500).json({ error: 'Failed to fulfil request', code: 'DB_ERROR' });
+  }
+});
+
+// ─── STATUS AGGREGATION (Health / Ill / Recovering cards) ────────────────────
+
+router.get('/by-status/:status', async (req, res) => {
+  const farmId = req.user!.farmId;
+  const status = normStatus(req.params.status);
+  try {
+    await autoHealRecovered(farmId);
+    const [pigsR, cattleR, birdsR] = await Promise.all([
+      prisma.$queryRaw<any[]>`
+        SELECT id, pig_id AS record_id, 'pig' AS species, breed AS sub_type, gender, status, mature_for_market,
+               COALESCE(location, pen_number) AS location, weight_kg, treatment_date, expected_recovery_date,
+               date_recorded, created_at
+        FROM pigs WHERE farm_id = ${farmId}::uuid AND status = ${status} AND deleted_at IS NULL`,
+      prisma.$queryRaw<any[]>`
+        SELECT id, cattle_id AS record_id, 'grazing' AS species, cattle_type AS sub_type, gender, status, mature_for_market,
+               location, weight_kg, treatment_date, expected_recovery_date, date_recorded, created_at
+        FROM cattle WHERE farm_id = ${farmId}::uuid AND status = ${status} AND deleted_at IS NULL`,
+      prisma.$queryRaw<any[]>`
+        SELECT id, bird_id AS record_id, 'bird' AS species, bird_type AS sub_type, gender, status, mature_for_market,
+               location, weight_kg, treatment_date, expected_recovery_date, date_recorded, created_at
+        FROM birds WHERE farm_id = ${farmId}::uuid AND status = ${status} AND deleted_at IS NULL`,
+    ]);
+    const all = [...pigsR, ...cattleR, ...birdsR].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+    res.json(all);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch livestock by status', code: 'DB_ERROR' });
+  }
+});
+
+// ─── TREATMENT (ill → recovering) ────────────────────────────────────────────
+
+const treatmentSchema = z.object({
+  species: z.enum(['pig', 'grazing', 'bird']),
+  id: z.string().uuid(),
+  description: z.string().optional(),
+  treatment_date: z.string().optional(),
+  location: z.string().optional(),
+  weight_kg: z.number().nonnegative().optional(),
+  expected_recovery_date: z.string().optional(),
+});
+
+router.post('/treatment', async (req, res) => {
+  const parsed = treatmentSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  const d = parsed.data;
+  const farmId = req.user!.farmId;
+
+  const wc = (d.description ?? '').trim().split(/\s+/).filter(Boolean).length;
+  if (wc > 50) return res.status(400).json({ error: 'Treatment description must be 50 words or fewer', code: 'VALIDATION_ERROR' });
+
+  const tDate = d.treatment_date ? new Date(d.treatment_date) : new Date();
+  const rDate = d.expected_recovery_date ? new Date(d.expected_recovery_date) : null;
+  try {
+    let rows: any[] = [];
+    if (d.species === 'pig') {
+      rows = await prisma.$queryRaw<any[]>`
+        UPDATE pigs SET status = 'recovering', treatment_description = ${d.description ?? null},
+          treatment_date = ${tDate}::date, expected_recovery_date = ${rDate}::date,
+          weight_kg = COALESCE(${d.weight_kg ?? null}, weight_kg), location = COALESCE(${d.location ?? null}, location), updated_at = NOW()
+        WHERE id = ${d.id}::uuid AND farm_id = ${farmId}::uuid AND deleted_at IS NULL RETURNING *`;
+    } else if (d.species === 'grazing') {
+      rows = await prisma.$queryRaw<any[]>`
+        UPDATE cattle SET status = 'recovering', treatment_description = ${d.description ?? null},
+          treatment_date = ${tDate}::date, expected_recovery_date = ${rDate}::date,
+          weight_kg = COALESCE(${d.weight_kg ?? null}, weight_kg), location = COALESCE(${d.location ?? null}, location), updated_at = NOW()
+        WHERE id = ${d.id}::uuid AND farm_id = ${farmId}::uuid AND deleted_at IS NULL RETURNING *`;
+    } else {
+      rows = await prisma.$queryRaw<any[]>`
+        UPDATE birds SET status = 'recovering', treatment_description = ${d.description ?? null},
+          treatment_date = ${tDate}::date, expected_recovery_date = ${rDate}::date,
+          weight_kg = COALESCE(${d.weight_kg ?? null}, weight_kg), location = COALESCE(${d.location ?? null}, location), updated_at = NOW()
+        WHERE id = ${d.id}::uuid AND farm_id = ${farmId}::uuid AND deleted_at IS NULL RETURNING *`;
+    }
+    if (!rows.length) return res.status(404).json({ error: 'Livestock not found', code: 'NOT_FOUND' });
+    res.json(rows[0]);
+  } catch {
+    res.status(500).json({ error: 'Failed to record treatment', code: 'DB_ERROR' });
   }
 });
 
