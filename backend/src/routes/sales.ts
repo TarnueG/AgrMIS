@@ -295,4 +295,160 @@ router.delete('/orders/:id', async (req, res) => {
   }
 });
 
+// ─── CRM Analytics ───────────────────────────────────────────────────────────
+
+const MONTHS_C = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function monthBuckets(n: number) {
+  const now = new Date();
+  return Array.from({ length: n }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (n - 1 - i), 1);
+    return { label: MONTHS_C[d.getMonth()], start: new Date(d.getFullYear(), d.getMonth(), 1), end: new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999) };
+  });
+}
+function maskEmail(email?: string | null): string {
+  if (!email) return '—';
+  const [user, domain] = email.split('@');
+  if (!domain) return '—';
+  const head = user.slice(0, 1);
+  return `${head}${'*'.repeat(Math.max(1, Math.min(4, user.length - 1)))}@${domain}`;
+}
+const settled = (s?: string | null) => s !== 'cancelled';
+
+router.get('/analytics/customers/summary', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  try {
+    const customers = await prisma.customers.findMany({ where: { farm_id: farmId, deleted_at: null }, select: { is_active: true, created_at: true } });
+    const total = customers.filter(c => c.is_active).length;
+    const now = Date.now();
+    const cur = customers.filter(c => new Date(c.created_at).getTime() >= now - 30 * 86400000).length;
+    const prev = customers.filter(c => { const t = new Date(c.created_at).getTime(); return t >= now - 60 * 86400000 && t < now - 30 * 86400000; }).length;
+    const deltaPct = prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : (cur > 0 ? 100 : 0);
+    res.json({ total, deltaPct, period: 'month', generatedAt: new Date().toISOString() });
+  } catch { res.status(500).json({ error: 'Failed to fetch customer summary', code: 'DB_ERROR' }); }
+});
+
+router.get('/analytics/purchases/summary', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  try {
+    const orders = await prisma.sales_orders.findMany({ where: { farm_id: farmId }, select: { total_amount: true, status: true, order_date: true, created_at: true } });
+    const valid = orders.filter(o => settled(o.status));
+    const totalValue = valid.reduce((s, o) => s + Number(o.total_amount), 0);
+    const dt = (o: any) => new Date(o.order_date ?? o.created_at).getTime();
+    const now = Date.now();
+    const cur = valid.filter(o => dt(o) >= now - 30 * 86400000).reduce((s, o) => s + Number(o.total_amount), 0);
+    const prev = valid.filter(o => { const t = dt(o); return t >= now - 60 * 86400000 && t < now - 30 * 86400000; }).reduce((s, o) => s + Number(o.total_amount), 0);
+    const deltaPct = prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : (cur > 0 ? 100 : 0);
+    res.json({ totalValue, ordersSettled: valid.length, deltaPct, period: 'month', generatedAt: new Date().toISOString() });
+  } catch { res.status(500).json({ error: 'Failed to fetch purchases summary', code: 'DB_ERROR' }); }
+});
+
+router.get('/analytics/carts/abandoned', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  try {
+    const carts = await prisma.cart_items.findMany({ where: { farm_id: farmId } });
+    const itemCount = carts.reduce((s, c) => s + Number(c.quantity), 0);
+    const potentialValue = carts.reduce((s, c) => s + Number(c.total_amount), 0);
+    res.json({ itemCount: Math.round(itemCount), potentialValue, openCarts: carts.length, deltaPct: 0, generatedAt: new Date().toISOString() });
+  } catch { res.status(500).json({ error: 'Failed to fetch carts', code: 'DB_ERROR' }); }
+});
+
+router.get('/analytics/customers/segments', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  try {
+    const customers = await prisma.customers.findMany({ where: { farm_id: farmId, deleted_at: null }, select: { customer_type: true } });
+    const total = customers.length;
+    const counts: Record<string, number> = {};
+    for (const c of customers) { const t = c.customer_type === 'business' ? 'Business' : 'Individual'; counts[t] = (counts[t] || 0) + 1; }
+    const segments = ['Business', 'Individual'].map(type => ({ type, count: counts[type] || 0, pct: total > 0 ? Math.round(((counts[type] || 0) / total) * 100) : 0 }));
+    res.json({ total, segments, generatedAt: new Date().toISOString() });
+  } catch { res.status(500).json({ error: 'Failed to fetch segments', code: 'DB_ERROR' }); }
+});
+
+router.get('/analytics/customers/top', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+  try {
+    const customers = await prisma.customers.findMany({
+      where: { farm_id: farmId, deleted_at: null },
+      select: { id: true, name: true, email: true, sales_orders: { select: { total_amount: true, status: true, order_date: true, created_at: true } } },
+    });
+    const buckets = monthBuckets(6);
+    const ranked = customers.map(c => {
+      const valid = (c.sales_orders as any[]).filter(o => settled(o.status));
+      const totalPurchase = valid.reduce((s, o) => s + Number(o.total_amount), 0);
+      const trend = buckets.map(b => valid.filter(o => { const t = new Date(o.order_date ?? o.created_at); return t >= b.start && t <= b.end; }).reduce((s, o) => s + Number(o.total_amount), 0));
+      return { id: c.id, name: c.name, emailMasked: maskEmail(c.email), totalPurchase, trend };
+    }).filter(c => c.totalPurchase > 0).sort((a, b) => b.totalPurchase - a.totalPurchase).slice(0, limit);
+    res.json(ranked);
+  } catch { res.status(500).json({ error: 'Failed to fetch top customers', code: 'DB_ERROR' }); }
+});
+
+router.get('/analytics/products/top', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const limit = Math.min(10, Math.max(1, Number(req.query.limit) || 5));
+  try {
+    const items = await prisma.sales_order_items.findMany({
+      where: { sales_orders: { farm_id: farmId, status: { not: 'cancelled' } } },
+      select: { quantity: true, line_total: true, stock_item_id: true, stock_items: { select: { name: true } }, sales_orders: { select: { order_date: true, created_at: true } } },
+    });
+    const buckets = monthBuckets(12);
+    const byProduct: Record<string, { name: string; total: number; series: number[] }> = {};
+    for (const it of items as any[]) {
+      const key = it.stock_item_id;
+      if (!byProduct[key]) byProduct[key] = { name: it.stock_items?.name ?? 'Unknown', total: 0, series: Array(12).fill(0) };
+      byProduct[key].total += Number(it.line_total);
+      const d = new Date(it.sales_orders?.order_date ?? it.sales_orders?.created_at);
+      const bi = buckets.findIndex(b => d >= b.start && d <= b.end);
+      if (bi >= 0) byProduct[key].series[bi] += Number(it.quantity);
+    }
+    const top = Object.entries(byProduct).sort((a, b) => b[1].total - a[1].total).slice(0, limit)
+      .map(([id, v]) => ({ id, name: v.name, series: v.series }));
+    res.json({ labels: buckets.map(b => b.label), products: top });
+  } catch { res.status(500).json({ error: 'Failed to fetch top products', code: 'DB_ERROR' }); }
+});
+
+// Detail lists for drilldown pages
+router.get('/analytics/customers/list', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25));
+  try {
+    const where = { farm_id: farmId, deleted_at: null };
+    const [total, rows] = await Promise.all([
+      prisma.customers.count({ where }),
+      prisma.customers.findMany({ where, orderBy: { name: 'asc' }, skip: (page - 1) * pageSize, take: pageSize,
+        select: { id: true, name: true, email: true, customer_type: true, country: true, is_active: true, sales_orders: { select: { total_amount: true, status: true } } } }),
+    ]);
+    res.json({ page, pageSize, total, items: rows.map(c => ({
+      id: c.id, name: c.name, emailMasked: maskEmail(c.email), type: c.customer_type, country: c.country ?? '-', active: c.is_active,
+      totalPurchase: (c.sales_orders as any[]).filter(o => settled(o.status)).reduce((s, o) => s + Number(o.total_amount), 0),
+    })) });
+  } catch { res.status(500).json({ error: 'Failed to fetch customers', code: 'DB_ERROR' }); }
+});
+
+router.get('/analytics/purchases/list', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25));
+  try {
+    const where = { farm_id: farmId, status: { not: 'cancelled' } };
+    const [total, rows] = await Promise.all([
+      prisma.sales_orders.count({ where }),
+      prisma.sales_orders.findMany({ where, orderBy: { order_date: 'desc' }, skip: (page - 1) * pageSize, take: pageSize,
+        select: { id: true, order_number: true, total_amount: true, status: true, payment_status: true, order_date: true, customers: { select: { name: true } } } }),
+    ]);
+    res.json({ page, pageSize, total, items: rows.map((o: any) => ({
+      id: o.id, order_number: o.order_number, customer: o.customers?.name ?? '-', amount: Number(o.total_amount), status: o.status, payment_status: o.payment_status, date: o.order_date,
+    })) });
+  } catch { res.status(500).json({ error: 'Failed to fetch purchases', code: 'DB_ERROR' }); }
+});
+
+router.get('/analytics/carts/list', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  try {
+    const carts = await prisma.cart_items.findMany({ where: { farm_id: farmId }, orderBy: { created_at: 'desc' } });
+    res.json({ total: carts.length, items: carts.map(c => ({ id: c.id, item_name: c.item_name, quantity: Number(c.quantity), unit_price: Number(c.unit_price), total_amount: Number(c.total_amount), date: c.created_at })) });
+  } catch { res.status(500).json({ error: 'Failed to fetch cart list', code: 'DB_ERROR' }); }
+});
+
 export default router;

@@ -304,4 +304,190 @@ router.get('/available-items', async (req, res) => {
   }
 });
 
+// ─── Marketing Analytics ─────────────────────────────────────────────────────
+
+type Bucket = { label: string; start: Date; end: Date };
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+function analyticsBuckets(granularity: string): Bucket[] {
+  const now = new Date();
+  if (granularity === 'daily') {
+    return Array.from({ length: 14 }, (_, i) => {
+      const start = new Date(now); start.setDate(now.getDate() - (13 - i)); start.setHours(0, 0, 0, 0);
+      const end = new Date(start); end.setHours(23, 59, 59, 999);
+      return { label: `${start.getDate()}/${start.getMonth() + 1}`, start, end };
+    });
+  }
+  if (granularity === 'weekly') {
+    return Array.from({ length: 12 }, (_, i) => {
+      const start = new Date(now); start.setDate(now.getDate() - (11 - i) * 7); start.setHours(0, 0, 0, 0);
+      const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999);
+      return { label: `W${start.getDate()}/${start.getMonth() + 1}`, start, end };
+    });
+  }
+  return Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (11 - i), 1);
+    const start = new Date(d.getFullYear(), d.getMonth(), 1);
+    const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+    return { label: MONTHS[d.getMonth()], start, end };
+  });
+}
+
+const isCompleted = (s?: string | null) => s === 'completed' || s === 'delivered';
+const isInProcess = (s?: string | null) => s === 'processing' || s === 'in_process';
+const orderDate = (o: any) => new Date(o.date ?? o.created_at);
+const inB = (d: Date, b: Bucket) => d >= b.start && d <= b.end;
+
+async function loadOrders(farmId: string | undefined) {
+  return (prisma as any).marketing_orders.findMany({ where: { farm_id: farmId } });
+}
+
+router.get('/analytics/overview', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  try {
+    const [orders, pos] = await Promise.all([
+      loadOrders(farmId),
+      prisma.purchase_orders.findMany({ where: { farm_id: farmId }, select: { total_amount: true, created_at: true, status: true } }),
+    ]);
+    const completed = orders.filter((o: any) => isCompleted(o.status));
+    const now = Date.now();
+    const within = (o: any, fromDays: number, toDays: number) => {
+      const t = orderDate(o).getTime();
+      return t >= now - fromDays * 86400000 && t < now - toDays * 86400000;
+    };
+    const cur = completed.filter((o: any) => within(o, 30, 0)).reduce((s: number, o: any) => s + Number(o.amount), 0);
+    const prev = completed.filter((o: any) => within(o, 60, 30)).reduce((s: number, o: any) => s + Number(o.amount), 0);
+    const trend = prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : (cur > 0 ? 100 : 0);
+
+    // Revenue share by product (real data; no marketing-channel field exists)
+    const byProduct: Record<string, number> = {};
+    for (const o of completed) byProduct[o.item_name] = (byProduct[o.item_name] || 0) + Number(o.amount);
+    const ranked = Object.entries(byProduct).sort((a, b) => b[1] - a[1]);
+    const totalRev = ranked.reduce((s, [, v]) => s + v, 0);
+    const topN = ranked.slice(0, 4);
+    const otherSum = ranked.slice(4).reduce((s, [, v]) => s + v, 0);
+    const revenueBreakdown = [
+      ...topN.map(([name, value]) => ({ name, value, pct: totalRev > 0 ? Math.round((value / totalRev) * 100) : 0 })),
+      ...(otherSum > 0 ? [{ name: 'Other', value: otherSum, pct: totalRev > 0 ? Math.round((otherSum / totalRev) * 100) : 0 }] : []),
+    ];
+    const topProducts = ranked.slice(0, 5).map(([name, value], i) => ({ rank: i + 1, name, value }));
+
+    // Sales vs Purchase — last 6 months
+    const months = analyticsBuckets('monthly').slice(-6);
+    const salesVsPurchase = months.map(b => ({
+      bucket: b.label,
+      sales: completed.filter((o: any) => inB(orderDate(o), b)).reduce((s: number, o: any) => s + Number(o.amount), 0),
+      purchase: pos.filter(p => p.created_at && inB(new Date(p.created_at), b)).reduce((s, p) => s + Number(p.total_amount), 0),
+    }));
+
+    // Order summary — received (created) vs fulfilled (completed) per month, last 6
+    const orderSummary = months.map(b => ({
+      bucket: b.label,
+      received: orders.filter((o: any) => inB(orderDate(o), b)).length,
+      fulfilled: completed.filter((o: any) => inB(orderDate(o), b)).length,
+    }));
+
+    res.json({
+      generatedAt: new Date().toISOString(),
+      kpis: {
+        totalIncome: completed.reduce((s: number, o: any) => s + Number(o.amount), 0),
+        incomeTrend: trend,
+        pending: { value: orders.filter((o: any) => o.status === 'pending').length },
+        inProcess: { value: orders.filter((o: any) => isInProcess(o.status)).length },
+        completed: { value: completed.length },
+      },
+      revenueBreakdown,
+      topProducts,
+      salesVsPurchase,
+      orderSummary,
+    });
+  } catch (err) {
+    console.error('[Marketing/Analytics/Overview]', err);
+    res.status(500).json({ error: 'Failed to fetch analytics', code: 'DB_ERROR' });
+  }
+});
+
+router.get('/analytics/income', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const granularity = ['monthly', 'weekly', 'daily'].includes(String(req.query.granularity)) ? String(req.query.granularity) : 'monthly';
+  try {
+    const orders = await loadOrders(farmId);
+    const completed = orders.filter((o: any) => isCompleted(o.status));
+    const buckets = analyticsBuckets(granularity);
+    const series = buckets.map(b => ({
+      bucket: b.label,
+      income: completed.filter((o: any) => inB(orderDate(o), b)).reduce((s: number, o: any) => s + Number(o.amount), 0),
+    }));
+    // Forecast = 3-point trailing moving average
+    const withForecast = series.map((pt, i) => {
+      const window = series.slice(Math.max(0, i - 2), i + 1);
+      const forecast = Math.round(window.reduce((s, p) => s + p.income, 0) / window.length);
+      return { ...pt, forecast };
+    });
+    const total = series.reduce((s, p) => s + p.income, 0);
+    const last = series[series.length - 1]?.income ?? 0;
+    const prev = series[series.length - 2]?.income ?? 0;
+    const growthPct = prev > 0 ? Math.round(((last - prev) / prev) * 1000) / 10 : (last > 0 ? 100 : 0);
+    res.json({ granularity, total, growthPct, series: withForecast });
+  } catch (err) {
+    console.error('[Marketing/Analytics/Income]', err);
+    res.status(500).json({ error: 'Failed to fetch income', code: 'DB_ERROR' });
+  }
+});
+
+router.get('/analytics/sales', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const granularity = ['month', 'weekly', 'daily'].includes(String(req.query.granularity)) ? String(req.query.granularity) : 'month';
+  try {
+    const orders = await loadOrders(farmId);
+    const completed = orders.filter((o: any) => isCompleted(o.status));
+    const buckets = analyticsBuckets(granularity === 'month' ? 'monthly' : granularity);
+    const series = buckets.map(b => ({
+      bucket: b.label,
+      units: completed.filter((o: any) => inB(orderDate(o), b)).reduce((s: number, o: any) => s + Number(o.quantity), 0),
+    }));
+    res.json({ granularity, series });
+  } catch (err) {
+    console.error('[Marketing/Analytics/Sales]', err);
+    res.status(500).json({ error: 'Failed to fetch sales', code: 'DB_ERROR' });
+  }
+});
+
+router.get('/analytics/orders/items', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const status = String(req.query.status || '');
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25));
+  const statusSet: Record<string, string[]> = {
+    pending: ['pending'],
+    'in-process': ['processing', 'in_process'],
+    completed: ['completed', 'delivered'],
+  };
+  const allowed = statusSet[status];
+  if (!allowed) return res.status(400).json({ error: 'Invalid status', code: 'VALIDATION_ERROR' });
+  try {
+    const where = { farm_id: farmId, status: { in: allowed } };
+    const [total, rows] = await Promise.all([
+      (prisma as any).marketing_orders.count({ where }),
+      (prisma as any).marketing_orders.findMany({ where, orderBy: { date: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+    ]);
+    res.json({
+      status, page, pageSize, total,
+      items: rows.map((o: any) => ({
+        id: o.id,
+        order_id: o.order_id,
+        item_name: o.item_name,
+        quantity: Number(o.quantity),
+        quantity_unit: o.quantity_unit,
+        amount: Number(o.amount),
+        status: o.status,
+        date: o.date ?? o.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('[Marketing/Analytics/Orders]', err);
+    res.status(500).json({ error: 'Failed to fetch orders', code: 'DB_ERROR' });
+  }
+});
+
 export default router;

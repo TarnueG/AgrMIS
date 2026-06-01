@@ -712,4 +712,196 @@ router.get('/marketing-deductions', async (req, res) => {
   }
 });
 
+// ─── Inventory Analytics ─────────────────────────────────────────────────────
+
+const AMONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+type AB = { label: string; start: Date; end: Date };
+function analyticBuckets(range: string, n: number): AB[] {
+  const now = new Date();
+  if (range === 'daily') {
+    return Array.from({ length: n }, (_, i) => {
+      const start = new Date(now); start.setDate(now.getDate() - (n - 1 - i)); start.setHours(0, 0, 0, 0);
+      const end = new Date(start); end.setHours(23, 59, 59, 999);
+      return { label: `${start.getDate()}/${start.getMonth() + 1}`, start, end };
+    });
+  }
+  if (range === 'weekly') {
+    return Array.from({ length: n }, (_, i) => {
+      const start = new Date(now); start.setDate(now.getDate() - (n - 1 - i) * 7); start.setHours(0, 0, 0, 0);
+      const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23, 59, 59, 999);
+      return { label: `W${start.getDate()}/${start.getMonth() + 1}`, start, end };
+    });
+  }
+  return Array.from({ length: n }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - (n - 1 - i), 1);
+    return { label: AMONTHS[d.getMonth()], start: new Date(d.getFullYear(), d.getMonth(), 1), end: new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999) };
+  });
+}
+const inA = (d: Date, b: AB) => d >= b.start && d <= b.end;
+const aDone = (s?: string | null) => s === 'completed' || s === 'delivered';
+
+router.get('/analytics/overview', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const range = ['daily', 'weekly', 'monthly'].includes(String(req.query.range)) ? String(req.query.range) : 'monthly';
+  try {
+    const [pigs, cattle, birds, fish, mort, orders, stock, pos] = await Promise.all([
+      prisma.$queryRaw<any[]>`SELECT status, mature_for_market, created_at FROM pigs WHERE farm_id = ${farmId}::uuid AND deleted_at IS NULL`,
+      prisma.$queryRaw<any[]>`SELECT status, created_at FROM cattle WHERE farm_id = ${farmId}::uuid AND deleted_at IS NULL`,
+      prisma.$queryRaw<any[]>`SELECT status, created_at FROM birds WHERE farm_id = ${farmId}::uuid AND deleted_at IS NULL`,
+      prisma.$queryRaw<any[]>`SELECT fs.number_of_fish, fs.created_at FROM fish_stock fs JOIN fish_ponds fp ON fp.id = fs.pond_id WHERE fp.farm_id = ${farmId}::uuid AND fs.deleted_at IS NULL`,
+      prisma.$queryRaw<any[]>`SELECT livestock_type, created_at FROM mortality_records WHERE farm_id = ${farmId}::uuid`,
+      (prisma as any).marketing_orders.findMany({ where: { farm_id: farmId } }),
+      prisma.stock_items.findMany({ where: { farm_id: farmId, deleted_at: null }, select: { name: true, sku: true, current_quantity: true, reorder_threshold: true } }),
+      prisma.purchase_orders.findMany({ where: { farm_id: farmId, status: { in: ['draft', 'submitted'] } }, include: { suppliers: { select: { name: true } } } }),
+    ]);
+
+    const spark = analyticBuckets(range, 6);
+    const head = (rows: any[], qty?: (r: any) => number) => {
+      const value = qty ? rows.reduce((s, r) => s + qty(r), 0) : rows.length;
+      const series = spark.map(b => rows.filter(r => inA(new Date(r.created_at), b)).reduce((s, r) => s + (qty ? qty(r) : 1), 0));
+      const cur = series[series.length - 1] ?? 0; const prev = series[series.length - 2] ?? 0;
+      const trend = prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : (cur > 0 ? 100 : 0);
+      return { value: Math.round(value), trend, spark: series };
+    };
+    const headcounts = {
+      fish: head(fish, (r) => Number(r.number_of_fish)),
+      birds: head(birds),
+      grazing: head(cattle),
+      pigs: head(pigs),
+    };
+
+    const oDate = (o: any) => new Date(o.date ?? o.created_at);
+    const completed = orders.filter((o: any) => aDone(o.status));
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const dayStart = new Date(now); dayStart.setHours(0, 0, 0, 0);
+    const ordersThisMonth = orders.filter((o: any) => oDate(o) >= monthStart).length;
+    const salesThisMonth = completed.filter((o: any) => oDate(o) >= monthStart).reduce((s: number, o: any) => s + Number(o.amount), 0);
+    const ordersToday = orders.filter((o: any) => oDate(o) >= dayStart).length;
+    const totalSales = completed.reduce((s: number, o: any) => s + Number(o.amount), 0);
+    const avgOrderValue = completed.length ? totalSales / completed.length : 0;
+    const oBuckets = analyticBuckets(range, 8);
+    const orderSeries = oBuckets.map(b => ({
+      bucket: b.label,
+      orders: orders.filter((o: any) => inA(oDate(o), b)).length,
+      sales: completed.filter((o: any) => inA(oDate(o), b)).reduce((s: number, o: any) => s + Number(o.amount), 0),
+    }));
+
+    const onTime = orders.filter((o: any) => aDone(o.status)).length;
+    const delayed = orders.filter((o: any) => o.status === 'en_route' || o.status === 'processing' || o.status === 'in_process').length;
+    const failed = orders.filter((o: any) => o.status === 'cancelled').length;
+    const delTotal = onTime + delayed + failed;
+    const deliveryRate = { rate: delTotal ? Math.round((onTime / delTotal) * 1000) / 10 : 0, onTime, delayed, failed };
+
+    const idx = (rows: any[], qty?: (r: any) => number) => {
+      const vals = oBuckets.map(b => rows.filter(r => inA(new Date(r.created_at), b)).reduce((s, r) => s + (qty ? qty(r) : 1), 0));
+      const max = Math.max(1, ...vals);
+      return vals.map(v => Math.round((v / max) * 100));
+    };
+    const performance = {
+      labels: oBuckets.map(b => b.label),
+      series: { fish: idx(fish, (r) => Number(r.number_of_fish)), birds: idx(birds), grazing: idx(cattle), pigs: idx(pigs) },
+    };
+
+    const byItem: Record<string, { qty: number; amount: number }> = {};
+    for (const o of orders as any[]) { const k = o.item_name; if (!byItem[k]) byItem[k] = { qty: 0, amount: 0 }; byItem[k].qty += Number(o.quantity); byItem[k].amount += Number(o.amount); }
+    const rankedItems = Object.entries(byItem).sort((a, b) => b[1].qty - a[1].qty);
+    const mostSold = rankedItems.slice(0, 7).map(([name, v]) => ({ name, quantity: Math.round(v.qty) }));
+    const stockLevel = (q: number, rt: number) => q === 0 ? 'Out of stock' : q <= (rt || 10) ? 'Low stock' : 'In stock';
+    const topSelling = rankedItems.slice(0, 7).map(([name, v]) => {
+      const si = stock.find(s => s.name.toLowerCase() === name.toLowerCase());
+      return { name, sku: si?.sku ?? '—', quantity: Math.round(v.qty), totalAmount: Math.round(v.amount), status: si ? stockLevel(Number(si.current_quantity), Number(si.reorder_threshold)) : 'In stock' };
+    });
+
+    const mortBy = (type: string) => mort.filter(m => m.livestock_type === type).length;
+    const ratePct = (dead: number, alive: number) => (dead + alive) > 0 ? Math.round((dead / (dead + alive)) * 1000) / 10 : 0;
+    const mortality = [
+      { category: 'Pigs', rate: ratePct(mortBy('pig'), pigs.length) },
+      { category: 'Birds', rate: ratePct(mortBy('bird'), birds.length) },
+      { category: 'Grazing', rate: ratePct(mortBy('cattle'), cattle.length) },
+      { category: 'Fish', rate: ratePct(mortBy('fish'), fish.reduce((s, r) => s + Number(r.number_of_fish), 0)) },
+    ];
+    const healthPct = (rows: any[]) => rows.length ? Math.round((rows.filter(r => r.status === 'healthy').length / rows.length) * 1000) / 10 : 0;
+    const health = [
+      { category: 'Pigs', rate: healthPct(pigs) },
+      { category: 'Birds', rate: healthPct(birds) },
+      { category: 'Grazing', rate: healthPct(cattle) },
+    ];
+
+    const soldRateVal = orders.length ? Math.round((completed.length / orders.length) * 1000) / 10 : 0;
+    const soldRate = {
+      rate: soldRateVal, sold: completed.length, listed: orders.length,
+      perProduct: rankedItems.slice(0, 5).map(([name, v]) => {
+        const done = completed.filter((o: any) => o.item_name === name).reduce((s: number, o: any) => s + Number(o.quantity), 0);
+        return { name, rate: v.qty > 0 ? Math.round((done / v.qty) * 100) : 0 };
+      }),
+    };
+
+    let inStock = 0, lowStock = 0, outOfStock = 0;
+    for (const s of stock) { const q = Number(s.current_quantity); const lvl = stockLevel(q, Number(s.reorder_threshold)); if (lvl === 'In stock') inStock++; else if (lvl === 'Low stock') lowStock++; else outOfStock++; }
+    const stockSummary = { totalSkus: stock.length, inStock, lowStock, outOfStock };
+
+    const poStatusMap: Record<string, string> = { submitted: 'In Transit', draft: 'Scheduled' };
+    const upcoming = pos.slice(0, 25).map((p: any, i: number) => {
+      const overdue = p.expected_delivery && new Date(p.expected_delivery) < now;
+      return { no: i + 1, item_name: p.commodity ?? '-', location: p.suppliers?.name ?? '-', batch_no: p.po_number, quantity: p.quantity != null ? Number(p.quantity) : 0, status: overdue ? 'Delayed' : (poStatusMap[p.status] ?? 'Scheduled') };
+    });
+
+    res.json({
+      generatedAt: new Date().toISOString(), range,
+      headcounts,
+      orderStats: { ordersThisMonth, salesThisMonth, ordersToday, avgOrderValue: Math.round(avgOrderValue), series: orderSeries },
+      deliveryRate, performance, mostSold, mortality, health, soldRate, topSelling, stockSummary,
+      upcoming,
+    });
+  } catch (err) {
+    console.error('[Inventory/Analytics/Overview]', err);
+    res.status(500).json({ error: 'Failed to fetch analytics', code: 'DB_ERROR' });
+  }
+});
+
+router.get('/analytics/details/:metric', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const metric = req.params.metric;
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25));
+  const pg = <T,>(arr: T[]) => arr.slice((page - 1) * pageSize, page * pageSize);
+  try {
+    if (metric === 'top-selling' || metric === 'most-sold') {
+      const orders = await (prisma as any).marketing_orders.findMany({ where: { farm_id: farmId } });
+      const byItem: Record<string, { qty: number; amount: number }> = {};
+      for (const o of orders) { const k = o.item_name; if (!byItem[k]) byItem[k] = { qty: 0, amount: 0 }; byItem[k].qty += Number(o.quantity); byItem[k].amount += Number(o.amount); }
+      const rows = Object.entries(byItem).sort((a, b) => b[1].qty - a[1].qty).map(([name, v]) => ({ id: name, name, quantity: Math.round(v.qty), totalAmount: Math.round(v.amount) }));
+      return res.json({ total: rows.length, items: pg(rows) });
+    }
+    if (metric === 'stock-summary') {
+      const stock = await prisma.stock_items.findMany({ where: { farm_id: farmId, deleted_at: null }, select: { id: true, name: true, sku: true, current_quantity: true, reorder_threshold: true, unit_of_measure: true } });
+      const items = stock.map(s => { const q = Number(s.current_quantity); const rt = Number(s.reorder_threshold); return { id: s.id, name: s.name, sku: s.sku ?? '—', quantity: q, unit: s.unit_of_measure, status: q === 0 ? 'Out of stock' : q <= (rt || 10) ? 'Low stock' : 'In stock' }; });
+      return res.json({ total: items.length, items: pg(items) });
+    }
+    if (metric === 'upcoming') {
+      const pos = await prisma.purchase_orders.findMany({ where: { farm_id: farmId, status: { in: ['draft', 'submitted'] } }, include: { suppliers: { select: { name: true } } } });
+      const items = pos.map((p: any, i: number) => ({ id: p.id, no: i + 1, name: p.commodity ?? '-', location: p.suppliers?.name ?? '-', batch_no: p.po_number, quantity: p.quantity != null ? Number(p.quantity) : 0, status: p.status === 'submitted' ? 'In Transit' : 'Scheduled' }));
+      return res.json({ total: items.length, items: pg(items) });
+    }
+    const speciesTable: Record<string, string> = { 'total-pigs': 'pigs', 'total-birds': 'birds', 'total-grazing-livestock': 'cattle' };
+    if (speciesTable[metric]) {
+      const table = speciesTable[metric];
+      const idCol = table === 'pigs' ? 'pig_id' : table === 'birds' ? 'bird_id' : 'cattle_id';
+      const rows = await prisma.$queryRawUnsafe<any[]>(`SELECT id, ${idCol} AS record_id, status, weight_kg, created_at FROM ${table} WHERE farm_id = $1::uuid AND deleted_at IS NULL ORDER BY created_at DESC`, farmId);
+      const mapped = rows.map(r => ({ id: r.id, record_id: r.record_id, status: r.status, weight_kg: r.weight_kg != null ? Number(r.weight_kg) : null, date: r.created_at }));
+      return res.json({ total: mapped.length, items: pg(mapped) });
+    }
+    if (metric === 'total-fish') {
+      const rows = await prisma.$queryRaw<any[]>`SELECT fs.id, fs.fish_type, fs.batch_number, fs.number_of_fish, fp.pond_id, fs.created_at FROM fish_stock fs JOIN fish_ponds fp ON fp.id = fs.pond_id WHERE fp.farm_id = ${farmId}::uuid AND fs.deleted_at IS NULL ORDER BY fs.created_at DESC`;
+      const mapped = rows.map(r => ({ id: r.id, record_id: r.batch_number, type: r.fish_type, pond: r.pond_id, quantity: Number(r.number_of_fish), date: r.created_at }));
+      return res.json({ total: mapped.length, items: pg(mapped) });
+    }
+    res.status(400).json({ error: 'Unknown metric', code: 'VALIDATION_ERROR' });
+  } catch (err) {
+    console.error('[Inventory/Analytics/Details]', err);
+    res.status(500).json({ error: 'Failed to fetch details', code: 'DB_ERROR' });
+  }
+});
+
 export default router;
