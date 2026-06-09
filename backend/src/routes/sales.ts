@@ -62,6 +62,7 @@ const customerSchema = z.object({
   email: z.string().email().optional().or(z.literal('')),
   address: z.string().optional(),
   country: z.string().optional(),
+  county: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -107,6 +108,7 @@ router.post('/customers', async (req, res) => {
         email: d.email || undefined,
         address: d.address,
         country: d.country,
+        county: d.county,
         notes: d.notes,
       },
     });
@@ -129,6 +131,7 @@ router.patch('/customers/:id', async (req, res) => {
         ...(d.phone !== undefined && { phone: d.phone }),
         ...(d.email !== undefined && { email: d.email }),
         ...(d.address !== undefined && { address: d.address }),
+        ...(d.county !== undefined && { county: d.county }),
         ...(d.notes !== undefined && { notes: d.notes }),
       },
     });
@@ -318,12 +321,14 @@ router.get('/analytics/customers/summary', async (req, res) => {
   const farmId = req.user!.farmId ?? undefined;
   try {
     const customers = await prisma.customers.findMany({ where: { farm_id: farmId, deleted_at: null }, select: { is_active: true, created_at: true } });
-    const total = customers.filter(c => c.is_active).length;
+    const active = customers.filter(c => c.is_active).length;
+    const deactivated = customers.filter(c => !c.is_active).length;
+    const total = active;
     const now = Date.now();
     const cur = customers.filter(c => new Date(c.created_at).getTime() >= now - 30 * 86400000).length;
     const prev = customers.filter(c => { const t = new Date(c.created_at).getTime(); return t >= now - 60 * 86400000 && t < now - 30 * 86400000; }).length;
     const deltaPct = prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : (cur > 0 ? 100 : 0);
-    res.json({ total, deltaPct, period: 'month', generatedAt: new Date().toISOString() });
+    res.json({ total, active, deactivated, deltaPct, period: 'month', generatedAt: new Date().toISOString() });
   } catch { res.status(500).json({ error: 'Failed to fetch customer summary', code: 'DB_ERROR' }); }
 });
 

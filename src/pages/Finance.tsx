@@ -129,24 +129,26 @@ export default function Finance() {
   const pendingPOs = purchaseOrders.filter((p: any) => p.status !== 'cancelled' && p.payment_status !== 'paid');
 
   const pendingContractorTotal = contractorPayments.filter((c: any) => c.payment_status === 'pending').reduce((s: number, c: any) => s + Number(c.amount), 0);
-  const pendingWagesTotal = personnelWages.filter((w: any) => w.payment_status === 'pending').reduce((s: number, w: any) => s + Number(w.amount), 0);
+  // Total $ of all personnel wages (paid + pending) — matches the Personnel Wages detail table.
+  const totalWagesAmount = personnelWages.reduce((s: number, w: any) => s + Number(w.amount), 0);
 
   function fmt(n: number) {
     return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }
 
-  function cardClass(v: FinView) {
-    return `cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${finView === v ? 'ring-2 ring-primary shadow-lg scale-105' : ''}`;
+  // Card styling mirrors the Machinery dashboard (structure, spacing, icon tile, typography).
+  function cardClass(v: FinView, color: string) {
+    return `cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${color} ${finView === v ? 'ring-2 ring-primary shadow-lg scale-105' : ''}`;
   }
 
   const CARDS = [
-    { key: 'income' as FinView, label: 'Total Income', value: fmt(totalIncome), Icon: TrendingUp, color: 'bg-success/10 border-success/20 text-success' },
-    { key: 'expenses' as FinView, label: 'Total Expenses', value: fmt(totalExpenses), Icon: TrendingDown, color: 'bg-destructive/10 border-destructive/20 text-destructive' },
-    { key: 'profit' as FinView, label: 'Net Profit', value: fmt(netProfit), Icon: DollarSign, color: netProfit >= 0 ? 'bg-primary/10 border-primary/20 text-primary' : 'bg-warning/10 border-warning/20 text-warning' },
-    { key: 'purchase_requests' as FinView, label: 'Purchase Requests', value: String(pendingPOs.length), Icon: Package, color: 'bg-blue-500/10 border-blue-500/20 text-blue-400' },
-    { key: 'purchased_orders' as FinView, label: 'Purchased Order', value: String(paidPOs.length), Icon: ShoppingBag, color: 'bg-success/10 border-success/20 text-success' },
-    { key: 'contractor' as FinView, label: 'Contractor Payment', value: fmt(pendingContractorTotal), Icon: Wrench, color: 'bg-orange-500/10 border-orange-500/20 text-orange-400' },
-    { key: 'wages' as FinView, label: 'Personnel Wages', value: fmt(pendingWagesTotal), Icon: Users, color: 'bg-purple-500/10 border-purple-500/20 text-purple-400' },
+    { key: 'income' as FinView, label: 'Total Income', value: fmt(totalIncome), Icon: TrendingUp, color: 'bg-success/10 border-success/20' },
+    { key: 'expenses' as FinView, label: 'Total Expenses', value: fmt(totalExpenses), Icon: TrendingDown, color: 'bg-destructive/10 border-destructive/20' },
+    { key: 'profit' as FinView, label: 'Net Profit', value: fmt(netProfit), Icon: DollarSign, color: netProfit >= 0 ? 'bg-primary/10 border-primary/20' : 'bg-warning/10 border-warning/20' },
+    { key: 'purchase_requests' as FinView, label: 'Purchase Requests', value: String(pendingPOs.length), Icon: Package, color: 'bg-info/10 border-blue-500/20' },
+    { key: 'purchased_orders' as FinView, label: 'Purchased Order', value: String(paidPOs.length), Icon: ShoppingBag, color: 'bg-success/10 border-success/20' },
+    { key: 'contractor' as FinView, label: 'Contractor Payment', value: fmt(pendingContractorTotal), Icon: Wrench, color: 'bg-warning/10 border-warning/20' },
+    { key: 'wages' as FinView, label: 'Personnel Wages', value: fmt(totalWagesAmount), Icon: Users, color: 'bg-secondary/10 border-secondary/20' },
   ];
 
   // Build total expenses rows for export
@@ -159,43 +161,30 @@ export default function Finance() {
   return (
     <DashboardLayout>
       <div className="space-y-6 animate-fade-in">
-        {/* Dashboard: cards only */}
-        {!finView && (
-          <>
-            <div>
-              <h1 className="text-3xl font-bold">Finance & Accounting</h1>
-              <p className="text-muted-foreground">Track income, expenses, and profitability</p>
-            </div>
+        {/* Cards stay visible; clicking expands the row list inline below (Machinery pattern, spec 2). */}
+        <div>
+          <h1 className="text-3xl font-bold">Finance & Accounting</h1>
+          <p className="text-muted-foreground">Track income, expenses, and profitability</p>
+        </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {CARDS.filter(({ key }) => canViewCard(`finance.${key}`)).map(({ key, label, value, Icon, color }) => (
-                <Card key={key} className={`border ${color} ${cardClass(key)}`} onClick={() => setFinView(key)}>
-                  <CardContent className="p-6">
-                    <div className="flex items-center gap-4">
-                      <div className={`p-3 rounded-xl ${color.replace('border-', 'bg-').replace('/10', '/20').replace('/20', '/30')}`}>
-                        <Icon className="h-6 w-6" />
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">{label}</p>
-                        <p className="text-2xl font-bold">{value}</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </>
-        )}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {CARDS.filter(({ key }) => canViewCard(`finance.${key}`)).map(({ key, label, value, Icon, color }) => (
+            <Card key={key} className={cardClass(key, color)} onClick={() => setFinView(prev => prev === key ? null : key)}>
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-white/10"><Icon className="h-5 w-5" /></div>
+                <div>
+                  <p className="text-xs text-muted-foreground">{label}</p>
+                  <p className="text-xl font-bold">{value}</p>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
 
-        {/* Detail page header: back arrow + time filter */}
+        {/* Inline drilldown header (re-click a card to collapse; selecting another swaps the list). */}
         {finView && (
           <div className="flex justify-between items-center flex-wrap gap-3">
-            <div className="flex items-center gap-3">
-              <Button variant="ghost" size="icon" onClick={() => { setFinView(null); setDateFilter('all'); }} aria-label="Back to finance" className="text-muted-foreground hover:text-foreground">
-                <ArrowLeft className="h-5 w-5" />
-              </Button>
-              <h1 className="text-2xl font-bold">{CARDS.find(c => c.key === finView)?.label ?? 'Detail'}</h1>
-            </div>
+            <h2 className="text-lg font-semibold">{CARDS.find(c => c.key === finView)?.label ?? 'Detail'}</h2>
             <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value as typeof dateFilter)} className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground">
               <option value="all">All time</option>
               <option value="7">Last 7 days</option>

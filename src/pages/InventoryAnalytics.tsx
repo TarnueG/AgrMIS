@@ -37,9 +37,9 @@ const nfmt = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${Math.ro
 const money = (n: number) => n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${Math.round(n)}`;
 function statusBadge(s: string): string {
   const x = s.toLowerCase();
-  if (x.includes('out') || x === 'failed' || x === 'delayed') return 'bg-destructive/20 text-destructive';
-  if (x.includes('low') || x === 'scheduled') return 'bg-warning/20 text-warning';
-  if (x === 'in transit') return 'bg-blue-500/20 text-blue-500';
+  if (x.includes('out') || x === 'failed' || x === 'delayed' || x === 'cancel') return 'bg-destructive/20 text-destructive';
+  if (x.includes('low') || x === 'scheduled' || x === 'pending') return 'bg-warning/20 text-warning';
+  if (x === 'in transit' || x === 'processing') return 'bg-blue-500/20 text-blue-500';
   return 'bg-success/20 text-success';
 }
 
@@ -250,12 +250,12 @@ export default function InventoryAnalytics() {
                 <CardContent className="p-0">
                   <div className="p-5 pb-3 flex items-center justify-between"><p className="text-sm font-semibold">Top Selling Products</p><ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground" /></div>
                   <Table>
-                    <TableHeader><TableRow><TableHead>Item Name</TableHead><TableHead>SKU</TableHead><TableHead>Quantity</TableHead><TableHead>Total Amount</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+                    <TableHeader><TableRow><TableHead>Item Name</TableHead><TableHead>Quantity</TableHead><TableHead>Total Amount</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
                     <TableBody>
                       {d.topSelling.map(t => (
-                        <TableRow key={t.name}><TableCell className="font-medium">{t.name}</TableCell><TableCell className="font-mono text-xs">{t.sku}</TableCell><TableCell>{t.quantity.toLocaleString()}</TableCell><TableCell className="font-medium">{money(t.totalAmount)}</TableCell><TableCell><Badge className={statusBadge(t.status)}>{t.status}</Badge></TableCell></TableRow>
+                        <TableRow key={t.name}><TableCell className="font-medium">{t.name}</TableCell><TableCell>{t.quantity.toLocaleString()}</TableCell><TableCell className="font-medium">{money(t.totalAmount)}</TableCell><TableCell><Badge className={statusBadge(t.status)}>{t.status}</Badge></TableCell></TableRow>
                       ))}
-                      {!d.topSelling.length && <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No sales yet</TableCell></TableRow>}
+                      {!d.topSelling.length && <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground">No sales yet</TableCell></TableRow>}
                     </TableBody>
                   </Table>
                 </CardContent>
@@ -295,12 +295,12 @@ export default function InventoryAnalytics() {
                 <Badge className="bg-success/20 text-success">{d.upcoming.length} inbound</Badge>
               </div>
               <Table>
-                <TableHeader><TableRow><TableHead>No</TableHead><TableHead>Item Name</TableHead><TableHead>Location</TableHead><TableHead>Batch No</TableHead><TableHead>Quantity</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>No</TableHead><TableHead>Item Name</TableHead><TableHead>Quantity</TableHead><TableHead>Batch / PO No</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {d.upcoming.map(u => (
-                    <TableRow key={u.batch_no}><TableCell>{u.no}</TableCell><TableCell className="font-medium">{u.item_name}</TableCell><TableCell>{u.location}</TableCell><TableCell className="font-mono text-xs">{u.batch_no}</TableCell><TableCell>{u.quantity.toLocaleString()}</TableCell><TableCell><Badge className={statusBadge(u.status)}>{u.status}</Badge></TableCell></TableRow>
+                    <TableRow key={`${u.no}-${u.batch_no}`}><TableCell>{u.no}</TableCell><TableCell className="font-medium">{u.item_name}</TableCell><TableCell>{u.quantity.toLocaleString()}</TableCell><TableCell className="font-mono text-xs">{u.batch_no}</TableCell><TableCell><Badge className={statusBadge(u.status)}>{u.status}</Badge></TableCell></TableRow>
                   ))}
-                  {!d.upcoming.length && <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No inbound items</TableCell></TableRow>}
+                  {!d.upcoming.length && <TableRow><TableCell colSpan={5} className="text-center py-8 text-muted-foreground">No inbound items</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </CardContent>

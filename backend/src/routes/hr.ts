@@ -40,14 +40,24 @@ function generateContractorId(): string {
 async function autoRestoreSuspended(farmId: string | undefined) {
   if (!farmId) return;
   try {
-    await prisma.employees.updateMany({
+    // Fetch first so we can reactivate the linked user accounts after restoring.
+    const due = await prisma.employees.findMany({
       where: {
         farm_id: farmId,
         status: 'suspended',
         suspension_expires_at: { lte: new Date() },
       } as any,
+      select: { id: true, user_id: true } as any,
+    });
+    if (!due.length) return;
+    await prisma.employees.updateMany({
+      where: { id: { in: due.map((e: any) => e.id) } },
       data: { status: 'active', suspension_reason: null, suspension_expires_at: null } as any,
     });
+    // Restoring to Active reactivates the linked user account (idempotent).
+    for (const e of due as any[]) {
+      if (e.user_id) await reactivateUser(e.user_id).catch(() => {});
+    }
   } catch { noop(); }
 }
 
@@ -258,12 +268,16 @@ router.patch('/employees/:id/suspend', async (req, res) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
   try {
+    // Treat a date-only expiry as end-of-day so a suspension that ends "today"
+    // is not instantly reverted by autoRestoreSuspended on the next fetch.
+    const expires = new Date(parsed.data.suspensionExpiresAt);
+    expires.setHours(23, 59, 59, 999);
     const updated = await prisma.employees.update({
       where: { id: req.params.id },
       data: {
         status: 'suspended',
         suspension_reason: parsed.data.suspensionReason,
-        suspension_expires_at: new Date(parsed.data.suspensionExpiresAt),
+        suspension_expires_at: expires,
         updated_at: new Date(),
       } as any,
     });
@@ -869,6 +883,207 @@ router.delete('/tasks/:id', async (req, res) => {
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Task not found', code: 'NOT_FOUND' });
     res.status(500).json({ error: 'Failed to delete task', code: 'DB_ERROR' });
+  }
+});
+
+// ── Human Capital Analytics ─────────────────────────────────────────
+
+const DAY_MS = 86400000;
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DEMO_COLORS = ['#3f9142', '#675CB0', '#3B79A0', '#e0a106', '#BF5046', '#84cc16', '#8A6FE8', '#3DA5E0'];
+const isMonthlyType = (t?: string | null) => t === 'permanent' || t === 'contract' || t === 'employee' || t === 'seasonal';
+const initialsOf = (name?: string | null) => String(name ?? '?').trim().split(/\s+/).slice(0, 2).map((p) => p[0] ?? '').join('').toUpperCase() || '?';
+
+// Monday-anchored start of the ISO week containing `d`.
+function weekStart(d: Date): Date {
+  const x = new Date(d); x.setHours(0, 0, 0, 0);
+  const dow = (x.getDay() + 6) % 7; // 0 = Monday
+  x.setDate(x.getDate() - dow);
+  return x;
+}
+
+router.get('/analytics/overview', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  try {
+    await autoRestoreSuspended(farmId);
+    const now = new Date();
+    const ws = weekStart(now);
+    const since30 = new Date(now.getTime() - 30 * DAY_MS);
+    const since60 = new Date(now.getTime() - 60 * DAY_MS);
+
+    const [employees, contractors, attendance, tasks] = await Promise.all([
+      prisma.employees.findMany({ where: { farm_id: farmId, deleted_at: null } as any }),
+      (prisma as any).contractors.findMany({ where: { farm_id: farmId } }),
+      prisma.attendance_logs.findMany({
+        where: { log_date: { gte: weekStart(new Date(now.getTime() - 21 * DAY_MS)) }, employees: { farm_id: farmId, deleted_at: null } },
+        include: { employees: { select: { id: true, full_name: true } } },
+      }),
+      // Personnel tasks live in farm_tasks (raw-SQL table), not task_assignments.
+      prisma.$queryRaw<any[]>`
+        SELECT t.id, t.task_name, t.status, t.start_date, t.end_date, t.created_at, t.updated_at,
+               t.personnel_id, t.men_required, t.equipment_id, e.full_name AS personnel_name,
+               (SELECT COUNT(*)::int FROM farm_task_equipment WHERE task_id = t.id) AS equipment_count
+        FROM farm_tasks t
+        LEFT JOIN employees e ON e.id = t.personnel_id
+        WHERE t.farm_id = ${farmId ?? null}::uuid AND t.status <> 'cancelled'
+      `,
+    ]);
+
+    const active = (employees as any[]).filter((e) => e.status !== 'inactive');
+    const dailyWorkers = active.filter((e) => e.employment_type === 'daily');
+    const regularEmployees = active.filter((e) => e.employment_type !== 'daily');
+    const totalWorkforce = active.length + contractors.length;
+
+    // Trend helper: count of records created in last 30d vs prior 30d.
+    const hiredIn = (arr: any[], from: Date, to: Date) => arr.filter((e) => { const d = new Date(e.date_hired ?? e.created_at); return d >= from && d < to; }).length;
+    const trendOf = (arr: any[]) => { const cur = hiredIn(arr, since30, now); const prev = hiredIn(arr, since60, since30); const pct = prev > 0 ? Math.round(((cur - prev) / prev) * 100) : (cur > 0 ? 100 : 0); return { trendPct: Math.abs(pct), trendUp: pct >= 0 }; };
+    // 6-week cumulative headcount sparkline.
+    const sparkOf = (arr: any[]) => Array.from({ length: 6 }, (_, i) => { const cutoff = new Date(now.getTime() - (5 - i) * 7 * DAY_MS); return arr.filter((e) => new Date(e.date_hired ?? e.created_at) <= cutoff).length; });
+
+    const kpis = {
+      workforce: { value: totalWorkforce, ...trendOf([...active, ...contractors]), spark: sparkOf([...active, ...contractors]), sub: `${active.length} staff · ${contractors.length} contractors` },
+      employees: { value: regularEmployees.length, ...trendOf(regularEmployees), spark: sparkOf(regularEmployees), sub: 'Permanent & contract' },
+      dailyWorkers: { value: dailyWorkers.length, ...trendOf(dailyWorkers), spark: sparkOf(dailyWorkers), sub: 'Active daily workers' },
+      contractors: { value: contractors.length, ...trendOf(contractors), spark: sparkOf(contractors), sub: 'External contracts' },
+    };
+
+    // Performance series — last 7 days: attendance rate + task on-time rate.
+    const last7 = Array.from({ length: 7 }, (_, i) => { const d = new Date(ws); d.setDate(ws.getDate() + i); return d; });
+    const todayIdx = (now.getDay() + 6) % 7;
+    const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const attRate: number[] = [];
+    const taskRate: number[] = [];
+    for (const day of last7) {
+      const dayLogs = (attendance as any[]).filter((l) => sameDay(new Date(l.log_date), day));
+      const present = dayLogs.filter((l) => l.status === 'present').length + dayLogs.filter((l) => l.status === 'half_day').length * 0.5;
+      attRate.push(dayLogs.length ? Math.round((present / dayLogs.length) * 100) : 0);
+      const dueTasks = (tasks as any[]).filter((t) => t.end_date && sameDay(new Date(t.end_date), day));
+      const endOfDay = new Date(day); endOfDay.setHours(23, 59, 59, 999);
+      const doneOnTime = dueTasks.filter((t) => t.status === 'completed' && t.updated_at && new Date(t.updated_at) <= endOfDay).length;
+      taskRate.push(dueTasks.length ? Math.round((doneOnTime / dueTasks.length) * 100) : 0);
+    }
+    const performance = { labels: WEEKDAYS, attendance: attRate, taskOnTime: taskRate, todayIdx, todayRate: attRate[todayIdx] ?? 0 };
+
+    // Top performers — ranked by number of completed tasks (farm_tasks).
+    const completedByPerson: Record<string, number> = {};
+    for (const t of tasks as any[]) { if (t.status === 'completed' && t.personnel_id) completedByPerson[t.personnel_id] = (completedByPerson[t.personnel_id] || 0) + 1; }
+    const maxCompleted = Math.max(1, ...Object.values(completedByPerson), 0);
+    const topPerformers = [...active]
+      .map((e: any) => ({ e, done: completedByPerson[e.id] ?? 0 }))
+      .sort((a, b) => b.done - a.done)
+      .slice(0, 5)
+      .map(({ e, done }) => ({ id: e.id, name: e.full_name, jobTitle: e.job_title || (e.sector ? `${e.sector} worker` : 'Worker'), tasksDone: done, ratePct: Math.round((done / maxCompleted) * 100), initials: initialsOf(e.full_name) }));
+
+    // Task completion checklist (active tasks first, then recently completed).
+    const taskList = [...(tasks as any[])]
+      .sort((a, b) => { const order: Record<string, number> = { active: 0, completed: 1 }; return (order[a.status] ?? 2) - (order[b.status] ?? 2); })
+      .slice(0, 6)
+      .map((t) => ({ id: t.id, title: t.task_name, status: t.status === 'active' ? 'in_progress' : t.status, priority: 'normal', due: t.end_date, assignee: initialsOf(t.personnel_name), progressPct: t.status === 'completed' ? 100 : 55 }));
+    const totalTasks = (tasks as any[]).length;
+    const completedTasks = (tasks as any[]).filter((t) => t.status === 'completed').length;
+
+    // Attendance donut over last 30 days.
+    const recentAtt = (attendance as any[]).filter((l) => new Date(l.log_date) >= since30);
+    const onTime = recentAtt.filter((l) => l.status === 'present').length;
+    const late = recentAtt.filter((l) => l.status === 'half_day' || l.status === 'leave').length;
+    const absent = recentAtt.filter((l) => l.status === 'absent').length;
+    const attTotal = onTime + late + absent;
+    const empLogs = recentAtt.filter((l: any) => regularEmployees.some((e: any) => e.id === l.employee_id));
+    const dailyLogs = recentAtt.filter((l: any) => dailyWorkers.some((e: any) => e.id === l.employee_id));
+    const presentPctOf = (logs: any[]) => { const p = logs.filter((l) => l.status === 'present').length; return logs.length ? Math.round((p / logs.length) * 100) : 0; };
+    const attendanceRate = {
+      onTime, late, absent, presentPct: attTotal ? Math.round((onTime / attTotal) * 100) : 0,
+      employees: { pct: presentPctOf(empLogs) }, dailyWorkers: { pct: presentPctOf(dailyLogs) },
+    };
+
+    // Job position pie (job_title), grouped.
+    const jobMap: Record<string, number> = {};
+    for (const e of active as any[]) { const k = e.job_title || (e.sector ? `${e.sector[0].toUpperCase()}${e.sector.slice(1)}` : 'Unassigned'); jobMap[k] = (jobMap[k] || 0) + 1; }
+    const jobEntries = Object.entries(jobMap).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const jobTotal = jobEntries.reduce((s, [, v]) => s + v, 0) || 1;
+    const jobPosition = jobEntries.map(([name, count], i) => ({ name, count, pct: Math.round((count / jobTotal) * 100), color: DEMO_COLORS[i % DEMO_COLORS.length] }));
+
+    // Demographics — real columns only (employment type, age group, sector).
+    const groupDonut = (counts: Record<string, number>) => { const entries = Object.entries(counts).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]); const tot = entries.reduce((s, [, v]) => s + v, 0) || 1; return entries.map(([name, count], i) => ({ name, count, pct: Math.round((count / tot) * 100), color: DEMO_COLORS[i % DEMO_COLORS.length] })); };
+    const empTypeCounts: Record<string, number> = {};
+    for (const e of active as any[]) { const k = e.employment_type === 'daily' ? 'Daily' : isMonthlyType(e.employment_type) ? (e.employment_type[0].toUpperCase() + e.employment_type.slice(1)) : 'Other'; empTypeCounts[k] = (empTypeCounts[k] || 0) + 1; }
+    const ageCounts: Record<string, number> = { 'Under 25': 0, '25–34': 0, '35–44': 0, '45–54': 0, '55+': 0 };
+    let withDob = 0; let ageSum = 0;
+    for (const e of active as any[]) { if (!e.date_of_birth) continue; const age = Math.floor((now.getTime() - new Date(e.date_of_birth).getTime()) / (365.25 * DAY_MS)); if (age <= 0 || age > 100) continue; withDob++; ageSum += age; if (age < 25) ageCounts['Under 25']++; else if (age < 35) ageCounts['25–34']++; else if (age < 45) ageCounts['35–44']++; else if (age < 55) ageCounts['45–54']++; else ageCounts['55+']++; }
+    const sectorCounts: Record<string, number> = {};
+    for (const e of active as any[]) { const k = e.sector ? (e.sector[0].toUpperCase() + e.sector.slice(1)) : 'General'; sectorCounts[k] = (sectorCounts[k] || 0) + 1; }
+    const demographics = {
+      employmentType: { caption: `${active.length} staff`, segments: groupDonut(empTypeCounts) },
+      ageGroup: { caption: withDob ? `${Math.round(ageSum / withDob)} yr avg` : 'No DOB data', segments: groupDonut(ageCounts) },
+      sector: { caption: `${Object.keys(sectorCounts).length} sectors`, segments: groupDonut(sectorCounts) },
+    };
+
+    // Schedule / Gantt — tasks whose start/end window overlaps the current week.
+    const weekEnd = new Date(ws); weekEnd.setDate(ws.getDate() + 7);
+    const schedule = (tasks as any[])
+      .filter((t) => t.start_date || t.end_date)
+      .map((t) => ({ t, start: new Date(t.start_date ?? t.end_date), end: new Date(t.end_date ?? t.start_date) }))
+      .filter(({ start, end }) => end >= ws && start < weekEnd)
+      .map(({ t, start, end }, i) => { const clampedStart = start < ws ? ws : start; const startDay = Math.max(0, Math.min(6, Math.round((clampedStart.getTime() - ws.getTime()) / DAY_MS))); const endDay = Math.max(startDay, Math.min(6, Math.round((end.getTime() - ws.getTime()) / DAY_MS))); const spanDays = Math.max(1, endDay - startDay + 1); const colorIdx = i % DEMO_COLORS.length; return { id: t.id, name: t.task_name, startDay, spanDays, progressPct: t.status === 'completed' ? 100 : 55, color: DEMO_COLORS[colorIdx], dueInWeek: true, men: t.men_required ?? 1, equipment: Number(t.equipment_count ?? (t.equipment_id ? 1 : 0)), crew: [{ id: t.personnel_id ?? t.id, initials: initialsOf(t.personnel_name), colorIndex: colorIdx }] }; })
+      .sort((a, b) => a.startDay - b.startDay)
+      .slice(0, 10);
+
+    res.json({ updatedAt: new Date().toISOString(), weekStart: ws.toISOString(), todayIdx, kpis, performance, topPerformers, tasks: taskList, taskSummary: { total: totalTasks, completed: completedTasks }, attendanceRate, jobPosition, demographics, schedule });
+  } catch (err) {
+    console.error('[HR/Analytics/Overview]', err);
+    res.status(500).json({ error: 'Failed to fetch HR analytics', code: 'DB_ERROR' });
+  }
+});
+
+router.get('/analytics/details/:metric', async (req, res) => {
+  const farmId = req.user!.farmId ?? undefined;
+  const metric = String(req.params.metric);
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25));
+  const pg = <T,>(arr: T[]) => arr.slice((page - 1) * pageSize, page * pageSize);
+  // Aggregate-only fields: never leak national_id, email, phone, address, bank_id, DOB.
+  const safeEmp = (e: any) => ({ id: e.id, name: e.full_name, code: e.personnel_id, jobTitle: e.job_title || '-', sector: e.sector || '-', employmentType: e.employment_type, status: e.status, daysWorked: e.total_days_worked ?? 0, dateHired: e.date_hired });
+  try {
+    if (['workforce', 'employees', 'daily-workers', 'top-performers', 'performance', 'job-position', 'demographics'].includes(metric)) {
+      const all = await prisma.employees.findMany({ where: { farm_id: farmId, deleted_at: null } as any, orderBy: { total_days_worked: 'desc' } });
+      let list = (all as any[]).filter((e) => e.status !== 'inactive');
+      if (metric === 'employees') list = list.filter((e) => e.employment_type !== 'daily');
+      else if (metric === 'daily-workers') list = list.filter((e) => e.employment_type === 'daily');
+      const rows = list.map(safeEmp);
+      return res.json({ total: rows.length, items: pg(rows) });
+    }
+    if (metric === 'contractors') {
+      const rows = await (prisma as any).contractors.findMany({ where: { farm_id: farmId }, orderBy: { created_at: 'desc' } });
+      return res.json({ total: rows.length, items: pg(rows.map((c: any) => ({ id: c.id, name: c.contractor_name, code: c.contractor_id, contractType: c.contract_type, sector: c.sector, amount: Number(c.amount_charged ?? 0), status: c.status, startDate: c.start_date, endDate: c.end_date }))) });
+    }
+    if (metric === 'attendance') {
+      const date = String(req.query.date || '');
+      const since = new Date(Date.now() - 30 * DAY_MS);
+      const logs = await prisma.attendance_logs.findMany({
+        where: { ...(date ? { log_date: new Date(date) } : { log_date: { gte: since } }), employees: { farm_id: farmId, deleted_at: null } },
+        include: { employees: { select: { full_name: true, job_title: true } } },
+        orderBy: { log_date: 'desc' },
+      });
+      const rows = (logs as any[]).map((l) => ({ id: l.id, name: l.employees?.full_name ?? '-', jobTitle: l.employees?.job_title ?? '-', status: l.status, hours: l.hours_worked ? Number(l.hours_worked) : null, date: l.log_date }));
+      return res.json({ total: rows.length, items: pg(rows) });
+    }
+    if (['tasks', 'schedule'].includes(metric)) {
+      const tasks = await prisma.$queryRaw<any[]>`
+        SELECT t.id, t.task_name, t.location, t.men_required, t.status, t.start_date, t.end_date,
+               e.full_name AS personnel_name, a.name AS equipment_name
+        FROM farm_tasks t
+        LEFT JOIN employees e ON e.id = t.personnel_id
+        LEFT JOIN assets a ON a.id = t.equipment_id
+        WHERE t.farm_id = ${farmId ?? null}::uuid AND t.status <> 'cancelled'
+        ORDER BY (t.status = 'completed'), t.start_date ASC NULLS LAST
+      `;
+      const rows = (tasks as any[]).map((t) => ({ id: t.id, title: t.task_name, assignee: t.personnel_name ?? '-', equipment: t.equipment_name ?? '-', location: t.location ?? '-', men: t.men_required ?? 1, status: t.status, start: t.start_date, due: t.end_date }));
+      return res.json({ total: rows.length, items: pg(rows) });
+    }
+    res.status(400).json({ error: 'Unknown metric', code: 'VALIDATION_ERROR' });
+  } catch (err) {
+    console.error('[HR/Analytics/Details]', err);
+    res.status(500).json({ error: 'Failed to fetch details', code: 'DB_ERROR' });
   }
 });
 

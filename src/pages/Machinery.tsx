@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
@@ -42,23 +43,24 @@ function requestStatusBadge(status: string) {
 export default function Machinery() {
   const { toast } = useToast();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const { canCreate, canEdit, canDelete, canViewCard } = usePermissions();
   const { openConfirm } = useConfirm();
+  // Open the Human Capital "Add Task" flow, pre-associating a machine (spec 3.1/3.2).
+  const goToAddTask = (machine?: { id: string; name: string }) => navigate('/employees', { state: { openTask: true, equipment: machine } });
   const [search, setSearch] = useState('');
   const [selectedView, setSelectedView] = useState<View>('total');
 
-  const [isAssignOpen, setIsAssignOpen] = useState(false);
   const [isRequestOpen, setIsRequestOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
   const [isLostOpen, setIsLostOpen] = useState(false);
   const [isRetireOpen, setIsRetireOpen] = useState(false);
   const [isAddInventoryOpen, setIsAddInventoryOpen] = useState<string | null>(null);
 
-  const [assignForm, setAssignForm] = useState({ assetId: '' });
   const [requestForm, setRequestForm] = useState({ name: '', assetType: 'equipment', model: '', notes: '' });
   const [maintenanceForm, setMaintenanceForm] = useState({
     name: '', assetType: 'equipment', model: '', status: 'under_maintenance',
-    license: '', description: '', expectedFixDate: '',
+    license: '', description: '', expectedFixDate: '', purchaseCost: '' as string | number,
   });
   const [lostForm, setLostForm] = useState({ name: '', license: '' });
   const [retireForm, setRetireForm] = useState({ name: '', license: '' });
@@ -87,17 +89,6 @@ export default function Machinery() {
     queryFn: () => api.get<any[]>('/equipment-requests'),
   });
 
-  const assignMutation = useMutation({
-    mutationFn: ({ id }: { id: string }) =>
-      api.patch(`/assets/${id}`, { status: 'active' }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['machinery'] });
-      toast({ title: 'Equipment assigned and set to Active' });
-      setIsAssignOpen(false);
-      setAssignForm({ assetId: '' });
-    },
-    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
-  });
 
   const requestMutation = useMutation({
     mutationFn: (data: typeof requestForm) => api.post('/equipment-requests', {
@@ -119,13 +110,15 @@ export default function Machinery() {
       serialNumber: data.license || undefined,
       status: 'under_maintenance',
       nextServiceDate: data.expectedFixDate || undefined,
+      // Purchase amount (P) so the asset carries a real valuation base.
+      purchaseCost: Number(data.purchaseCost) || undefined,
       notes: data.description || undefined,
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['machinery'] });
       toast({ title: 'Added for maintenance' });
       setIsMaintenanceOpen(false);
-      setMaintenanceForm({ name: '', assetType: 'equipment', model: '', status: 'under_maintenance', license: '', description: '', expectedFixDate: '' });
+      setMaintenanceForm({ name: '', assetType: 'equipment', model: '', status: 'under_maintenance', license: '', description: '', expectedFixDate: '', purchaseCost: '' });
     },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
@@ -204,7 +197,6 @@ export default function Machinery() {
   const retiredCount = machinery.filter(m => ['retired', 'decommissioned'].includes(m.status)).length;
   const soldCount = machinery.filter(m => m.status === 'sold').length;
 
-  const operationalAssets = machinery.filter(m => m.status === 'operational');
 
   function getViewData() {
     const q = search.toLowerCase();
@@ -243,7 +235,7 @@ export default function Machinery() {
           </div>
           <div className="flex gap-2">
             {selectedView === 'operational' && canEdit('machinery') && (
-              <Button variant="outline" className="text-white" onClick={() => setIsAssignOpen(true)}>
+              <Button variant="outline" className="text-white" onClick={() => goToAddTask()}>
                 <Tractor className="h-4 w-4 mr-2" />Assign Machinery
               </Button>
             )}
@@ -323,7 +315,7 @@ export default function Machinery() {
                         {canEdit('machinery') ? (
                           <select
                             value={m.status}
-                            onChange={(e) => updateStatusMutation.mutate({ id: m.id, status: e.target.value })}
+                            onChange={(e) => { const v = e.target.value; if (v === 'active') { goToAddTask({ id: m.id, name: m.name }); } else { updateStatusMutation.mutate({ id: m.id, status: v }); } }}
                             disabled={updateStatusMutation.isPending}
                             className={`h-8 rounded border border-input bg-background px-2 text-sm ${statusColor[m.status] ?? 'text-foreground'}`}
                           >
@@ -429,33 +421,6 @@ export default function Machinery() {
         )}
       </div>
 
-      {/* Assign Machinery Dialog */}
-      {canEdit('machinery') && (
-      <Dialog open={isAssignOpen} onOpenChange={setIsAssignOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Assign Machinery</DialogTitle></DialogHeader>
-          <form onSubmit={(e) => { e.preventDefault(); if (assignForm.assetId) assignMutation.mutate({ id: assignForm.assetId }); }} className="space-y-4">
-            <div className="space-y-2">
-              <Label>Select Operational Equipment</Label>
-              <select
-                value={assignForm.assetId}
-                onChange={(e) => setAssignForm({ assetId: e.target.value })}
-                required
-                className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-              >
-                <option value="">Choose equipment...</option>
-                {operationalAssets.map(a => (
-                  <option key={a.id} value={a.id}>{a.name} ({a.model || a.type})</option>
-                ))}
-              </select>
-            </div>
-            <Button type="submit" className="w-full gradient-primary text-black" disabled={assignMutation.isPending || !assignForm.assetId}>
-              Assign (Sets to Active)
-            </Button>
-          </form>
-        </DialogContent>
-      </Dialog>
-      )}
 
       {/* Pending Request Dialog */}
       {canCreate('machinery') && (
@@ -536,9 +501,15 @@ export default function Machinery() {
                 }}
               />
             </div>
-            <div className="space-y-2">
-              <Label>Expected Fix Date</Label>
-              <Input type="date" value={maintenanceForm.expectedFixDate} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, expectedFixDate: e.target.value })} />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Expected Fix Date</Label>
+                <Input type="date" value={maintenanceForm.expectedFixDate} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, expectedFixDate: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Purchase Amount ($)</Label>
+                <Input type="number" min="0" step="0.01" value={maintenanceForm.purchaseCost} onChange={(e) => setMaintenanceForm({ ...maintenanceForm, purchaseCost: e.target.value })} placeholder="Original amount paid" />
+              </div>
             </div>
             <Button type="submit" className="w-full gradient-primary text-black" disabled={addMaintenanceMutation.isPending}>Add for Maintenance</Button>
           </form>

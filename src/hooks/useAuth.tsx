@@ -6,7 +6,7 @@ import { AuthUser, LoginResponse, RefreshResponse } from '@/types/auth';
 interface AuthContextType {
   user: AuthUser | null;
   loading: boolean;
-  signIn: (identifier: string, password: string) => Promise<{ error: Error | null }>;
+  signIn: (identifier: string, password: string, loginType?: 'personnel' | 'customer') => Promise<{ error: Error | null }>;
   signOut: () => void;
 }
 
@@ -39,10 +39,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const signIn = async (identifier: string, password: string): Promise<{ error: Error | null }> => {
+  const signIn = async (identifier: string, password: string, loginType?: 'personnel' | 'customer'): Promise<{ error: Error | null }> => {
     try {
       queryClient.clear();
-      const data = await api.post<LoginResponse>('/auth/login', { identifier, password });
+      const data = await api.post<LoginResponse>('/auth/login', { identifier, password, loginType });
       setAccessToken(data.accessToken);
       localStorage.setItem('amis_refresh_token', data.refreshToken);
       setUser(data.user);
@@ -52,13 +52,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signOut = () => {
-    const refreshToken = localStorage.getItem('amis_refresh_token');
-    api.post('/auth/logout', { refreshToken }).catch(() => {});
+  // Clear local auth state only (no server call, no re-broadcast) — used when another tab logs out.
+  const localLogout = () => {
     clearTokens();
     setUser(null);
     queryClient.clear();
   };
+
+  const signOut = () => {
+    const refreshToken = localStorage.getItem('amis_refresh_token');
+    api.post('/auth/logout', { refreshToken }).catch(() => {});
+    localLogout();
+    // Cross-tab: a unique value guarantees other tabs receive the storage event.
+    try { localStorage.setItem('amis_logout_ping', String(Date.now())); } catch { /* ignore */ }
+  };
+
+  // Cross-tab logout: when any tab logs out (idle or manual), other tabs drop to logged-out.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => { if (e.key === 'amis_logout_ping') localLogout(); };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Single idle controller (5 min, no warning): active only while authenticated. Activity
+  // listeners are throttled; on timeout we end the session server-side and broadcast cross-tab.
+  useEffect(() => {
+    if (!user) return;
+    const IDLE_MS = 5 * 60 * 1000;
+    let timer = window.setTimeout(signOut, IDLE_MS);
+    let last = 0;
+    const reset = () => {
+      const now = Date.now();
+      if (now - last < 1000) return; // throttle to once/sec
+      last = now;
+      clearTimeout(timer);
+      timer = window.setTimeout(signOut, IDLE_MS);
+    };
+    const events: (keyof WindowEventMap)[] = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
+    return () => {
+      clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, reset));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   return (
     <AuthContext.Provider value={{ user, loading, signIn, signOut }}>

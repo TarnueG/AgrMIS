@@ -3,6 +3,7 @@ import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
+import { logAuditEvent, clientInfo } from '../lib/audit';
 
 const router = Router();
 router.use(requireAuth);
@@ -118,6 +119,10 @@ const poSchema = z.object({
   commodity: z.string().optional(),
   quantity: z.number().positive().optional(),
   notes: z.string().optional(),
+  // Optional link to the Asset Management department request this PO fulfills.
+  // The asset only materializes when this PO is Paid (see finance pay handler).
+  requestId: z.string().uuid().optional(),
+  requestType: z.enum(['equipment', 'parcel', 'supply']).optional(),
 });
 
 router.get('/purchase-orders', async (req, res) => {
@@ -154,9 +159,24 @@ router.post('/purchase-orders', async (req, res) => {
         commodity: d.commodity ?? null,
         quantity: d.quantity ?? null,
         notes: d.notes,
+        source_request_id: d.requestId ?? null,
+        source_request_type: d.requestType ?? null,
       } as any,
       include: { suppliers: { select: { name: true } } },
     });
+    // Creating the PO consumes the source request from Requested Orders (the order
+    // step is now "completed"); the asset itself only materializes when the PO is Paid.
+    if (d.requestId && d.requestType === 'equipment') {
+      await (prisma as any).equipment_requests.update({ where: { id: d.requestId }, data: { status: 'approved', updated_at: new Date() } }).catch(() => null);
+    } else if (d.requestId && d.requestType === 'parcel') {
+      await (prisma as any).parcel_requests.update({ where: { id: d.requestId }, data: { status: 'approved', updated_at: new Date() } }).catch(() => null);
+    } else if (d.requestId && d.requestType === 'supply') {
+      await (prisma as any).inventory_procurement_requests.update({ where: { id: d.requestId }, data: { status: 'approved', updated_at: new Date() } }).catch(() => null);
+    }
+    if (d.requestId) {
+      const { ip, userAgent } = clientInfo(req);
+      logAuditEvent({ actorUserId: req.user!.userId, eventType: 'order_status_changed', subsystem: 'procurement', description: `Order completed → Pending (PO ${po.po_number} created)`, metadata: { requestId: d.requestId, requestType: d.requestType, poId: po.id, from: 'Awaiting Acceptance', to: 'Pending' }, ipAddress: ip, userAgent });
+    }
     res.status(201).json(mapPO(po));
   } catch {
     res.status(500).json({ error: 'Failed to create purchase order', code: 'DB_ERROR' });
@@ -211,7 +231,7 @@ router.delete('/purchase-orders/:id', async (req, res) => {
 
 router.get('/department-requests', async (req, res) => {
   try {
-    const [equipReqs, parcelReqs] = await Promise.all([
+    const [equipReqs, parcelReqs, supplyReqs] = await Promise.all([
       (prisma as any).equipment_requests.findMany({
         where: { farm_id: req.user!.farmId ?? undefined },
         orderBy: { created_at: 'desc' },
@@ -220,10 +240,16 @@ router.get('/department-requests', async (req, res) => {
         where: { farm_id: req.user!.farmId ?? undefined },
         orderBy: { created_at: 'desc' },
       }),
+      // Chemicals & Feed requests route here too (spec 4.2), like equipment/parcel.
+      (prisma as any).inventory_procurement_requests.findMany({
+        where: { farm_id: req.user!.farmId ?? undefined, in_stock: false },
+        orderBy: { created_at: 'desc' },
+      }),
     ]);
     const combined = [
       ...equipReqs.map((r: any) => ({ ...r, department: 'Machinery', item_type: 'equipment' })),
       ...parcelReqs.map((r: any) => ({ ...r, department: 'Land Parcels', item_type: 'parcel', name: r.name })),
+      ...supplyReqs.map((r: any) => ({ ...r, department: 'Inventory', item_type: 'supply', name: r.item_name })),
     ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     res.json(combined);
   } catch {
@@ -241,20 +267,12 @@ router.patch('/department-requests/:id/accept', async (req, res) => {
       });
       return res.json(updated);
     } else if (itemType === 'parcel') {
+      // Asset materialization is deferred to the PO "Paid" event (spec 2.1); no
+      // land_parcels row is created here.
       const updated = await (prisma as any).parcel_requests.update({
         where: { id: req.params.id },
         data: { status: 'approved', updated_at: new Date() },
       });
-      await (prisma as any).land_parcels.create({
-        data: {
-          farm_id: req.user!.farmId,
-          name: updated.name,
-          size_hectares: updated.size_hectares ?? 0,
-          soil_type: updated.soil_type ?? 'loamy',
-          notes: updated.description,
-          status: 'fallow',
-        },
-      }).catch(() => null);
       return res.json(updated);
     }
     res.status(400).json({ error: 'Unknown item type', code: 'VALIDATION_ERROR' });
@@ -265,21 +283,17 @@ router.patch('/department-requests/:id/accept', async (req, res) => {
 
 router.patch('/department-requests/:id/decline', async (req, res) => {
   const { itemType } = req.body;
+  const table = itemType === 'equipment' ? 'equipment_requests' : itemType === 'parcel' ? 'parcel_requests' : itemType === 'supply' ? 'inventory_procurement_requests' : null;
+  if (!table) return res.status(400).json({ error: 'Unknown item type', code: 'VALIDATION_ERROR' });
   try {
-    if (itemType === 'equipment') {
-      const updated = await (prisma as any).equipment_requests.update({
-        where: { id: req.params.id },
-        data: { status: 'disapproved', updated_at: new Date() },
-      });
-      return res.json(updated);
-    } else if (itemType === 'parcel') {
-      const updated = await (prisma as any).parcel_requests.update({
-        where: { id: req.params.id },
-        data: { status: 'disapproved', updated_at: new Date() },
-      });
-      return res.json(updated);
-    }
-    res.status(400).json({ error: 'Unknown item type', code: 'VALIDATION_ERROR' });
+    // Cancel → Disapprove, moves to Decline Orders (spec 1.3).
+    const updated = await (prisma as any)[table].update({
+      where: { id: req.params.id },
+      data: { status: 'disapproved', updated_at: new Date() },
+    });
+    const { ip, userAgent } = clientInfo(req);
+    logAuditEvent({ actorUserId: req.user!.userId, eventType: 'order_status_changed', subsystem: 'procurement', description: `Order declined → Disapprove`, metadata: { requestId: req.params.id, requestType: itemType, from: 'Awaiting Acceptance', to: 'Disapprove' }, ipAddress: ip, userAgent });
+    res.json(updated);
   } catch {
     res.status(500).json({ error: 'Failed to decline request', code: 'DB_ERROR' });
   }
@@ -345,23 +359,29 @@ router.get('/analytics', async (req, res) => {
   const { from, to } = getAnalyticsRange(range);
 
   try {
-    const [pos, equipReqs, parcelReqs, supplierCount] = await Promise.all([
+    const [pos, equipReqs, parcelReqs, supplyReqs, supplierCount] = await Promise.all([
       prisma.purchase_orders.findMany({
         where: { farm_id: farmId, created_at: { gte: from, lte: to } },
         select: { id: true, status: true, payment_status: true, created_at: true },
       }),
+      // Request-status counts mirror the (un-ranged) Requested/Decline Orders cards on the
+      // overview page — all three request types, no date filter (spec: declined reads from Decline Orders).
       (prisma as any).equipment_requests.findMany({
-        where: { farm_id: farmId, created_at: { gte: from, lte: to } },
+        where: { farm_id: farmId },
         select: { id: true, status: true, created_at: true },
       }),
       (prisma as any).parcel_requests.findMany({
-        where: { farm_id: farmId, created_at: { gte: from, lte: to } },
+        where: { farm_id: farmId },
+        select: { id: true, status: true, created_at: true },
+      }),
+      (prisma as any).inventory_procurement_requests.findMany({
+        where: { farm_id: farmId, in_stock: false },
         select: { id: true, status: true, created_at: true },
       }),
       prisma.suppliers.count({ where: { farm_id: farmId, deleted_at: null } }),
     ]);
 
-    const allReqs   = [...equipReqs, ...parcelReqs];
+    const allReqs   = [...equipReqs, ...parcelReqs, ...supplyReqs];
     const total     = allReqs.length;
     const accepted  = allReqs.filter((r: any) => r.status === 'approved').length;
     const declined  = allReqs.filter((r: any) => r.status === 'disapproved').length;

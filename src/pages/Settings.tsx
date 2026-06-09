@@ -326,10 +326,12 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
   const [resetCreds, setResetCreds] = useState<{ username: string; password: string; fullName: string } | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
+  const [segment, setSegment] = useState<'all' | 'customers' | 'personnel'>('all');
 
+  // Segment membership is resolved server-side (Customer = role 'customer', Personnel = others).
   const { data: usersData } = useQuery({
-    queryKey: ['ac-users-list'],
-    queryFn: () => api.get<any>('/access-control/users'),
+    queryKey: ['ac-users-list', segment],
+    queryFn: () => api.get<any>(`/access-control/users?segment=${segment}`),
   });
 
   const { data: eligibleData } = useQuery({
@@ -429,6 +431,13 @@ function UsersPanel({ onViewAuditLog }: { onViewAuditLog: (userId: string) => vo
             Create Users
           </Button>
         </div>
+      </div>
+
+      {/* Segment filter — server resolves membership (spec 1) */}
+      <div className="flex gap-1 bg-muted/40 rounded-lg p-1 w-fit">
+        {([{ v: 'all', l: 'All' }, { v: 'customers', l: 'Customers' }, { v: 'personnel', l: 'Personnel' }] as const).map(o => (
+          <Button key={o.v} size="sm" onClick={() => setSegment(o.v)} aria-pressed={segment === o.v} className={segment === o.v ? 'gradient-primary text-black font-medium h-8 px-3 text-xs' : 'border-0 bg-transparent text-white hover:bg-accent h-8 px-3 text-xs'}>{o.l}</Button>
+        ))}
       </div>
 
       <div className="relative max-w-xs">
@@ -1112,14 +1121,18 @@ function CardAccessSection({ roleId, roleName }: { roleId: string; roleName: str
   const [localGranted, setLocalGranted] = useState<Set<string> | null>(null);
   const [dirty, setDirty] = useState(false);
 
-  const { data: cardData, isLoading } = useQuery({
+  const { data: cardData, isLoading, isError, refetch } = useQuery({
     queryKey: ['access-control-cards', roleId],
+    // Only fetch once a real role is selected; otherwise the request 400s and the
+    // panel was left stuck on "Loading card permissions…" (spec 9.2).
+    enabled: !!roleId,
+    retry: 1,
     queryFn: () => api.get<any>(`/access-control/cards?roleId=${roleId}`),
   });
 
   useEffect(() => {
     if (cardData) {
-      setLocalGranted(new Set(cardData.granted as string[]));
+      setLocalGranted(new Set((cardData.granted ?? []) as string[]));
       setDirty(false);
     }
   }, [cardData]);
@@ -1158,6 +1171,14 @@ function CardAccessSection({ roleId, roleName }: { roleId: string; roleName: str
     setDirty(true);
   };
 
+  if (isError) {
+    return (
+      <div className="flex items-center justify-center gap-3 py-8 text-sm">
+        <span className="text-destructive">Couldn't load card permissions.</span>
+        <Button size="sm" variant="outline" onClick={() => refetch()} className="border border-input bg-background text-white hover:bg-accent">Retry</Button>
+      </div>
+    );
+  }
   if (isLoading || !localGranted) {
     return <div className="text-center text-muted-foreground py-8 text-sm">Loading card permissions…</div>;
   }

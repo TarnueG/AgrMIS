@@ -194,27 +194,56 @@ router.post('/:id/maintenance', async (req, res) => {
 
 // ─── Asset Management Analytics ──────────────────────────────────────────────
 
-const assetVal = (a: any) => Number(a.current_value ?? a.purchase_cost ?? 0);
 const condOf = (status: string) => {
   if (status === 'under_maintenance') return 40;
   if (status === 'lost' || status === 'decommissioned' || status === 'retired') return 10;
   if (status === 'operational') return 95;
   return 75;
 };
+const condOfParcel = (status?: string | null) => {
+  if (status === 'active') return 90;
+  if (status === 'preparation') return 70;
+  if (status === 'fallow') return 50;
+  return 40;
+};
+// Completed two-quarter (6-month) periods since a date: floor(monthsSincePurchase / 6).
+function monthsSince(d: Date | string): number {
+  const a = new Date(d);
+  const now = new Date();
+  let m = (now.getFullYear() - a.getFullYear()) * 12 + (now.getMonth() - a.getMonth());
+  if (now.getDate() < a.getDate()) m -= 1; // not a full month yet
+  return Math.max(0, m);
+}
+const twoQuarterPeriods = (d?: Date | string | null) => d ? Math.floor(monthsSince(d) / 6) : 0;
+// Machinery depreciates 5% per two-quarter period (floored at 0); parcels appreciate 5%.
+const machineValue = (a: any) => {
+  const base = Number(a.purchase_cost ?? a.current_value ?? 0);
+  return Math.max(0, base * (1 - 0.05 * twoQuarterPeriods(a.purchase_date ?? a.created_at)));
+};
+const parcelValue = (p: any) => {
+  const base = Number(p.purchase_cost ?? 0);
+  return base * (1 + 0.05 * twoQuarterPeriods(p.created_at));
+};
+const assetVal = machineValue;
 
 router.get('/analytics/overview', async (req, res) => {
   const farmId = req.user!.farmId ?? undefined;
   try {
-    const [assets, parcels, crops, usage, maint] = await Promise.all([
+    const [assets, parcels, crops, usage, maint, taskEquip] = await Promise.all([
       prisma.assets.findMany({ where: { farm_id: farmId, deleted_at: null }, include: { asset_maintenance_logs: { orderBy: { maintenance_date: 'desc' }, take: 1, select: { maintenance_date: true } } } }),
       prisma.land_parcels.findMany({ where: { farm_id: farmId, deleted_at: null } }),
       (prisma as any).crop_production_records.findMany({ where: { farm_id: farmId } }),
       prisma.asset_usage_logs.findMany({ select: { asset_id: true, hours_used: true } }),
       prisma.asset_maintenance_logs.findMany({ select: { asset_id: true, maintenance_type: true, maintenance_date: true, downtime_hours: true } }),
+      // Task assignments per equipment (from the task↔equipment junction).
+      prisma.$queryRaw<any[]>`SELECT fte.asset_id AS equipment_id, COUNT(*)::int AS tasks FROM farm_task_equipment fte JOIN farm_tasks t ON t.id = fte.task_id WHERE t.farm_id = ${farmId ?? null}::uuid AND t.status <> 'cancelled' GROUP BY fte.asset_id`,
     ]);
+    const taskCountBy: Record<string, number> = {};
+    for (const t of taskEquip) taskCountBy[t.equipment_id] = Number(t.tasks);
 
     const totalArea = parcels.reduce((s, p) => s + Number(p.size_hectares ?? 0), 0);
-    const totalValue = assets.reduce((s, a) => s + assetVal(a), 0);
+    // Total asset value = depreciating machinery + appreciating parcels (spec 2.3).
+    const totalValue = assets.reduce((s, a) => s + machineValue(a), 0) + parcels.reduce((s, p) => s + parcelValue(p), 0);
     const unscheduled = maint.filter(m => m.maintenance_type === 'corrective' || m.maintenance_type === 'emergency').length;
     const repairRate = maint.length ? Math.round((unscheduled / maint.length) * 1000) / 10 : 0;
     const now = new Date();
@@ -236,16 +265,18 @@ router.get('/analytics/overview', async (req, res) => {
     const soilTotal = Object.values(soil).reduce((s, v) => s + v, 0);
     const soilDistribution = Object.entries(soil).sort((a, b) => b[1] - a[1]).map(([label, ha]) => ({ label, hectares: Math.round(ha * 100) / 100, pct: soilTotal > 0 ? Math.round((ha / soilTotal) * 100) : 0 }));
 
-    // Largest crops
-    const cropAgg: Record<string, { ha: number; parcels: Set<string> }> = {};
-    for (const c of crops as any[]) { const k = c.crop_name; if (!cropAgg[k]) cropAgg[k] = { ha: 0, parcels: new Set() }; cropAgg[k].ha += Number(c.area_planted ?? 0); if (c.field_location) cropAgg[k].parcels.add(c.field_location); }
-    const largestCrops = Object.entries(cropAgg).sort((a, b) => b[1].ha - a[1].ha).slice(0, 6).map(([crop, v]) => ({ crop, hectares: Math.round(v.ha * 100) / 100, parcelCount: v.parcels.size }));
+    // Largest crops — crops planted on ACTIVE parcels only, ranked by parcel size (spec 2.4).
+    const largestCrops = parcels
+      .filter(p => p.status === 'active' && p.crop_type)
+      .sort((a, b) => Number(b.size_hectares ?? 0) - Number(a.size_hectares ?? 0))
+      .slice(0, 6)
+      .map(p => ({ crop: p.crop_type as string, hectares: Math.round(Number(p.size_hectares ?? 0) * 100) / 100, parcel: p.name }));
 
-    // Most used equipment
+    // Most used equipment — ranked by number of tasks/assignments (spec 2.5).
     const usageBy: Record<string, number> = {};
     for (const u of usage) usageBy[u.asset_id] = (usageBy[u.asset_id] || 0) + Number(u.hours_used ?? 0);
-    const mostUsedEquipment = assets.map(a => ({ name: a.name, type: a.asset_type, engineHours: Math.round((usageBy[a.id] || 0) * 10) / 10 }))
-      .filter(e => e.engineHours > 0).sort((a, b) => b.engineHours - a.engineHours).slice(0, 6);
+    const mostUsedEquipment = assets.map(a => ({ id: a.id, name: a.name, type: a.asset_type, tasks: taskCountBy[a.id] || 0 }))
+      .filter(e => e.tasks > 0).sort((a, b) => b.tasks - a.tasks).slice(0, 6);
 
     // Most used parcel (spotlight) — largest active parcel as the focus
     const spotlightP = [...parcels].sort((a, b) => Number(b.size_hectares ?? 0) - Number(a.size_hectares ?? 0))[0];
@@ -265,7 +296,8 @@ router.get('/analytics/overview', async (req, res) => {
     // Assets table
     const assetsTable = [...assets].sort((a, b) => assetVal(b) - assetVal(a)).slice(0, 8).map(a => ({
       id: a.id, name: a.name, type: a.asset_type, location: a.location ?? '-', condition: condOf(a.status),
-      lastService: a.asset_maintenance_logs[0]?.maintenance_date ?? null, value: assetVal(a), status: a.status,
+      lastService: a.asset_maintenance_logs[0]?.maintenance_date ?? null, value: Math.round(assetVal(a)), status: a.status,
+      amount: Math.round(Number(a.purchase_cost ?? a.current_value ?? 0)),
     }));
 
     res.json({
@@ -291,9 +323,21 @@ router.get('/analytics/details/:metric', async (req, res) => {
   const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 25));
   const pg = <T,>(arr: T[]) => arr.slice((page - 1) * pageSize, page * pageSize);
   try {
-    if (metric === 'total-equipment' || metric === 'total-asset-value' || metric === 'assets') {
+    if (metric === 'total-asset-value') {
+      // Combined list of both asset types (spec 2.3): Asset Name | Type | Condition | Value | Status.
+      const [assets, parcels] = await Promise.all([
+        prisma.assets.findMany({ where: { farm_id: farmId, deleted_at: null } }),
+        prisma.land_parcels.findMany({ where: { farm_id: farmId, deleted_at: null } }),
+      ]);
+      const rows = [
+        ...assets.map(a => ({ id: a.id, name: a.name, type: 'machine', condition: condOf(a.status), value: Math.round(machineValue(a)), status: a.status, amount: Math.round(Number(a.purchase_cost ?? a.current_value ?? 0)) })),
+        ...parcels.map(p => ({ id: p.id, name: p.name, type: 'parcel', condition: condOfParcel(p.status), value: Math.round(parcelValue(p)), status: p.status ?? '-', amount: Math.round(Number((p as any).purchase_cost ?? 0)) })),
+      ].sort((x, y) => y.value - x.value);
+      return res.json({ total: rows.length, items: pg(rows) });
+    }
+    if (metric === 'total-equipment' || metric === 'assets') {
       const assets = await prisma.assets.findMany({ where: { farm_id: farmId, deleted_at: null }, include: { asset_maintenance_logs: { orderBy: { maintenance_date: 'desc' }, take: 1, select: { maintenance_date: true } } } });
-      const rows = assets.map(a => ({ id: a.id, name: a.name, type: a.asset_type, location: a.location ?? '-', condition: condOf(a.status), lastService: a.asset_maintenance_logs[0]?.maintenance_date ?? null, value: assetVal(a), status: a.status })).sort((x, y) => y.value - x.value);
+      const rows = assets.map(a => ({ id: a.id, name: a.name, type: a.asset_type, location: a.location ?? '-', condition: condOf(a.status), lastService: a.asset_maintenance_logs[0]?.maintenance_date ?? null, value: Math.round(machineValue(a)), status: a.status })).sort((x, y) => y.value - x.value);
       return res.json({ total: rows.length, items: pg(rows) });
     }
     if (metric === 'total-parcel-area' || metric === 'parcels' || metric === 'soil-distribution' || metric === 'most-used-parcel') {
@@ -302,20 +346,19 @@ router.get('/analytics/details/:metric', async (req, res) => {
       return res.json({ total: rows.length, items: pg(rows) });
     }
     if (metric === 'largest-crops' || metric === 'crops') {
-      const crops = await (prisma as any).crop_production_records.findMany({ where: { farm_id: farmId } });
-      const agg: Record<string, { ha: number; parcels: Set<string> }> = {};
-      for (const c of crops) { const k = c.crop_name; if (!agg[k]) agg[k] = { ha: 0, parcels: new Set() }; agg[k].ha += Number(c.area_planted ?? 0); if (c.field_location) agg[k].parcels.add(c.field_location); }
-      const rows = Object.entries(agg).sort((a, b) => b[1].ha - a[1].ha).map(([crop, v]) => ({ id: crop, crop, hectares: Math.round(v.ha * 100) / 100, parcelCount: v.parcels.size }));
+      // Crops on active parcels only, ranked by parcel size (spec 2.4).
+      const parcels = await prisma.land_parcels.findMany({ where: { farm_id: farmId, deleted_at: null, status: 'active' } as any, orderBy: { size_hectares: 'desc' } });
+      const rows = parcels.filter(p => p.crop_type).map(p => ({ id: p.id, crop: p.crop_type, parcel: p.name, hectares: Math.round(Number(p.size_hectares ?? 0) * 100) / 100, soil: p.soil_type ?? '-', location: p.location ?? '-' }));
       return res.json({ total: rows.length, items: pg(rows) });
     }
     if (metric === 'most-used-equipment') {
-      const [assets, usage] = await Promise.all([
-        prisma.assets.findMany({ where: { farm_id: farmId, deleted_at: null }, select: { id: true, name: true, asset_type: true } }),
-        prisma.asset_usage_logs.findMany({ select: { asset_id: true, hours_used: true } }),
+      const [assets, taskEquip] = await Promise.all([
+        prisma.assets.findMany({ where: { farm_id: farmId, deleted_at: null }, select: { id: true, name: true, asset_type: true, status: true } }),
+        prisma.$queryRaw<any[]>`SELECT fte.asset_id AS equipment_id, COUNT(*)::int AS tasks FROM farm_task_equipment fte JOIN farm_tasks t ON t.id = fte.task_id WHERE t.farm_id = ${farmId ?? null}::uuid AND t.status <> 'cancelled' GROUP BY fte.asset_id`,
       ]);
       const by: Record<string, number> = {};
-      for (const u of usage) by[u.asset_id] = (by[u.asset_id] || 0) + Number(u.hours_used ?? 0);
-      const rows = assets.map(a => ({ id: a.id, name: a.name, type: a.asset_type, engineHours: Math.round((by[a.id] || 0) * 10) / 10 })).sort((x, y) => y.engineHours - x.engineHours);
+      for (const t of taskEquip) by[t.equipment_id] = Number(t.tasks);
+      const rows = assets.map(a => ({ id: a.id, name: a.name, type: a.asset_type, status: a.status, tasks: by[a.id] || 0 })).sort((x, y) => y.tasks - x.tasks);
       return res.json({ total: rows.length, items: pg(rows) });
     }
     if (metric === 'maintenance' || metric === 'maintenance-repair-rate') {

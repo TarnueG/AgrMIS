@@ -48,11 +48,13 @@ export default function Customers() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [isOpen, setIsOpen] = useState(false);
+  const [editCustomer, setEditCustomer] = useState<any>(null);
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
     address: '',
+    county: '',
     customer_type: 'individual',
     notes: '',
   });
@@ -81,6 +83,7 @@ export default function Customers() {
       phone: data.phone || undefined,
       email: data.email || undefined,
       address: data.address || undefined,
+      county: data.county || undefined,
       notes: data.notes || undefined,
     }),
     onSuccess: () => {
@@ -94,16 +97,44 @@ export default function Customers() {
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.delete(`/sales/customers/${id}`),
+  // Activate/deactivate toggle — backend syncs the linked user account (spec 5.1).
+  const toggleActive = useMutation({
+    mutationFn: ({ id, active }: { id: string; active: boolean }) => api.patch(`/sales/customers/${id}/${active ? 'deactivate' : 'activate'}`, {}),
+    onSuccess: (_d, { active }) => {
+      queryClient.invalidateQueries({ queryKey: ['customers'] });
+      toast({ title: active ? 'Customer deactivated' : 'Customer activated' });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  const editMutation = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: typeof formData }) => api.patch(`/sales/customers/${id}`, {
+      name: data.name,
+      customerType: data.customer_type,
+      phone: data.phone || undefined,
+      email: data.email || undefined,
+      address: data.address || undefined,
+      county: data.county || undefined,
+      notes: data.notes || undefined,
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customers'] });
-      toast({ title: 'Customer deleted' });
+      toast({ title: 'Customer updated' });
+      setIsOpen(false);
+      setEditCustomer(null);
+      resetForm();
     },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
   const resetForm = () => {
-    setFormData({ name: '', email: '', phone: '', address: '', customer_type: 'individual', notes: '' });
+    setFormData({ name: '', email: '', phone: '', address: '', county: '', customer_type: 'individual', notes: '' });
+  };
+
+  const openEdit = (c: any) => {
+    setFormData({ name: c.name ?? '', email: c.email ?? '', phone: c.phone ?? '', address: c.address ?? '', county: c.county ?? '', customer_type: c.customer_type ?? 'individual', notes: c.notes ?? '' });
+    setEditCustomer(c);
+    setIsOpen(true);
   };
 
   const handleCardClick = (v: CrmView) => {
@@ -118,7 +149,8 @@ export default function Customers() {
 
   const activeCustomers = (customers ?? []).filter(c => c.is_active !== false);
 
-  const displayedCustomers = activeCustomers.filter(c => {
+  // Table shows all customers (active + deactivated) so the toggle is reversible; the count cards stay active-only.
+  const displayedCustomers = (customers ?? []).filter(c => {
     const typeMatch =
       crmView === 'business' ? c.customer_type === 'business' :
       crmView === 'individual' ? c.customer_type === 'individual' :
@@ -173,19 +205,21 @@ export default function Customers() {
                 <Download className="h-4 w-4 mr-1" />Export CSV
               </Button>
             )}
-            {canCreate('crm') && (
-              <Dialog open={isOpen} onOpenChange={setIsOpen}>
-                <DialogTrigger asChild>
-                  <Button className="gradient-primary text-black font-medium">
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Customer
-                  </Button>
-                </DialogTrigger>
+            {(canCreate('crm') || canEdit('crm')) && (
+              <Dialog open={isOpen} onOpenChange={(o) => { setIsOpen(o); if (!o) { setEditCustomer(null); resetForm(); } }}>
+                {canCreate('crm') && (
+                  <DialogTrigger asChild>
+                    <Button className="gradient-primary text-black font-medium">
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add Customer
+                    </Button>
+                  </DialogTrigger>
+                )}
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Add New Customer</DialogTitle>
+                    <DialogTitle>{editCustomer ? 'Edit Customer' : 'Add New Customer'}</DialogTitle>
                   </DialogHeader>
-                  <form onSubmit={(e) => { e.preventDefault(); addMutation.mutate(formData); }} className="space-y-4">
+                  <form onSubmit={(e) => { e.preventDefault(); if (editCustomer) editMutation.mutate({ id: editCustomer.id, data: formData }); else addMutation.mutate(formData); }} className="space-y-4">
                     <div className="space-y-2">
                       <Label>Customer Name</Label>
                       <Input value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required className="text-white" />
@@ -200,23 +234,29 @@ export default function Customers() {
                         <Input value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} className="text-white" />
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Type</Label>
-                      <select
-                        value={formData.customer_type}
-                        onChange={(e) => setFormData({ ...formData, customer_type: e.target.value })}
-                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                      >
-                        <option value="individual">Individual</option>
-                        <option value="business">Business</option>
-                      </select>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Type</Label>
+                        <select
+                          value={formData.customer_type}
+                          onChange={(e) => setFormData({ ...formData, customer_type: e.target.value })}
+                          className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+                        >
+                          <option value="individual">Individual</option>
+                          <option value="business">Business</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>County</Label>
+                        <Input value={formData.county} onChange={(e) => setFormData({ ...formData, county: e.target.value })} className="text-white" placeholder="e.g. Montserrado" />
+                      </div>
                     </div>
                     <div className="space-y-2">
                       <Label>Address</Label>
                       <Textarea value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} className="text-white" />
                     </div>
-                    <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={addMutation.isPending}>
-                      Add Customer
+                    <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={addMutation.isPending || editMutation.isPending}>
+                      {editCustomer ? 'Save Changes' : 'Add Customer'}
                     </Button>
                   </form>
                 </DialogContent>
@@ -436,13 +476,16 @@ export default function Customers() {
                     <TableHead>Email</TableHead>
                     <TableHead>Phone</TableHead>
                     <TableHead>Type</TableHead>
-                    <TableHead>Address</TableHead>
+                    <TableHead>County</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead>Date</TableHead>
                     {showActions && <TableHead className="text-center">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {displayedCustomers.map((customer) => (
+                  {displayedCustomers.map((customer) => {
+                    const active = customer.is_active !== false;
+                    return (
                     <TableRow
                       key={customer.id}
                       className="cursor-pointer hover:bg-accent/50"
@@ -459,26 +502,38 @@ export default function Customers() {
                           {customer.customer_type}
                         </Badge>
                       </TableCell>
-                      <TableCell className="max-w-xs truncate text-sm">{customer.address || '-'}</TableCell>
+                      <TableCell className="text-sm">{customer.county || '-'}</TableCell>
+                      <TableCell>
+                        <Badge className={active ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}>{active ? 'Active' : 'Deactivated'}</Badge>
+                      </TableCell>
                       <TableCell className="text-sm">{new Date(customer.created_at).toLocaleDateString()}</TableCell>
                       {showActions && (
                         <TableCell className="text-center" onClick={e => e.stopPropagation()}>
-                          {canDelete('crm') && (
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => openConfirm({ title: 'Delete Customer', message: `Delete ${customer.name}? This cannot be undone.`, type: 'danger', confirmText: 'Delete', onConfirm: () => deleteMutation.mutate(customer.id) })}
-                            >
-                              Delete
-                            </Button>
-                          )}
+                          <div className="flex justify-center gap-2">
+                            {canEdit('crm') && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className={active ? 'border border-input bg-background text-white hover:bg-accent' : 'gradient-primary text-black font-medium'}
+                                disabled={toggleActive.isPending}
+                                onClick={() => openConfirm({ title: active ? 'Deactivate Customer' : 'Activate Customer', message: `${active ? 'Deactivate' : 'Activate'} ${customer.name}? This also ${active ? 'deactivates' : 'reactivates'} their linked user account.`, type: active ? 'warning' : 'info', confirmText: active ? 'Deactivate' : 'Activate', onConfirm: () => toggleActive.mutate({ id: customer.id, active }) })}
+                              >
+                                {active ? 'Deactivate' : 'Activate'}
+                              </Button>
+                            )}
+                            {canEdit('crm') && (
+                              <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => openEdit(customer)}>
+                                Edit
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       )}
                     </TableRow>
-                  ))}
+                  );})}
                   {!displayedCustomers.length && (
                     <TableRow>
-                      <TableCell colSpan={showActions ? 8 : 7} className="text-center py-8 text-muted-foreground">No customers found</TableCell>
+                      <TableCell colSpan={showActions ? 9 : 8} className="text-center py-8 text-muted-foreground">No customers found</TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -540,17 +595,20 @@ export default function Customers() {
                         </Badge>
                       </TableCell>
                       <TableCell className="max-w-xs truncate">{customer.address || '-'}</TableCell>
-                      {showActions && (
+                      {showActions && canEdit('crm') && (
                         <TableCell className="text-center">
-                          {canDelete('crm') && (
+                          <div className="flex justify-center gap-2">
                             <Button
                               size="sm"
-                              variant="destructive"
-                              onClick={() => openConfirm({ title: 'Delete Customer', message: `Delete ${customer.name}? This cannot be undone.`, type: 'danger', confirmText: 'Delete', onConfirm: () => deleteMutation.mutate(customer.id) })}
+                              variant="outline"
+                              className={customer.is_active !== false ? 'border border-input bg-background text-white hover:bg-accent' : 'gradient-primary text-black font-medium'}
+                              disabled={toggleActive.isPending}
+                              onClick={() => { const active = customer.is_active !== false; openConfirm({ title: active ? 'Deactivate Customer' : 'Activate Customer', message: `${active ? 'Deactivate' : 'Activate'} ${customer.name}? This also ${active ? 'deactivates' : 'reactivates'} their linked user account.`, type: active ? 'warning' : 'info', confirmText: active ? 'Deactivate' : 'Activate', onConfirm: () => toggleActive.mutate({ id: customer.id, active }) }); }}
                             >
-                              Delete
+                              {customer.is_active !== false ? 'Deactivate' : 'Activate'}
                             </Button>
-                          )}
+                            <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => openEdit(customer)}>Edit</Button>
+                          </div>
                         </TableCell>
                       )}
                     </TableRow>

@@ -6,11 +6,13 @@ import { Loader2 } from 'lucide-react';
 interface Props {
   children: React.ReactNode;
   subsystem?: string;
+  /** Optional card-permission gate (e.g. "finance.analytics"). Admins always pass. */
+  card?: string;
 }
 
-export function ProtectedRoute({ children, subsystem }: Props) {
+export function ProtectedRoute({ children, subsystem, card }: Props) {
   const { user, loading: authLoading } = useAuth();
-  const { canView, isLoading: permsLoading } = usePermissions();
+  const { canView, canViewCard, isLoading: permsLoading } = usePermissions();
 
   if (authLoading) {
     return (
@@ -24,6 +26,11 @@ export function ProtectedRoute({ children, subsystem }: Props) {
 
   // If a subsystem gate is specified, wait for permissions then check
   if (subsystem && !permsLoading && !canView(subsystem)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  // Optional card-level gate (allow-list; admins bypass inside canViewCard)
+  if (card && !permsLoading && !canViewCard(card)) {
     return <Navigate to="/dashboard" replace />;
   }
 

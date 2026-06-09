@@ -15,11 +15,11 @@ interface Overview {
   generatedAt: string;
   kpis: { totalArea: number; areaTrend: number; totalEquipment: number; equipmentTrend: number; totalValue: number; valueTrend: number; repairRate: number; repairTrend: number };
   soilDistribution: { label: string; hectares: number; pct: number }[];
-  largestCrops: { crop: string; hectares: number; parcelCount: number }[];
-  mostUsedEquipment: { name: string; type: string; engineHours: number }[];
+  largestCrops: { crop: string; hectares: number; parcel: string }[];
+  mostUsedEquipment: { id: string; name: string; type: string; tasks: number }[];
   mostUsedParcel: { name: string; soil: string; area: number; crop: string; location: string; machineHours: number; operations: number; utilization: number } | null;
   maintenance: { repairRate: number; scheduled: number; unscheduled: number; workOrders: number; avgDowntime: number; dueThisWeek: number };
-  assetsTable: { id: string; name: string; type: string; location: string; condition: number; lastService: string | null; value: number; status: string }[];
+  assetsTable: { id: string; name: string; type: string; location: string; condition: number; lastService: string | null; value: number; status: string; amount: number }[];
 }
 
 const PAL = ['#1F6F54', '#C2622E', '#D9A441', '#7C9CB5', '#6B5440', '#C0584B'];
@@ -118,8 +118,8 @@ export default function AssetAnalytics() {
                 {!d.largestCrops.length ? <p className="py-8 text-center text-sm text-muted-foreground">No crops recorded</p> : (
                   <ul className="space-y-2.5">
                     {d.largestCrops.map((c, i) => { const max = d.largestCrops[0].hectares || 1; return (
-                      <li key={c.crop} className="space-y-1">
-                        <div className="flex justify-between text-sm"><span className="font-medium truncate max-w-[160px]">{c.crop}</span><span className="text-muted-foreground">{c.hectares} ha · {c.parcelCount} parcels</span></div>
+                      <li key={`${c.crop}-${c.parcel}`} className="space-y-1">
+                        <div className="flex justify-between text-sm"><span className="font-medium truncate max-w-[160px]">{c.crop}</span><span className="text-muted-foreground">{c.hectares} ha · {c.parcel}</span></div>
                         <div className="h-1.5 rounded-full bg-muted overflow-hidden"><div className="h-full rounded-full" style={{ width: `${(c.hectares / max) * 100}%`, backgroundColor: PAL[i % PAL.length] }} /></div>
                       </li>
                     ); })}
@@ -136,14 +136,14 @@ export default function AssetAnalytics() {
             <Clickable to="/assets/analytics/most-used-equipment" label="Most used equipment">
               <CardContent className="p-5">
                 <p className="text-sm font-semibold mb-3">Most Used Equipment</p>
-                {!d.mostUsedEquipment.length ? <p className="py-8 text-center text-sm text-muted-foreground">No usage logged</p> : (
+                {!d.mostUsedEquipment.length ? <p className="py-8 text-center text-sm text-muted-foreground">No tasks logged</p> : (
                   <ResponsiveContainer width="100%" height={180} aria-label="Most used equipment">
                     <BarChart data={d.mostUsedEquipment} layout="vertical" margin={{ top: 0, right: 8, bottom: 0, left: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#333" horizontal={false} />
-                      <XAxis type="number" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <XAxis type="number" allowDecimals={false} tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
                       <YAxis type="category" dataKey="name" tick={{ fill: '#6b7280', fontSize: 10 }} axisLine={false} tickLine={false} width={80} />
-                      <Tooltip {...TOOLTIP} formatter={(v: any) => `${v} hrs`} />
-                      <Bar dataKey="engineHours" name="Engine hrs" fill="#C2622E" radius={[0, 4, 4, 0]} />
+                      <Tooltip {...TOOLTIP} formatter={(v: any) => `${v} tasks`} />
+                      <Bar dataKey="tasks" name="Tasks" fill="#C2622E" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -195,7 +195,7 @@ export default function AssetAnalytics() {
             <CardContent className="p-0">
               <div className="p-5 pb-3 flex items-center justify-between"><p className="text-sm font-semibold">All Assets Overview</p><ChevronRight className="h-4 w-4 text-muted-foreground/40 group-hover:text-muted-foreground" /></div>
               <Table>
-                <TableHeader><TableRow><TableHead>Asset</TableHead><TableHead>Type</TableHead><TableHead>Location</TableHead><TableHead>Condition</TableHead><TableHead>Last Service</TableHead><TableHead>Value</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+                <TableHeader><TableRow><TableHead>Asset</TableHead><TableHead>Type</TableHead><TableHead>Location</TableHead><TableHead>Condition</TableHead><TableHead>Last Service</TableHead><TableHead>Value</TableHead><TableHead>Status</TableHead><TableHead>Amount</TableHead></TableRow></TableHeader>
                 <TableBody>
                   {d.assetsTable.map(a => (
                     <TableRow key={a.id}>
@@ -206,9 +206,10 @@ export default function AssetAnalytics() {
                       <TableCell className="text-muted-foreground">{a.lastService ? format(new Date(a.lastService), 'MMM d, yyyy') : '-'}</TableCell>
                       <TableCell className="font-medium">{money(a.value)}</TableCell>
                       <TableCell><Badge className={statusBadge(a.status)}>{a.status.replace('_', ' ')}</Badge></TableCell>
+                      <TableCell className="text-muted-foreground">{money(a.amount)}</TableCell>
                     </TableRow>
                   ))}
-                  {!d.assetsTable.length && <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No assets yet</TableCell></TableRow>}
+                  {!d.assetsTable.length && <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No assets yet</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </CardContent>

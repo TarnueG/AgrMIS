@@ -4,7 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
 const actions = [
-  { title: 'New Order', icon: ShoppingCart, path: '/orders' },
+  // "New Order" replaced by Marketing's Cart (spec 9.1).
+  { title: 'Cart', icon: ShoppingCart, path: '/marketing' },
   { title: 'Add Inventory', icon: Package, path: '/inventory' },
   { title: 'New Customer', icon: Users, path: '/customers' },
   { title: 'View Reports', icon: TrendingUp, path: '/reports' },

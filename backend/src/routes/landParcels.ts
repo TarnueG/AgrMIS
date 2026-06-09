@@ -3,6 +3,7 @@ import { z } from 'zod';
 import prisma from '../lib/prisma';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { setFarmContext } from '../middleware/farm';
+import { logAuditEvent, clientInfo } from '../lib/audit';
 
 const router = Router();
 router.use(requireAuth);
@@ -86,7 +87,10 @@ router.patch('/:id', async (req, res) => {
   const d = parsed.data;
   try {
     const current = await (prisma as any).land_parcels.findUnique({ where: { id: req.params.id } });
-    const isReverted = d.status && REVERT_STATUSES.includes(d.status) && current?.status === 'active';
+    // Harvest rule (spec 2.2): reaching "harvested" reverts the parcel to Inactive and frees the crop.
+    const harvested = d.status === 'harvested';
+    const effectiveStatus = harvested ? 'inactive' : d.status;
+    const isReverted = effectiveStatus && REVERT_STATUSES.includes(effectiveStatus) && current?.status === 'active';
     const parcel = await (prisma as any).land_parcels.update({
       where: { id: req.params.id },
       data: {
@@ -94,12 +98,25 @@ router.patch('/:id', async (req, res) => {
         ...(d.sizeHectares !== undefined && { size_hectares: d.sizeHectares }),
         ...(d.cropType !== undefined && { crop_type: d.cropType }),
         ...(d.soilType && { soil_type: d.soilType }),
-        ...(d.status && { status: d.status }),
+        ...(d.location !== undefined && { location: d.location }),
+        ...(effectiveStatus && { status: effectiveStatus }),
         ...(d.notes !== undefined && { notes: d.notes }),
-        ...(isReverted && { crop_type: null }),
+        ...((isReverted || harvested) && { crop_type: null }),
         updated_at: new Date(),
       },
     });
+    if (harvested) {
+      const { ip, userAgent } = clientInfo(req);
+      await logAuditEvent({
+        actorUserId: req.user!.userId,
+        eventType: 'settings_changed',
+        subsystem: 'land_parcels',
+        description: `Parcel "${parcel.name}" harvested — reverted to Inactive`,
+        metadata: { parcelId: parcel.id, from: current?.status, to: 'inactive' },
+        ipAddress: ip,
+        userAgent,
+      });
+    }
     res.json(parcel);
   } catch (err: any) {
     if (err.code === 'P2025') return res.status(404).json({ error: 'Parcel not found', code: 'NOT_FOUND' });

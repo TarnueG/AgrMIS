@@ -237,7 +237,7 @@ export default function Inventory() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['proc-requests'] });
       qc.invalidateQueries({ queryKey: ['inventory'] });
-      toast({ title: 'Item added to inventory' });
+      toast({ title: (editProcItem?.in_stock || editProcItem?.status === 'paid') ? 'Dates updated' : 'Item added to inventory' });
       setEditProcItem(null);
     },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
@@ -487,7 +487,14 @@ export default function Inventory() {
               <TableCell><Badge className={statusBadge('in_stock')}>In Stock</Badge></TableCell>
               <TableCell>{r.manufacture_date ? format(new Date(r.manufacture_date), 'MMM d, yyyy') : '-'}</TableCell>
               <TableCell>{r.expiration_date ? format(new Date(r.expiration_date), 'MMM d, yyyy') : '-'}</TableCell>
-              {canEdit('inventory') && <TableCell>-</TableCell>}
+              {canEdit('inventory') && (
+                <TableCell>
+                  {/* In-stock rows are editable so empty fields can be filled in (spec). */}
+                  <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent" onClick={() => { setEditProcItem(r); setDatesForm({ manufacture_date: r.manufacture_date ? new Date(r.manufacture_date).toISOString().slice(0, 10) : '', expiration_date: r.expiration_date ? new Date(r.expiration_date).toISOString().slice(0, 10) : '' }); }}>
+                    <Edit2 className="h-3 w-3 mr-1" />Edit
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
           {/* Pending rows with individual edit capability */}
@@ -928,7 +935,7 @@ export default function Inventory() {
                     <Input value={cfForm.item_name} onChange={(e) => setCfForm({ ...cfForm, item_name: e.target.value })} required />
                   </div>
                   <div className="space-y-2">
-                    <Label>Quantity (liters)</Label>
+                    <Label>Quantity ({['fertilizers', 'livestock_feed', 'aquaculture_feed'].includes(view as string) ? 'kg' : 'liters'})</Label>
                     <Input type="number" min={0} value={cfForm.quantity} onChange={(e) => setCfForm({ ...cfForm, quantity: Number(e.target.value) })} required />
                   </div>
                   <p className="text-xs text-muted-foreground">Status will be set to <strong>Pending</strong> and sent to Procurement.</p>
@@ -945,7 +952,7 @@ export default function Inventory() {
         {canEdit('inventory') && <Dialog open={!!editProcItem} onOpenChange={(o) => !o && setEditProcItem(null)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Add Dates — {editProcItem?.item_name}</DialogTitle>
+              <DialogTitle>{(editProcItem?.in_stock || editProcItem?.status === 'paid') ? 'Edit Dates' : 'Add Dates'} — {editProcItem?.item_name}</DialogTitle>
             </DialogHeader>
             <form onSubmit={(e) => { e.preventDefault(); if (!datesForm.manufacture_date || !datesForm.expiration_date) { toast({ title: 'Both dates are required', variant: 'destructive' }); return; } saveDates.mutate({ id: editProcItem.id, ...datesForm }); }} className="space-y-4">
               <div className="space-y-2">
@@ -956,9 +963,9 @@ export default function Inventory() {
                 <Label>Expiration Date</Label>
                 <Input type="date" value={datesForm.expiration_date} onChange={(e) => setDatesForm({ ...datesForm, expiration_date: e.target.value })} required />
               </div>
-              <p className="text-xs text-muted-foreground">Providing both dates will add this item to inventory as <strong>In Stock</strong>.</p>
+              <p className="text-xs text-muted-foreground">{(editProcItem?.in_stock || editProcItem?.status === 'paid') ? 'Update the manufacture and expiration dates for this in-stock item.' : <>Providing both dates will add this item to inventory as <strong>In Stock</strong>.</>}</p>
               <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={saveDates.isPending}>
-                Add to Inventory
+                {(editProcItem?.in_stock || editProcItem?.status === 'paid') ? 'Save Changes' : 'Add to Inventory'}
               </Button>
             </form>
           </DialogContent>

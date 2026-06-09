@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '@/lib/api';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
@@ -17,7 +18,7 @@ import { useConfirm } from '@/contexts/ConfirmContext';
 
 type EmpView = 'contractor' | 'suspension' | 'active' | 'inactive' | 'employee' | 'daily' | 'salary' | 'attendance_rate' | 'daily_log' | 'task_schedule' | null;
 
-const BLANK_TASK = { taskName: '', location: '', menRequired: 1, personnelId: '', equipmentId: '', startDate: '', endDate: '' };
+const BLANK_TASK = { taskName: '', location: '', menRequired: 1, equipmentRequired: 0, personnelIds: [] as string[], equipmentIds: [] as string[], startDate: '', endDate: '' };
 
 const ns = 'w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground';
 
@@ -58,6 +59,8 @@ export default function Employees() {
   const [dailyLogSelected, setDailyLogSelected] = useState<Set<string>>(new Set());
   const [isTaskOpen, setIsTaskOpen] = useState(false);
   const [taskForm, setTaskForm] = useState({ ...BLANK_TASK });
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editAssigned, setEditAssigned] = useState<{ personnel: any[]; equipment: any[] }>({ personnel: [], equipment: [] });
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [editEmp, setEditEmp] = useState<any>(null);
@@ -119,8 +122,9 @@ export default function Employees() {
       taskName: d.taskName,
       location: d.location || undefined,
       menRequired: Number(d.menRequired) || 1,
-      personnelId: d.personnelId || undefined,
-      equipmentId: d.equipmentId || undefined,
+      equipmentRequired: Number(d.equipmentRequired) || 0,
+      personnelIds: d.personnelIds,
+      equipmentIds: d.equipmentIds,
       startDate: d.startDate || undefined,
       endDate: d.endDate || undefined,
     }),
@@ -133,6 +137,56 @@ export default function Employees() {
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
+
+  const editTask = useMutation({
+    mutationFn: ({ id, d }: { id: string; d: typeof taskForm }) => api.patch(`/tasks/${id}`, {
+      taskName: d.taskName,
+      location: d.location || undefined,
+      menRequired: Number(d.menRequired) || 1,
+      equipmentRequired: Number(d.equipmentRequired) || 0,
+      personnelIds: d.personnelIds,
+      equipmentIds: d.equipmentIds,
+      startDate: d.startDate || undefined,
+      endDate: d.endDate || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['farm-tasks'] });
+      qc.invalidateQueries({ queryKey: ['task-resources'] });
+      toast({ title: 'Task updated' });
+      setIsTaskOpen(false);
+      setEditingTaskId(null);
+      setTaskForm({ ...BLANK_TASK });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+
+  // Load an active task into the dialog for editing. Converts stored timestamps to datetime-local.
+  const openEditTask = (t: any) => {
+    const toLocal = (v?: string | null) => v ? new Date(new Date(v).getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '';
+    const assignedP = (t.personnel ?? []) as { id: string; name: string }[];
+    const assignedE = (t.equipment ?? []) as { id: string; name: string }[];
+    setTaskForm({ taskName: t.task_name ?? '', location: t.location ?? '', menRequired: t.men_required ?? 1, equipmentRequired: t.equipment_required ?? assignedE.length, personnelIds: assignedP.map(p => p.id), equipmentIds: assignedE.map(e => e.id), startDate: toLocal(t.start_date), endDate: toLocal(t.end_date) });
+    // Keep the task's own assignees selectable even though /available excludes them.
+    setEditAssigned({ personnel: assignedP.map(p => ({ id: p.id, full_name: p.name })), equipment: assignedE.map(e => ({ id: e.id, name: e.name })) });
+    setEditingTaskId(t.id);
+    setIsTaskOpen(true);
+  };
+
+  // Opening the Add Task flow from Machinery (spec 3.1/3.2): a machine may be pre-associated.
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const st = location.state as any;
+    if (st?.openTask) {
+      setTaskForm({ ...BLANK_TASK, equipmentRequired: st.equipment ? 1 : 0, equipmentIds: st.equipment ? [st.equipment.id] : [] });
+      setEditAssigned({ personnel: [], equipment: st.equipment ? [{ id: st.equipment.id, name: st.equipment.name }] : [] });
+      setEditingTaskId(null);
+      setView('task_schedule');
+      setIsTaskOpen(true);
+      navigate(location.pathname, { replace: true, state: null });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const completeTask = useMutation({
     mutationFn: (id: string) => api.patch(`/tasks/${id}/complete`, {}),
@@ -261,20 +315,21 @@ export default function Employees() {
     ? contractors.filter((c: any) => c.contractor_name.toLowerCase().includes(personnelSearch.toLowerCase()))
     : contractors;
 
-  const cardClass = (v: EmpView) =>
-    `cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${view === v ? 'ring-2 ring-primary shadow-lg scale-105' : ''}`;
+  // Card styling mirrors the Machinery dashboard (structure, spacing, icon tile, typography).
+  const cardClass = (v: EmpView, color: string) =>
+    `cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-lg ${color} ${view === v ? 'ring-2 ring-primary shadow-lg scale-105' : ''}`;
 
   const CARDS = [
-    { key: 'contractor' as EmpView, label: 'Contractor', count: stats?.contractorCount ?? contractors.length, Icon: Briefcase, color: 'bg-orange-500/10 border-orange-500/20 text-orange-400' },
-    { key: 'suspension' as EmpView, label: 'Suspension', count: stats?.suspendedCount ?? suspendedEmps.length, Icon: Ban, color: 'bg-warning/10 border-warning/20 text-warning' },
-    { key: 'active' as EmpView, label: 'Active', count: stats?.activeCount ?? activeEmps.length, Icon: UserCheck, color: 'bg-success/10 border-success/20 text-success' },
-    { key: 'inactive' as EmpView, label: 'Inactive', count: stats?.inactiveCount ?? inactiveEmps.length, Icon: UserX, color: 'bg-muted/50 border-muted text-muted-foreground' },
-    { key: 'employee' as EmpView, label: 'Employee', count: stats?.employeeCount ?? employeeType.length, Icon: Users, color: 'bg-primary/10 border-primary/20 text-primary' },
-    { key: 'daily' as EmpView, label: 'Daily Workers', count: stats?.dailyCount ?? dailyWorkers.length, Icon: HardHat, color: 'bg-info/10 border-info/20 text-info' },
-    { key: 'salary' as EmpView, label: 'Salary', count: salaryData.filter(s => s.action === 'qualified').length, Icon: DollarSign, color: 'bg-purple-500/10 border-purple-500/20 text-purple-400' },
-    { key: 'attendance_rate' as EmpView, label: 'Attendance Log', count: attendanceSummary.length, Icon: ClipboardCheck, color: 'bg-blue-500/10 border-blue-500/20 text-blue-400' },
-    { key: 'daily_log' as EmpView, label: 'Daily Log', count: stats?.presentToday ?? 0, Icon: CalendarDays, color: 'bg-teal-500/10 border-teal-500/20 text-teal-400' },
-    { key: 'task_schedule' as EmpView, label: 'Task Schedule', count: tasks.filter((t: any) => t.status === 'active').length, Icon: ListChecks, color: 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' },
+    { key: 'contractor' as EmpView, label: 'Contractor', count: stats?.contractorCount ?? contractors.length, Icon: Briefcase, color: 'bg-orange-500/10 border-orange-500/20' },
+    { key: 'suspension' as EmpView, label: 'Suspension', count: stats?.suspendedCount ?? suspendedEmps.length, Icon: Ban, color: 'bg-warning/10 border-warning/20' },
+    { key: 'active' as EmpView, label: 'Active', count: stats?.activeCount ?? activeEmps.length, Icon: UserCheck, color: 'bg-success/10 border-success/20' },
+    { key: 'inactive' as EmpView, label: 'Inactive', count: stats?.inactiveCount ?? inactiveEmps.length, Icon: UserX, color: 'bg-muted/50 border-muted' },
+    { key: 'employee' as EmpView, label: 'Employee', count: stats?.employeeCount ?? employeeType.length, Icon: Users, color: 'bg-primary/10 border-primary/20' },
+    { key: 'daily' as EmpView, label: 'Daily Workers', count: stats?.dailyCount ?? dailyWorkers.length, Icon: HardHat, color: 'bg-info/10 border-info/20' },
+    { key: 'salary' as EmpView, label: 'Salary', count: salaryData.filter(s => s.action === 'qualified').length, Icon: DollarSign, color: 'bg-purple-500/10 border-purple-500/20' },
+    { key: 'attendance_rate' as EmpView, label: 'Attendance Log', count: attendanceSummary.length, Icon: ClipboardCheck, color: 'bg-blue-500/10 border-blue-500/20' },
+    { key: 'daily_log' as EmpView, label: 'Daily Log', count: stats?.presentToday ?? 0, Icon: CalendarDays, color: 'bg-teal-500/10 border-teal-500/20' },
+    { key: 'task_schedule' as EmpView, label: 'Task Schedule', count: tasks.filter((t: any) => t.status === 'active').length, Icon: ListChecks, color: 'bg-indigo-500/10 border-indigo-500/20' },
   ];
 
   const btnLabel = view === 'contractor' ? 'Add Contract' : view === 'salary' ? 'Send For Payment' : view === 'task_schedule' ? 'Add Task' : 'Add Personnel';
@@ -374,16 +429,14 @@ export default function Employees() {
 
         {/* Cards — dashboard only */}
         {!view && (
-          <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {CARDS.filter(({ key }) => canViewCard(`human_capital.${key}`)).map(({ key, label, count, Icon, color }) => (
-              <Card key={key} className={`border ${color} ${cardClass(key)}`} onClick={() => setView(key)}>
-                <CardContent className="p-4">
-                  <div className="flex flex-col items-center gap-2 text-center">
-                    <Icon className="h-6 w-6" />
-                    <div>
-                      <p className="text-xs font-medium leading-tight">{label}</p>
-                      <p className="text-xl font-bold">{count}</p>
-                    </div>
+              <Card key={key} className={cardClass(key, color)} onClick={() => setView(key)}>
+                <CardContent className="p-4 flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-white/10"><Icon className="h-5 w-5" /></div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">{label}</p>
+                    <p className="text-xl font-bold">{count}</p>
                   </div>
                 </CardContent>
               </Card>
@@ -595,10 +648,10 @@ export default function Employees() {
                       <TableCell className="font-medium">{t.task_name}</TableCell>
                       <TableCell>{t.location ?? '-'}</TableCell>
                       <TableCell>{t.men_required ?? '-'}</TableCell>
-                      <TableCell>{t.personnel_name ?? '-'}</TableCell>
-                      <TableCell>{t.equipment_name ?? '-'}</TableCell>
-                      <TableCell>{t.start_date ? format(new Date(t.start_date), 'MMM d, yyyy') : '-'}</TableCell>
-                      <TableCell>{t.end_date ? format(new Date(t.end_date), 'MMM d, yyyy') : '-'}</TableCell>
+                      <TableCell>{(t.personnel ?? []).map((p: any) => p.name).join(', ') || '-'}</TableCell>
+                      <TableCell>{(t.equipment ?? []).map((eq: any) => eq.name).join(', ') || '-'}</TableCell>
+                      <TableCell>{t.start_date ? format(new Date(t.start_date), 'MMM d, yyyy HH:mm') : '-'}</TableCell>
+                      <TableCell>{t.end_date ? format(new Date(t.end_date), 'MMM d, yyyy HH:mm') : '-'}</TableCell>
                       <TableCell>
                         <Badge className={t.status === 'completed' ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'}>
                           {t.status === 'completed' ? 'Completed' : 'Active'}
@@ -606,15 +659,25 @@ export default function Employees() {
                       </TableCell>
                       <TableCell className="text-right">
                         {t.status === 'active' && canEdit('human_capital') && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground"
-                            disabled={completeTask.isPending}
-                            onClick={() => openConfirm({ title: 'Complete Task', message: 'Mark this task as completed? Assigned personnel and equipment will be released.', type: 'success', confirmText: 'Complete', onConfirm: () => completeTask.mutate(t.id) })}
-                          >
-                            <CheckCircle2 className="h-4 w-4 mr-1" />Complete
-                          </Button>
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground"
+                              disabled={completeTask.isPending}
+                              onClick={() => openConfirm({ title: 'Complete Task', message: 'Mark this task as completed? Assigned personnel and equipment will be released.', type: 'success', confirmText: 'Complete', onConfirm: () => completeTask.mutate(t.id) })}
+                            >
+                              <CheckCircle2 className="h-4 w-4 mr-1" />Complete
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground"
+                              onClick={() => openEditTask(t)}
+                            >
+                              <Pencil className="h-4 w-4 mr-1" />Edit
+                            </Button>
+                          </div>
                         )}
                       </TableCell>
                     </TableRow>
@@ -791,61 +854,79 @@ export default function Employees() {
         )}
 
         {/* ── Add Task Dialog ── */}
-        {canCreate('human_capital') && <Dialog open={isTaskOpen} onOpenChange={o => { setIsTaskOpen(o); if (!o) setTaskForm({ ...BLANK_TASK }); }}>
+        {(canCreate('human_capital') || canEdit('human_capital')) && <Dialog open={isTaskOpen} onOpenChange={o => { setIsTaskOpen(o); if (!o) { setTaskForm({ ...BLANK_TASK }); setEditingTaskId(null); setEditAssigned({ personnel: [], equipment: [] }); } }}>
           <DialogContent className="max-h-[85vh] overflow-y-auto">
-            <DialogHeader><DialogTitle>Add Task</DialogTitle></DialogHeader>
-            <form onSubmit={e => { e.preventDefault(); if (!taskForm.taskName.trim()) { toast({ title: 'Task name is required', variant: 'destructive' }); return; } createTask.mutate(taskForm); }} className="space-y-4">
+            <DialogHeader><DialogTitle>{editingTaskId ? 'Edit Task' : 'Add Task'}</DialogTitle></DialogHeader>
+            <form onSubmit={e => { e.preventDefault(); if (!taskForm.taskName.trim()) { toast({ title: 'Task name is required', variant: 'destructive' }); return; } if (taskForm.personnelIds.length !== Number(taskForm.menRequired)) { toast({ title: `Select exactly ${taskForm.menRequired} personnel`, variant: 'destructive' }); return; } if (taskForm.equipmentIds.length !== Number(taskForm.equipmentRequired)) { toast({ title: `Select exactly ${taskForm.equipmentRequired} equipment`, variant: 'destructive' }); return; } if (editingTaskId) editTask.mutate({ id: editingTaskId, d: taskForm }); else createTask.mutate(taskForm); }} className="space-y-4">
               <div className="space-y-2">
                 <Label>Task Name</Label>
                 <Input value={taskForm.taskName} onChange={e => setTaskForm({ ...taskForm, taskName: e.target.value })} required />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Location</Label>
                   <Input value={taskForm.location} onChange={e => setTaskForm({ ...taskForm, location: e.target.value })} />
                 </div>
                 <div className="space-y-2">
-                  <Label>Number of Men Required</Label>
+                  <Label>Men Required</Label>
                   <Input type="number" min="1" value={taskForm.menRequired} onChange={e => setTaskForm({ ...taskForm, menRequired: Number(e.target.value) })} />
                 </div>
+                <div className="space-y-2">
+                  <Label>Equipment Required</Label>
+                  <Input type="number" min="0" value={taskForm.equipmentRequired} onChange={e => setTaskForm({ ...taskForm, equipmentRequired: Number(e.target.value) })} />
+                </div>
               </div>
+              {/* Personnel multi-select — must equal Men Required (spec 3.4) */}
               <div className="space-y-2">
-                <Label>Personnel <span className="text-muted-foreground text-xs">(optional)</span></Label>
-                <select
-                  value={taskForm.personnelId}
-                  onChange={e => setTaskForm({ ...taskForm, personnelId: e.target.value })}
-                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                >
-                  <option value="">Unassigned</option>
-                  {taskResources.personnel.map((p: any) => (
-                    <option key={p.id} value={p.id}>{p.full_name} ({p.employment_type})</option>
-                  ))}
-                </select>
+                <Label>Personnel <span className="text-muted-foreground text-xs">(select exactly {taskForm.menRequired})</span></Label>
+                <div className="max-h-36 overflow-y-auto rounded-md border border-input bg-background p-2 space-y-1">
+                  {(() => {
+                    const opts = [...taskResources.personnel];
+                    for (const a of editAssigned.personnel) if (!opts.some((o: any) => o.id === a.id)) opts.push(a);
+                    return opts.length ? opts.map((p: any) => {
+                      const checked = taskForm.personnelIds.includes(p.id);
+                      return (
+                        <label key={p.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input type="checkbox" checked={checked} onChange={() => setTaskForm(f => ({ ...f, personnelIds: checked ? f.personnelIds.filter(id => id !== p.id) : (f.personnelIds.length >= Number(f.menRequired) ? f.personnelIds : [...f.personnelIds, p.id]) }))} />
+                          <span>{p.full_name}{p.employment_type ? ` (${p.employment_type})` : ''}</span>
+                        </label>
+                      );
+                    }) : <p className="text-xs text-muted-foreground">No available personnel</p>;
+                  })()}
+                </div>
+                <p className="text-xs text-muted-foreground">{taskForm.personnelIds.length} / {taskForm.menRequired} selected</p>
               </div>
+              {/* Equipment multi-select — must equal Equipment Required (spec 3.4) */}
               <div className="space-y-2">
-                <Label>Equipment <span className="text-muted-foreground text-xs">(operational only)</span></Label>
-                <select
-                  value={taskForm.equipmentId}
-                  onChange={e => setTaskForm({ ...taskForm, equipmentId: e.target.value })}
-                  className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-                >
-                  <option value="">None</option>
-                  {taskResources.equipment.map((eq: any) => (
-                    <option key={eq.id} value={eq.id}>{eq.name}{eq.model ? ` (${eq.model})` : ''}</option>
-                  ))}
-                </select>
+                <Label>Equipment <span className="text-muted-foreground text-xs">(select exactly {taskForm.equipmentRequired})</span></Label>
+                <div className="max-h-36 overflow-y-auto rounded-md border border-input bg-background p-2 space-y-1">
+                  {(() => {
+                    const opts = [...taskResources.equipment];
+                    for (const a of editAssigned.equipment) if (!opts.some((o: any) => o.id === a.id)) opts.push(a);
+                    return opts.length ? opts.map((eq: any) => {
+                      const checked = taskForm.equipmentIds.includes(eq.id);
+                      return (
+                        <label key={eq.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                          <input type="checkbox" checked={checked} onChange={() => setTaskForm(f => ({ ...f, equipmentIds: checked ? f.equipmentIds.filter(id => id !== eq.id) : (f.equipmentIds.length >= Number(f.equipmentRequired) ? f.equipmentIds : [...f.equipmentIds, eq.id]) }))} />
+                          <span>{eq.name}{eq.model ? ` (${eq.model})` : ''}</span>
+                        </label>
+                      );
+                    }) : <p className="text-xs text-muted-foreground">No operational equipment available</p>;
+                  })()}
+                </div>
+                <p className="text-xs text-muted-foreground">{taskForm.equipmentIds.length} / {taskForm.equipmentRequired} selected</p>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Start Date</Label>
-                  <Input type="date" value={taskForm.startDate} onChange={e => setTaskForm({ ...taskForm, startDate: e.target.value })} />
+                  <Label>Start Date/Time</Label>
+                  <Input type="datetime-local" value={taskForm.startDate} onChange={e => setTaskForm({ ...taskForm, startDate: e.target.value })} />
                 </div>
                 <div className="space-y-2">
-                  <Label>End Date</Label>
-                  <Input type="date" value={taskForm.endDate} onChange={e => setTaskForm({ ...taskForm, endDate: e.target.value })} />
+                  <Label>End Date/Time</Label>
+                  <Input type="datetime-local" value={taskForm.endDate} onChange={e => setTaskForm({ ...taskForm, endDate: e.target.value })} />
                 </div>
               </div>
-              <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={createTask.isPending}>Save Task</Button>
+              <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={createTask.isPending || editTask.isPending}>{editingTaskId ? 'Update Task' : 'Save Task'}</Button>
             </form>
           </DialogContent>
         </Dialog>}

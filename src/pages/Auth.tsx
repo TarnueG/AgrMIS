@@ -44,13 +44,17 @@ export default function Auth() {
     if (!validate(data, prefix)) return;
 
     setIsLoading(true);
-    const { error } = await signIn(data.identifier, data.password);
+    // The tab prefix ('personnel' | 'customer') is the login type; the server enforces it.
+    const { error } = await signIn(data.identifier, data.password, prefix as 'personnel' | 'customer');
     setIsLoading(false);
 
     if (error) {
+      // Backend returns a clear (non-enumerating) message for a login-type mismatch and a
+      // generic message for bad credentials; surface whichever it sent.
+      const isMismatch = /login type/i.test(error.message);
       toast({
         title: 'Login Failed',
-        description: 'Invalid username/email or password. Please try again.',
+        description: isMismatch ? error.message : 'Invalid username/email or password. Please try again.',
         variant: 'destructive',
       });
     } else {

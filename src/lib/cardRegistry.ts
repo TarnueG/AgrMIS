@@ -5,11 +5,13 @@ export interface CardDef {
 
 export const CARD_REGISTRY: Record<string, CardDef[]> = {
   crm: [
+    { key: 'analytics',  label: 'Analytics Dashboard' },
     { key: 'total',      label: 'Total Customers' },
     { key: 'business',   label: 'Business' },
     { key: 'individual', label: 'Individual' },
   ],
   human_capital: [
+    { key: 'analytics',       label: 'Analytics Dashboard' },
     { key: 'contractor',      label: 'Contractor' },
     { key: 'suspension',      label: 'Suspension' },
     { key: 'active',          label: 'Active' },
@@ -22,6 +24,7 @@ export const CARD_REGISTRY: Record<string, CardDef[]> = {
     { key: 'task_schedule',   label: 'Task Schedule' },
   ],
   inventory: [
+    { key: 'analytics',        label: 'Analytics Dashboard' },
     { key: 'cocoa_beans',      label: 'Cocoa Beans' },
     { key: 'palm_oil',         label: 'Palm Oil' },
     { key: 'dried_fish',       label: 'Dried Fish' },
@@ -43,7 +46,7 @@ export const CARD_REGISTRY: Record<string, CardDef[]> = {
     { key: 'health',     label: 'Health' },
     { key: 'ill',        label: 'Ill' },
     { key: 'recovering', label: 'Recovering' },
-    { key: 'requested',  label: 'Livestock Requested' },
+    { key: 'requested',  label: 'Fresh Fish' },
     { key: 'mortality',  label: 'Mortality' },
     { key: 'pigs',       label: 'Pigs' },
     { key: 'cattle',     label: 'Grazing Livestock' },
@@ -51,6 +54,7 @@ export const CARD_REGISTRY: Record<string, CardDef[]> = {
     { key: 'fish',       label: 'Fish Ponds' },
   ],
   machinery: [
+    { key: 'analytics',   label: 'Analytics Dashboard' },
     { key: 'total',       label: 'Total Equipment' },
     { key: 'active',      label: 'Active Equipments' },
     { key: 'operational', label: 'Operational' },
@@ -67,6 +71,7 @@ export const CARD_REGISTRY: Record<string, CardDef[]> = {
     { key: 'total',     label: 'Total Parcel' },
   ],
   marketing: [
+    { key: 'analytics',  label: 'Analytics Dashboard' },
     { key: 'cart',       label: 'Shopping Cart' },
     { key: 'prices',     label: 'Prices' },
     { key: 'pending',    label: 'Pending' },
@@ -82,6 +87,7 @@ export const CARD_REGISTRY: Record<string, CardDef[]> = {
     { key: 'shopping_cart', label: 'Shopping Cart' },
   ],
   finance: [
+    { key: 'analytics',         label: 'Analytics Dashboard' },
     { key: 'income',            label: 'Total Income' },
     { key: 'expenses',          label: 'Total Expenses' },
     { key: 'profit',            label: 'Net Profit' },
@@ -90,6 +96,7 @@ export const CARD_REGISTRY: Record<string, CardDef[]> = {
     { key: 'wages',             label: 'Personnel Wages' },
   ],
   procurement: [
+    { key: 'analytics', label: 'Analytics Dashboard' },
     { key: 'total',     label: 'Total POs' },
     { key: 'pending',   label: 'Pending Orders' },
     { key: 'received',  label: 'Received Orders' },
@@ -97,6 +104,7 @@ export const CARD_REGISTRY: Record<string, CardDef[]> = {
     { key: 'declined',  label: 'Declined Orders' },
   ],
   production: [
+    { key: 'analytics',     label: 'Analytics Dashboard' },
     { key: 'all',           label: 'Production Batches' },
     { key: 'pending',       label: 'Pending' },
     { key: 'in_process',    label: 'In Process' },

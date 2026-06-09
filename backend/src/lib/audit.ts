@@ -15,7 +15,9 @@ export type AuditEventType =
   | 'user_deactivated'
   | 'user_activated'
   | 'customer_deactivated'
-  | 'customer_activated';
+  | 'customer_activated'
+  | 'asset_materialized'
+  | 'order_status_changed';
 
 interface AuditPayload {
   actorUserId?: string | null;

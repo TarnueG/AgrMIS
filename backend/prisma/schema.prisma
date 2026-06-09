@@ -406,6 +406,7 @@ model customers {
   email          String?        @db.VarChar(255)
   address        String?
   country        String?        @db.VarChar(100)
+  county         String?        @db.VarChar(100)
   tax_id         String?        @db.VarChar(80)
   credit_limit   Decimal?       @db.Decimal(14, 2)
   notes          String?
@@ -676,6 +677,8 @@ model purchase_orders {
   paid_at                DateTime?              @db.Timestamptz(6)
   transaction_ref        String?                @db.VarChar(100)
   finance_payment_method String?                @db.VarChar(30)
+  source_request_id      String?                @db.Uuid
+  source_request_type    String?                @db.VarChar(20)
   purchase_order_items purchase_order_items[]
   users                users                  @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
   farm_profiles        farm_profiles?         @relation(fields: [farm_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -1031,6 +1034,7 @@ model land_parcels {
   soil_type     String?        @default("loamy") @db.VarChar(50)
   location      String?        @db.VarChar(200)
   status        String?        @default("active") @db.VarChar(30)
+  purchase_cost Decimal?       @db.Decimal(14, 2)
   notes         String?
   deleted_at    DateTime?      @db.Timestamptz(6)
   created_at    DateTime?      @default(now()) @db.Timestamptz(6)

@@ -48,10 +48,8 @@ export default function Procurement() {
   const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
   const [dashView, setDashView] = useState<DashView>(null);
   const [deptFilter, setDeptFilter] = useState<string | null>(null);
-  // Track whether a PO creation was triggered by an Accept and then abandoned/failed
-  const [pendingAcceptRequestId, setPendingAcceptRequestId] = useState<string | null>(null);
 
-  const [poForm, setPoForm] = useState({ supplierId: '', totalAmount: '' as string | number, expectedDelivery: '', notes: '', status: 'draft', commodity: '', quantity: '' as string | number });
+  const [poForm, setPoForm] = useState({ supplierId: '', totalAmount: '' as string | number, expectedDelivery: '', notes: '', status: 'draft', commodity: '', quantity: '' as string | number, requestId: '', requestType: '' as '' | 'equipment' | 'parcel' | 'supply' });
   const [supplierForm, setSupplierForm] = useState({ name: '', supplierType: '', phone: '', email: '', address: '', paymentMethod: '', accountNumber: '', commodity: '' });
 
   const { data: purchaseOrders = [] } = useQuery<any[]>({
@@ -89,14 +87,20 @@ export default function Procurement() {
         status: data.status,
         commodity: data.commodity,
         quantity,
+        // Link the originating Asset Management request so the asset materializes on Paid.
+        requestId: data.requestId || undefined,
+        requestType: data.requestType || undefined,
       });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['purchase-orders'] });
+      // Completing the order consumes the request from Requested Orders.
+      qc.invalidateQueries({ queryKey: ['department-requests'] });
+      qc.invalidateQueries({ queryKey: ['equipment-requests'] });
+      qc.invalidateQueries({ queryKey: ['parcel-requests'] });
       toast({ title: 'Purchase order created' });
       setIsAddPoOpen(false);
-      setPendingAcceptRequestId(null);
-      setPoForm({ supplierId: '', totalAmount: '', expectedDelivery: '', notes: '', status: 'draft', commodity: '', quantity: '' });
+      setPoForm({ supplierId: '', totalAmount: '', expectedDelivery: '', notes: '', status: 'draft', commodity: '', quantity: '', requestId: '', requestType: '' });
     },
     onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
@@ -137,21 +141,6 @@ export default function Procurement() {
   const deleteSupplier = useMutation({
     mutationFn: (id: string) => api.delete(`/procurement/suppliers/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['suppliers'] }); toast({ title: 'Supplier removed' }); },
-  });
-
-  const acceptRequest = useMutation({
-    mutationFn: ({ id, itemType }: { id: string; itemType: string }) =>
-      api.patch(`/procurement/department-requests/${id}/accept`, { itemType }),
-    onSuccess: (_, { id }) => {
-      qc.invalidateQueries({ queryKey: ['department-requests'] });
-      qc.invalidateQueries({ queryKey: ['equipment-requests'] });
-      qc.invalidateQueries({ queryKey: ['parcel-requests'] });
-      qc.invalidateQueries({ queryKey: ['land-parcels'] });
-      toast({ title: 'Request accepted — create a Purchase Order' });
-      setPendingAcceptRequestId(id);
-      setIsAddPoOpen(true);
-    },
-    onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
   const declineRequest = useMutation({
@@ -387,7 +376,6 @@ export default function Procurement() {
               </TableHeader>
               <TableBody>
                 {getRequestListForView(dashView).map((r: any) => {
-                  const wasAccepted = r.id === pendingAcceptRequestId;
                   return (
                     <TableRow key={r.id}>
                       <TableCell>
@@ -399,28 +387,24 @@ export default function Procurement() {
                       <TableCell className="capitalize">{r.item_type}</TableCell>
                       <TableCell>{r.created_at ? format(new Date(r.created_at), 'MMM d, yyyy') : '-'}</TableCell>
                       <TableCell>
-                        <Badge className={r.status === 'pending' ? 'bg-warning/20 text-warning' : r.status === 'approved' ? 'bg-success/20 text-success' : 'bg-destructive/20 text-destructive'}>
-                          {r.status}
+                        {/* Status labels per spec 1: pending→Awaiting Acceptance, approved→Pending, disapproved→Disapprove */}
+                        <Badge className={r.status === 'pending' ? 'bg-warning/20 text-warning' : r.status === 'approved' ? 'bg-blue-500/20 text-blue-500' : 'bg-destructive/20 text-destructive'}>
+                          {r.status === 'pending' ? 'Awaiting Acceptance' : r.status === 'approved' ? 'Pending' : r.status === 'disapproved' ? 'Disapprove' : r.status}
                         </Badge>
                       </TableCell>
                       {dashView === 'requested' && (canEdit('procurement') || canDelete('procurement')) && (
                         <TableCell>
                           <div className="flex gap-2">
                             {canEdit('procurement') && (
-                              wasAccepted ? (
-                                <Button size="sm" className="gradient-primary text-black" onClick={() => setIsAddPoOpen(true)}>
-                                  Make Order
-                                </Button>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  className="gradient-primary text-black"
-                                  onClick={() => openConfirm({ title: 'Accept Request', message: 'Accept this request and create a Purchase Order?', type: 'success', confirmText: 'Accept', onConfirm: () => acceptRequest.mutate({ id: r.id, itemType: r.item_type }) })}
-                                  disabled={acceptRequest.isPending}
-                                >
-                                  Accept
-                                </Button>
-                              )
+                              // "Complete Order" launches the Create PO flow; the request stays in
+                              // Requested Orders until a PO is actually created (spec 1.1).
+                              <Button
+                                size="sm"
+                                className="gradient-primary text-black"
+                                onClick={() => { setPoForm(f => ({ ...f, requestId: r.id, requestType: r.item_type, commodity: '', supplierId: '' })); setIsAddPoOpen(true); }}
+                              >
+                                Complete Order
+                              </Button>
                             )}
                             {canDelete('procurement') && (
                               <Button
@@ -622,7 +606,7 @@ export default function Procurement() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input placeholder="Search orders..." value={poSearch} onChange={(e) => setPoSearch(e.target.value)} onBlur={() => setPoSearch('')} className="pl-9 text-white placeholder:text-white/50" />
                 </div>
-                {canCreate('procurement') && <Button className="gradient-primary text-black" onClick={() => setIsAddPoOpen(true)}><Plus className="h-4 w-4 mr-2" />New PO</Button>}
+                {canCreate('procurement') && <Button className="gradient-primary text-black" onClick={() => { setPoForm(f => ({ ...f, requestId: '', requestType: '' })); setIsAddPoOpen(true); }}><Plus className="h-4 w-4 mr-2" />New PO</Button>}
               </div>
 
               <Card>

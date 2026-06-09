@@ -14,6 +14,7 @@ const router = Router();
 const loginSchema = z.object({
   identifier: z.string().min(1),
   password: z.string().min(1),
+  loginType: z.enum(['personnel', 'customer']).optional(),
 });
 
 const registerSchema = z.object({
@@ -74,7 +75,7 @@ router.post('/login', async (req, res) => {
     return res.status(400).json({ error: 'Invalid input', code: 'VALIDATION_ERROR' });
   }
 
-  const { identifier, password } = result.data;
+  const { identifier, password, loginType } = result.data;
 
   const user = await prisma.users.findFirst({
     where: {
@@ -99,6 +100,18 @@ router.post('/login', async (req, res) => {
     const { ip, userAgent } = clientInfo(req);
     logAuditEvent({ eventType: 'login_failed', description: `Login rejected — unknown role '${user.role.name}' for ${identifier}`, ipAddress: ip, userAgent });
     return res.status(403).json({ error: 'Account role is not recognized. Contact your administrator.', code: 'INVALID_ROLE' });
+  }
+
+  // Login-type policy (spec 4): credentials are valid; now confirm the account's role matches
+  // the requested login type. Customer = role 'customer'; Personnel = every other role.
+  // Checked before any session is established. Rejected without leaking which check failed.
+  if (loginType) {
+    const isCustomer = user.role.name === 'customer';
+    if (isCustomer !== (loginType === 'customer')) {
+      const { ip, userAgent } = clientInfo(req);
+      logAuditEvent({ actorUserId: user.id, eventType: 'login_failed', description: `Login type mismatch (${loginType}) for ${identifier}`, ipAddress: ip, userAgent });
+      return res.status(403).json({ error: "This account isn't permitted for the selected login type", code: 'LOGIN_TYPE_MISMATCH' });
+    }
   }
 
   const farmId = await getFarmId(user.id);

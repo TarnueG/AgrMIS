@@ -520,6 +520,9 @@ router.post('/proc-requests', async (req, res) => {
   const parsed = createProcReqSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
   const d = parsed.data;
+  // Feed and fertilizer are measured in kg; chemicals stay in liters.
+  const KG_CATEGORIES = ['fertilizers', 'livestock_feed', 'aquaculture_feed'];
+  const defaultUnit = KG_CATEGORIES.includes(d.category) ? 'kg' : 'liters';
   try {
     const row = await procReqDb.create({
       data: {
@@ -527,7 +530,7 @@ router.post('/proc-requests', async (req, res) => {
         category: d.category,
         item_name: d.item_name,
         quantity: d.quantity,
-        quantity_unit: d.quantity_unit ?? 'liters',
+        quantity_unit: d.quantity_unit ?? defaultUnit,
         status: 'pending',
       },
     });
@@ -740,6 +743,17 @@ function analyticBuckets(range: string, n: number): AB[] {
 const inA = (d: Date, b: AB) => d >= b.start && d <= b.end;
 const aDone = (s?: string | null) => s === 'completed' || s === 'delivered';
 
+// Upcoming Items status semantics (spec 4.3): Pending (default) → Processing (accepted by
+// Production/Procurement) → Cancel (declined). Items already in inventory are dropped.
+const upProdStatus = (s?: string) => s === 'pending' ? 'Pending' : (s === 'declined' || s === 'cancelled') ? 'Cancel' : 'Processing';
+const upProcStatus = (s?: string) => s === 'pending' ? 'Pending' : (s === 'disapproved' || s === 'declined' || s === 'cancelled') ? 'Cancel' : 'Processing';
+function buildUpcoming(prodReqs: any[], procReqs: any[], batchByReq: Record<string, string>) {
+  return [
+    ...prodReqs.filter((r) => r.status !== 'passed' && !r.stock_item_id).map((r) => ({ item_name: r.product_name, location: r.location ?? '-', batch_no: batchByReq[r.id] ?? String(r.id).slice(0, 8).toUpperCase(), quantity: Number(r.quantity ?? 0), status: upProdStatus(r.status) })),
+    ...procReqs.filter((r) => !r.in_stock).map((r) => ({ item_name: r.item_name, location: '-', batch_no: String(r.id).slice(0, 8).toUpperCase(), quantity: Number(r.quantity ?? 0), status: upProcStatus(r.status) })),
+  ].map((r, i) => ({ no: i + 1, ...r }));
+}
+
 router.get('/analytics/overview', async (req, res) => {
   const farmId = req.user!.farmId ?? undefined;
   const range = ['daily', 'weekly', 'monthly'].includes(String(req.query.range)) ? String(req.query.range) : 'monthly';
@@ -841,11 +855,15 @@ router.get('/analytics/overview', async (req, res) => {
     for (const s of stock) { const q = Number(s.current_quantity); const lvl = stockLevel(q, Number(s.reorder_threshold)); if (lvl === 'In stock') inStock++; else if (lvl === 'Low stock') lowStock++; else outOfStock++; }
     const stockSummary = { totalSkus: stock.length, inStock, lowStock, outOfStock };
 
-    const poStatusMap: Record<string, string> = { submitted: 'In Transit', draft: 'Scheduled' };
-    const upcoming = pos.slice(0, 25).map((p: any, i: number) => {
-      const overdue = p.expected_delivery && new Date(p.expected_delivery) < now;
-      return { no: i + 1, item_name: p.commodity ?? '-', location: p.suppliers?.name ?? '-', batch_no: p.po_number, quantity: p.quantity != null ? Number(p.quantity) : 0, status: overdue ? 'Delayed' : (poStatusMap[p.status] ?? 'Scheduled') };
-    });
+    // Upcoming Items: pending raw-material + chemical/feed requests not yet in inventory (spec 4.3).
+    const [prodReqs, procReqs, upBatches] = await Promise.all([
+      prodReqDb.findMany({ where: { farm_id: farmId } }),
+      procReqDb.findMany({ where: { farm_id: farmId } }),
+      prodBatchDb.findMany({ where: { farm_id: farmId }, select: { request_id: true, batch_number: true } }),
+    ]);
+    const batchByReq: Record<string, string> = {};
+    for (const b of upBatches as any[]) if (b.request_id && !batchByReq[b.request_id]) batchByReq[b.request_id] = b.batch_number;
+    const upcoming = buildUpcoming(prodReqs, procReqs, batchByReq);
 
     res.json({
       generatedAt: new Date().toISOString(), range,
@@ -880,8 +898,14 @@ router.get('/analytics/details/:metric', async (req, res) => {
       return res.json({ total: items.length, items: pg(items) });
     }
     if (metric === 'upcoming') {
-      const pos = await prisma.purchase_orders.findMany({ where: { farm_id: farmId, status: { in: ['draft', 'submitted'] } }, include: { suppliers: { select: { name: true } } } });
-      const items = pos.map((p: any, i: number) => ({ id: p.id, no: i + 1, name: p.commodity ?? '-', location: p.suppliers?.name ?? '-', batch_no: p.po_number, quantity: p.quantity != null ? Number(p.quantity) : 0, status: p.status === 'submitted' ? 'In Transit' : 'Scheduled' }));
+      const [prodReqs, procReqs, upBatches] = await Promise.all([
+        prodReqDb.findMany({ where: { farm_id: farmId } }),
+        procReqDb.findMany({ where: { farm_id: farmId } }),
+        prodBatchDb.findMany({ where: { farm_id: farmId }, select: { request_id: true, batch_number: true } }),
+      ]);
+      const batchByReq: Record<string, string> = {};
+      for (const b of upBatches as any[]) if (b.request_id && !batchByReq[b.request_id]) batchByReq[b.request_id] = b.batch_number;
+      const items = buildUpcoming(prodReqs, procReqs, batchByReq).map((r) => ({ id: `${r.no}-${r.batch_no}`, no: r.no, name: r.item_name, location: r.location, batch_no: r.batch_no, quantity: r.quantity, status: r.status }));
       return res.json({ total: items.length, items: pg(items) });
     }
     const speciesTable: Record<string, string> = { 'total-pigs': 'pigs', 'total-birds': 'birds', 'total-grazing-livestock': 'cattle' };

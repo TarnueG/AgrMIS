@@ -80,12 +80,17 @@ router.put('/subsystems', isAdmin, async (req, res) => {
   }
 });
 
-// GET /api/v1/access-control/users
+// GET /api/v1/access-control/users?segment=all|customers|personnel
 router.get('/users', isAdmin, async (req, res) => {
+  // Server resolves segment membership: Customer = role 'customer', Personnel = every other role.
+  const segment = ['customers', 'personnel'].includes(String(req.query.segment)) ? String(req.query.segment) : 'all';
+  const roleFilter = segment === 'customers' ? { role: { name: 'customer' } }
+    : segment === 'personnel' ? { role: { name: { not: 'customer' } } }
+    : {};
   try {
     const [users, roles] = await Promise.all([
       (prisma as any).users.findMany({
-        where: { deleted_at: null },
+        where: { deleted_at: null, ...roleFilter },
         select: {
           id: true,
           full_name: true,

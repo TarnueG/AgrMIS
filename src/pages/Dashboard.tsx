@@ -6,6 +6,7 @@ import { StatCard } from '@/components/dashboard/StatCard';
 import { QuickActions } from '@/components/dashboard/QuickActions';
 import { RecentOrders } from '@/components/dashboard/RecentOrders';
 import { InventoryAlerts } from '@/components/dashboard/InventoryAlerts';
+import { CardBoundary } from '@/components/CardBoundary';
 import { usePermissions } from '@/hooks/usePermissions';
 import {
   Wheat, Tractor, Package, DollarSign, Users,
@@ -13,6 +14,7 @@ import {
   BarChart3, Wrench, UserCheck, UserMinus, AlertTriangle,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, PieChart, Pie, Cell,
@@ -164,32 +166,26 @@ function AdminDashboard() {
             </ResponsiveContainer>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader><CardTitle>Production Mix</CardTitle></CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie data={productionData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={5} dataKey="value">
-                  {productionData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                </Pie>
-                <Tooltip {...tooltipStyle} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="flex flex-wrap gap-4 justify-center mt-4">
-              {productionData.map((e, i) => (
-                <div key={e.name} className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[i] }} />
-                  <span className="text-sm text-white">{e.name}</span>
-                </div>
-              ))}
+        {/* "Production Mix" replaced by Order Request Status, linking to Procurement (spec 9.1). */}
+        <Card className="cursor-pointer transition-all hover:border-primary/40" onClick={() => navigate('/procurement')}>
+          <CardHeader><CardTitle>Order Request Status</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">Track procurement order requests and act on them — complete the order to raise a Purchase Order, or decline.</p>
+            <div className="rounded-lg border border-border bg-card/40 p-4 flex items-center gap-3">
+              <ClipboardList className="h-6 w-6 text-primary" />
+              <div>
+                <p className="text-sm font-medium text-white">Requested Orders</p>
+                <p className="text-xs text-muted-foreground">Pending · Accepted · Declined</p>
+              </div>
             </div>
+            <Button variant="outline" className="w-full text-white" onClick={(e) => { e.stopPropagation(); navigate('/procurement'); }}>Open Order Requests</Button>
           </CardContent>
         </Card>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <RecentOrders />
-        <InventoryAlerts />
-        <QuickActions />
+        <CardBoundary><RecentOrders /></CardBoundary>
+        <CardBoundary><InventoryAlerts /></CardBoundary>
+        <CardBoundary><QuickActions /></CardBoundary>
       </div>
     </div>
   );
@@ -285,8 +281,8 @@ function ProductionManagerDashboard() {
         </div>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <InventoryAlerts />
-        <QuickActions />
+        <CardBoundary><InventoryAlerts /></CardBoundary>
+        <CardBoundary><QuickActions /></CardBoundary>
       </div>
     </MiniDashboard>
   );
@@ -346,8 +342,8 @@ function MarketingManagerDashboard() {
         </div>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <RecentOrders />
-        <QuickActions />
+        <CardBoundary><RecentOrders /></CardBoundary>
+        <CardBoundary><QuickActions /></CardBoundary>
       </div>
     </MiniDashboard>
   );
@@ -422,7 +418,7 @@ function CustomerDashboard() {
             </div>
           </CardContent>
         </Card>
-        <QuickActions />
+        <CardBoundary><QuickActions /></CardBoundary>
       </div>
     </MiniDashboard>
   );

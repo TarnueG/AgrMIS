@@ -21,9 +21,9 @@ const PAGE_SIZE = 25;
 const money = (n: number) => `$${Number(n).toLocaleString()}`;
 function statusBadge(s: string): string {
   const x = String(s).toLowerCase();
-  if (x.includes('out') || x === 'failed' || x === 'delayed' || x === 'dead') return 'bg-destructive/20 text-destructive';
-  if (x.includes('low') || x === 'scheduled' || x === 'ill') return 'bg-warning/20 text-warning';
-  if (x === 'in transit') return 'bg-blue-500/20 text-blue-500';
+  if (x.includes('out') || x === 'failed' || x === 'delayed' || x === 'dead' || x === 'cancel') return 'bg-destructive/20 text-destructive';
+  if (x.includes('low') || x === 'scheduled' || x === 'ill' || x === 'pending') return 'bg-warning/20 text-warning';
+  if (x === 'in transit' || x === 'processing') return 'bg-blue-500/20 text-blue-500';
   return 'bg-success/20 text-success';
 }
 
@@ -67,8 +67,8 @@ export default function InventoryAnalyticsDrilldown() {
       headers = ['Item', 'SKU', 'Quantity', 'Status']; count = items.length;
       rows = items.map(r => <TableRow key={r.id}><TableCell className="font-medium">{r.name}</TableCell><TableCell className="font-mono text-xs">{r.sku}</TableCell><TableCell>{Number(r.quantity).toFixed(2)} {r.unit}</TableCell><TableCell><Badge className={statusBadge(r.status)}>{r.status}</Badge></TableCell></TableRow>);
     } else if (metric === 'upcoming') {
-      headers = ['No', 'Item', 'Location', 'Batch', 'Quantity', 'Status']; count = items.length;
-      rows = items.map(r => <TableRow key={r.id}><TableCell>{r.no}</TableCell><TableCell className="font-medium">{r.name}</TableCell><TableCell>{r.location}</TableCell><TableCell className="font-mono text-xs">{r.batch_no}</TableCell><TableCell>{Number(r.quantity).toLocaleString()}</TableCell><TableCell><Badge className={statusBadge(r.status)}>{r.status}</Badge></TableCell></TableRow>);
+      headers = ['No', 'Item Name', 'Quantity', 'Batch / PO No', 'Status']; count = items.length;
+      rows = items.map(r => <TableRow key={r.id}><TableCell>{r.no}</TableCell><TableCell className="font-medium">{r.name}</TableCell><TableCell>{Number(r.quantity).toLocaleString()}</TableCell><TableCell className="font-mono text-xs">{r.batch_no}</TableCell><TableCell><Badge className={statusBadge(r.status)}>{r.status}</Badge></TableCell></TableRow>);
     } else if (metric === 'order-statistics') {
       headers = ['Period', 'Orders', 'Sales']; const s = data.orderStats?.series ?? []; count = s.length;
       rows = s.map((r: any, i: number) => <TableRow key={i}><TableCell className="font-medium">{r.bucket}</TableCell><TableCell>{r.orders.toLocaleString()}</TableCell><TableCell className="font-medium">{money(r.sales)}</TableCell></TableRow>);

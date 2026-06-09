@@ -57,7 +57,7 @@ const menuItems = [
     items: [
       { title: 'Land Parcels',    path: '/assets/land',      icon: Wheat,    subsystem: 'land_parcels' },
       { title: 'Machinery',       path: '/assets/machinery', icon: Tractor,  subsystem: 'machinery'    },
-      { title: 'Asset Analytics', path: '/assets/analytics', icon: BarChart3, subsystem: 'machinery'   },
+      { title: 'Asset Analytics', path: '/assets/analytics', icon: BarChart3, subsystem: 'machinery', card: 'machinery.analytics' },
     ],
   },
   {
@@ -65,7 +65,7 @@ const menuItems = [
     icon: Package,
     items: [
       { title: 'Inventory Dashboard', path: '/inventory',           icon: Package,   subsystem: 'inventory' },
-      { title: 'Inventory Analytics', path: '/inventory/analytics', icon: BarChart3, subsystem: 'inventory' },
+      { title: 'Inventory Analytics', path: '/inventory/analytics', icon: BarChart3, subsystem: 'inventory', card: 'inventory.analytics' },
     ],
   },
   {
@@ -73,7 +73,7 @@ const menuItems = [
     icon: Truck,
     items: [
       { title: 'Overview',  path: '/procurement',           icon: Truck,    subsystem: 'procurement' },
-      { title: 'Analytics', path: '/procurement/analytics', icon: BarChart3, subsystem: 'procurement' },
+      { title: 'Analytics', path: '/procurement/analytics', icon: BarChart3, subsystem: 'procurement', card: 'procurement.analytics' },
     ],
   },
   {
@@ -81,7 +81,7 @@ const menuItems = [
     icon: Users,
     items: [
       { title: 'Customers',     path: '/customers',     icon: Users,    subsystem: 'crm' },
-      { title: 'CRM Analytics', path: '/crm/analytics', icon: BarChart3, subsystem: 'crm' },
+      { title: 'CRM Analytics', path: '/crm/analytics', icon: BarChart3, subsystem: 'crm', card: 'crm.analytics' },
     ],
   },
   {
@@ -89,7 +89,7 @@ const menuItems = [
     icon: ShoppingCart,
     items: [
       { title: 'Marketing Dashboard',  path: '/marketing',           icon: ShoppingCart, subsystem: 'marketing'          },
-      { title: 'Marketing Analytics',  path: '/marketing/analytics', icon: BarChart3,    subsystem: 'marketing'          },
+      { title: 'Marketing Analytics',  path: '/marketing/analytics', icon: BarChart3,    subsystem: 'marketing', card: 'marketing.analytics' },
       { title: 'Sales & Order Points', path: '/sales-order-points',  icon: Factory,      subsystem: 'sales_order_points' },
     ],
   },
@@ -98,18 +98,20 @@ const menuItems = [
     icon: Factory,
     items: [
       { title: 'Production',           path: '/production',           icon: Factory,   subsystem: 'production' },
-      { title: 'Production Analytics', path: '/production/analytics', icon: BarChart3, subsystem: 'production' },
+      { title: 'Production Analytics', path: '/production/analytics', icon: BarChart3, subsystem: 'production', card: 'production.analytics' },
       { title: 'Livestock Dashboard',  path: '/assets/livestock',     icon: Leaf,      subsystem: 'livestock'  },
     ],
   },
   {
     title: 'Finance',
     icon: DollarSign,
-    path: '/finance',
-    subsystem: 'finance',
+    items: [
+      { title: 'Finance Dashboard', path: '/finance',           icon: DollarSign, subsystem: 'finance' },
+      { title: 'Finance Analytics', path: '/finance/analytics', icon: BarChart3,  subsystem: 'finance', card: 'finance.analytics' },
+    ],
   },
   {
-    title: 'Reports',
+    title: 'Summary Reports and Analytics',
     icon: BarChart3,
     path: '/reports',
     subsystem: 'reports',
@@ -117,16 +119,18 @@ const menuItems = [
   {
     title: 'Human Capital',
     icon: UserCog,
-    path: '/employees',
-    subsystem: 'human_capital',
+    items: [
+      { title: 'Personnel',           path: '/employees',                icon: UserCog,   subsystem: 'human_capital' },
+      { title: 'HR Analytics',        path: '/human-capital/analytics',  icon: BarChart3, subsystem: 'human_capital', card: 'human_capital.analytics' },
+    ],
   },
 ];
 
 export function AppSidebar() {
   const location = useLocation();
   const { signOut, user } = useAuth();
-  const { canView, isLoading: permsLoading } = usePermissions();
-  const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management', 'Marketing', 'Production', 'Procurement', 'CRM', 'Inventory']);
+  const { canView, canViewCard, isLoading: permsLoading } = usePermissions();
+  const [openGroups, setOpenGroups] = useState<string[]>(['Asset Management', 'Marketing', 'Production', 'Procurement', 'CRM', 'Inventory', 'Finance', 'Human Capital']);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const { data: alertData } = useQuery<{ count: number }>({
@@ -174,14 +178,18 @@ export function AppSidebar() {
   const isActive = (path: string) => location.pathname === path;
 
   const itemVisible = (subsystem: string) => !permsLoading && canView(subsystem);
+  // Leaf items may carry an optional `card` gate (e.g. analytics dashboards) that
+  // also requires the matching card permission, on top of subsystem view access.
+  const leafVisible = (c: { subsystem: string; card?: string }) =>
+    itemVisible(c.subsystem) && (!c.card || canViewCard(c.card));
 
   const visibleItems = menuItems
     .map(item => {
       if ('items' in item) {
-        const visibleChildren = item.items.filter(c => itemVisible(c.subsystem));
+        const visibleChildren = item.items.filter(c => leafVisible(c as any));
         return visibleChildren.length > 0 ? { ...item, items: visibleChildren } : null;
       }
-      return itemVisible(item.subsystem!) ? item : null;
+      return leafVisible(item as any) ? item : null;
     })
     .filter(Boolean) as typeof menuItems;
 

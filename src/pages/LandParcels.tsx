@@ -353,10 +353,15 @@ export default function LandParcels() {
                         <Badge className="bg-muted text-muted-foreground">{p.status}</Badge>
                       )}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right space-x-1">
                       {canEdit('land_parcels') && (
                         <Button variant="ghost" size="icon" onClick={() => openEditParcel(p)}>
                           <Edit className="h-4 w-4" />
+                        </Button>
+                      )}
+                      {canDelete('land_parcels') && (
+                        <Button variant="ghost" size="icon" onClick={() => openConfirm({ title: 'Delete Parcel', message: 'Delete this land parcel?', type: 'danger', confirmText: 'Delete', onConfirm: () => deleteMutation.mutate(p.id) })}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       )}
                     </TableCell>
@@ -403,6 +408,7 @@ export default function LandParcels() {
                   <TableHead>Soil Type</TableHead>
                   <TableHead>Location</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -418,10 +424,17 @@ export default function LandParcels() {
                         {p.status}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-right">
+                      {canDelete('land_parcels') && (
+                        <Button variant="ghost" size="icon" onClick={() => openConfirm({ title: 'Delete Parcel', message: 'Delete this land parcel?', type: 'danger', confirmText: 'Delete', onConfirm: () => deleteMutation.mutate(p.id) })}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
                 {!totalFiltered.length && (
-                  <TableRow><TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No parcels found</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No parcels found</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>

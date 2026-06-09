@@ -371,7 +371,7 @@ router.post('/fish-ponds', async (req, res) => {
 
 const fishSchema = z.object({
   fish_type: z.string().min(1),
-  batch_number: z.string().min(1),
+  batch_number: z.string().optional(), // auto-generated server-side (spec 6.3)
   number_of_fish: z.number().int().positive(),
   date_recorded: z.string().optional(),
 });
@@ -403,12 +403,14 @@ router.post('/fish-ponds/:pondId/fish', async (req, res) => {
     const pond = await prisma.$queryRaw<any[]>`SELECT * FROM fish_ponds WHERE id = ${pondId}::uuid AND farm_id = ${farmId}::uuid AND deleted_at IS NULL`;
     if (!pond.length) return res.status(404).json({ error: 'Pond not found', code: 'NOT_FOUND' });
 
+    // Batch number is server-issued and unique (spec 6.3).
+    const batchNumber = (d.batch_number && d.batch_number.trim()) ? d.batch_number : `FISH-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
     const [fish] = await prisma.$transaction(async (tx) => {
       const newCount = Number(pond[0].current_fish_count) + d.number_of_fish;
       const newStatus = newCount >= Number(pond[0].capacity) ? 'full' : 'available';
       const rows = await tx.$queryRaw<any[]>`
         INSERT INTO fish_stock (farm_id, pond_id, fish_type, batch_number, number_of_fish, date_recorded, created_by)
-        VALUES (${farmId}::uuid, ${pondId}::uuid, ${d.fish_type}, ${d.batch_number}, ${d.number_of_fish},
+        VALUES (${farmId}::uuid, ${pondId}::uuid, ${d.fish_type}, ${batchNumber}, ${d.number_of_fish},
                 ${d.date_recorded ? new Date(d.date_recorded) : new Date()}::date, ${userId}::uuid)
         RETURNING *
       `;
@@ -421,6 +423,71 @@ router.post('/fish-ponds/:pondId/fish', async (req, res) => {
     res.status(201).json(fish);
   } catch {
     res.status(500).json({ error: 'Failed to add fish', code: 'DB_ERROR' });
+  }
+});
+
+// ── Fresh Fish (spec 6.4) ────────────────────────────────────────────
+router.get('/fresh-fish', async (req, res) => {
+  const farmId = req.user!.farmId;
+  try {
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT * FROM fresh_fish WHERE farm_id = ${farmId}::uuid AND deleted_at IS NULL ORDER BY created_at DESC
+    `;
+    res.json(rows);
+  } catch {
+    res.status(500).json({ error: 'Failed to fetch fresh fish', code: 'DB_ERROR' });
+  }
+});
+
+const freshFishSchema = z.object({
+  pondId: z.string().uuid(),
+  fishType: z.string().min(1),
+  amount: z.number().int().positive(),
+});
+
+// Move fish from a pond into Fresh Fish: decrement the pond's stock, aggregate into fresh_fish.
+router.post('/fresh-fish', async (req, res) => {
+  const parsed = freshFishSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.errors[0].message, code: 'VALIDATION_ERROR' });
+  const { pondId, fishType, amount } = parsed.data;
+  const farmId = req.user!.farmId;
+  const userId = req.user!.userId;
+  try {
+    await prisma.$transaction(async (tx) => {
+      const stock = await tx.$queryRaw<any[]>`
+        SELECT fs.id, fs.number_of_fish FROM fish_stock fs JOIN fish_ponds fp ON fp.id = fs.pond_id
+        WHERE fs.pond_id = ${pondId}::uuid AND fp.farm_id = ${farmId}::uuid AND fs.fish_type = ${fishType}
+          AND fs.deleted_at IS NULL AND fs.number_of_fish > 0 ORDER BY fs.created_at ASC
+      `;
+      const available = stock.reduce((s, r) => s + Number(r.number_of_fish), 0);
+      if (available < amount) throw Object.assign(new Error(`Only ${available} ${fishType} available in this pond`), { status: 400 });
+      // Decrement source batches FIFO.
+      let remaining = amount;
+      for (const row of stock) {
+        if (remaining <= 0) break;
+        const take = Math.min(remaining, Number(row.number_of_fish));
+        await tx.$executeRaw`UPDATE fish_stock SET number_of_fish = number_of_fish - ${take}, updated_at = NOW() WHERE id = ${row.id}::uuid`;
+        remaining -= take;
+      }
+      await tx.$executeRaw`
+        UPDATE fish_ponds SET current_fish_count = GREATEST(0, current_fish_count - ${amount}),
+          status = CASE WHEN current_fish_count - ${amount} >= capacity THEN 'full' ELSE 'available' END, updated_at = NOW()
+        WHERE id = ${pondId}::uuid
+      `;
+      // Aggregate into an in-stock Fresh Fish row of this type.
+      const existing = await tx.$queryRaw<any[]>`
+        SELECT id FROM fresh_fish WHERE farm_id = ${farmId}::uuid AND fish_type = ${fishType} AND status = 'in_stock' AND deleted_at IS NULL LIMIT 1
+      `;
+      if (existing.length) {
+        await tx.$executeRaw`UPDATE fresh_fish SET number_of_fish = number_of_fish + ${amount}, updated_at = NOW() WHERE id = ${existing[0].id}::uuid`;
+      } else {
+        await tx.$executeRaw`INSERT INTO fresh_fish (farm_id, fish_type, number_of_fish, status, created_by) VALUES (${farmId}::uuid, ${fishType}, ${amount}, 'in_stock', ${userId}::uuid)`;
+      }
+    });
+    res.status(201).json({ message: 'Fresh fish added' });
+  } catch (err: any) {
+    const status = err.status ?? 500;
+    res.status(status).json({ error: err.message ?? 'Failed to add fresh fish', code: status === 400 ? 'VALIDATION_ERROR' : 'DB_ERROR' });
   }
 });
 

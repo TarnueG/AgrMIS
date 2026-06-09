@@ -4,7 +4,7 @@ import api from '@/lib/api';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -63,6 +63,8 @@ export default function Livestock() {
   const [isBirdOpen, setIsBirdOpen] = useState(false);
   const [isPondOpen, setIsPondOpen] = useState(false);
   const [isFishOpen, setIsFishOpen] = useState(false);
+  const [isFreshOpen, setIsFreshOpen] = useState(false);
+  const [freshForm, setFreshForm] = useState({ pondId: '', fishType: '', amount: 0 });
   const [isMortalityOpen, setIsMortalityOpen] = useState(false);
   const [isTreatmentOpen, setIsTreatmentOpen] = useState(false);
   const [treatmentForm, setTreatmentForm] = useState({ ...BLANK_TREATMENT });
@@ -91,6 +93,9 @@ export default function Livestock() {
   const { data: recoveringStock = [] } = useQuery<any[]>({ queryKey: ['ls-by-status', 'recovering'], queryFn: () => api.get('/livestock/by-status/recovering') });
   const { data: healthyStock = [] } = useQuery<any[]>({ queryKey: ['ls-by-status', 'healthy'], queryFn: () => api.get('/livestock/by-status/healthy') });
   const { data: lsRequests = [] } = useQuery<any[]>({ queryKey: ['ls-requests'], queryFn: () => api.get('/livestock/requests'), refetchInterval: 30_000 });
+  // Fresh Fish (spec 6.4)
+  const { data: freshFish = [] } = useQuery<any[]>({ queryKey: ['fresh-fish'], queryFn: () => api.get('/livestock/fresh-fish'), refetchInterval: 30_000 });
+  const { data: freshPondFish = [] } = useQuery<any[]>({ queryKey: ['fresh-pond-fish', freshForm.pondId], queryFn: () => freshForm.pondId ? api.get(`/livestock/fish-ponds/${freshForm.pondId}/fish`) : Promise.resolve([]), enabled: !!freshForm.pondId });
 
   const numW = (v: any) => (v !== '' && v != null ? Number(v) : undefined);
   const pigAdd = useMutation({
@@ -156,6 +161,18 @@ export default function Livestock() {
     mutationFn: (id: string) => api.delete(`/livestock/fish/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['fish-stock', selectedPondId] }); qc.invalidateQueries({ queryKey: ['fish-ponds'] }); toast({ title: 'Fish record deleted' }); },
     onError: (e) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
+  });
+  const addFreshFish = useMutation({
+    mutationFn: (d: typeof freshForm) => api.post('/livestock/fresh-fish', { pondId: d.pondId, fishType: d.fishType, amount: Number(d.amount) }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['fresh-fish'] });
+      qc.invalidateQueries({ queryKey: ['fish-ponds'] });
+      qc.invalidateQueries({ queryKey: ['fresh-pond-fish', freshForm.pondId] });
+      toast({ title: 'Fresh fish added' });
+      setIsFreshOpen(false);
+      setFreshForm({ pondId: '', fishType: '', amount: 0 });
+    },
+    onError: (e: any) => toast({ title: 'Error', description: e.message, variant: 'destructive' }),
   });
 
   const mortalityAdd = useMutation({
@@ -238,7 +255,7 @@ export default function Livestock() {
     { key: 'health', label: 'Health', count: healthyStock.length, color: 'bg-success/10 border-success/20', icon: Heart },
     { key: 'ill', label: 'Ill', count: illStock.length, color: 'bg-warning/10 border-warning/20', icon: AlertTriangle },
     { key: 'recovering', label: 'Recovering', count: recoveringStock.length, color: 'bg-blue-500/10 border-blue-500/20', icon: Heart },
-    { key: 'requested', label: 'Livestock Requested', count: lsRequests.filter((r: any) => r.status === 'pending' || r.status === 'accepted').length, color: 'bg-indigo-500/10 border-indigo-500/20', icon: Package },
+    { key: 'requested', label: 'Fresh Fish', count: freshFish.filter((f: any) => f.status === 'in_stock').reduce((s: number, f: any) => s + Number(f.number_of_fish), 0), color: 'bg-cyan-500/10 border-cyan-500/20', icon: Package },
     { key: 'mortality', label: 'Mortality', count: mortality.length, color: 'bg-destructive/10 border-destructive/20', icon: AlertTriangle },
     { key: 'pigs', label: 'Pigs', count: healthyPigs.length, color: 'bg-pink-500/10 border-pink-500/20', icon: Package },
     { key: 'cattle', label: 'Grazing Livestock', count: healthyCattle.length, color: 'bg-amber-500/10 border-amber-500/20', icon: Package },
@@ -442,7 +459,7 @@ export default function Livestock() {
             <Table>
               <TableHeader><TableRow>
                 <TableHead>Pig ID</TableHead><TableHead>Breed</TableHead><TableHead>Gender</TableHead>
-                <TableHead>Weight (kg)</TableHead><TableHead>Status</TableHead><TableHead>Pen Number</TableHead><TableHead>Date</TableHead>
+                <TableHead>Weight (kg)</TableHead><TableHead>Status</TableHead><TableHead>Location</TableHead><TableHead>Date</TableHead>
                 <TableHead>Mature for Market</TableHead><TableHead className="text-right">Actions</TableHead>
               </TableRow></TableHeader>
               <TableBody>
@@ -668,38 +685,30 @@ export default function Livestock() {
         {/* LIVESTOCK REQUESTED (from Inventory) */}
         {selectedView === 'requested' && (
           <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <p className="font-semibold text-sm">Fresh Fish</p>
+                {canCreate('livestock') && (
+                  <Button className="gradient-primary text-black font-medium" onClick={() => { setFreshForm({ pondId: '', fishType: '', amount: 0 }); setIsFreshOpen(true); }}>
+                    <Plus className="h-4 w-4 mr-2" />Add Fresh Fish
+                  </Button>
+                )}
+              </div>
+            </CardHeader>
             <Table>
               <TableHeader><TableRow>
-                <TableHead>Species</TableHead><TableHead>Name</TableHead><TableHead>Quantity</TableHead>
-                <TableHead>Location</TableHead><TableHead>Detail</TableHead><TableHead>Order Type</TableHead>
-                <TableHead>Status</TableHead><TableHead className="text-right">Action</TableHead>
+                <TableHead>Type of Fish</TableHead><TableHead>Number of Fish</TableHead><TableHead>Date</TableHead><TableHead>Status</TableHead>
               </TableRow></TableHeader>
               <TableBody>
-                {lsRequests.filter((r: any) => r.status !== 'declined').map((r: any) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-medium capitalize">{r.species === 'grazing' ? 'Grazing Livestock' : r.species}</TableCell>
-                    <TableCell>{r.name || '-'}</TableCell>
-                    <TableCell>{r.quantity}</TableCell>
-                    <TableCell>{r.location || '-'}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {r.species === 'pig' ? `Boars ${r.boars ?? 0} · Sows ${r.sows ?? 0}` : r.sub_type || '-'}
-                    </TableCell>
-                    <TableCell>{r.order_type || '-'}</TableCell>
-                    <TableCell><Badge className={r.status === 'fulfilled' ? 'bg-success/20 text-success' : r.status === 'accepted' ? 'bg-blue-500/20 text-blue-500' : 'bg-warning/20 text-warning'}>{r.status}</Badge></TableCell>
-                    <TableCell className="text-right flex gap-1 justify-end">
-                      {r.status === 'pending' && canEdit('livestock') && (
-                        <>
-                          <Button size="sm" className="gradient-primary text-black" onClick={() => acceptRequest.mutate(r.id)} disabled={acceptRequest.isPending}>Accept</Button>
-                          <Button size="sm" variant="destructive" onClick={() => openConfirm({ title: 'Decline Request', message: 'Decline this request?', type: 'danger', confirmText: 'Decline', onConfirm: () => declineRequest.mutate(r.id) })}>Decline</Button>
-                        </>
-                      )}
-                      {r.status === 'accepted' && canEdit('livestock') && (
-                        <Button size="sm" variant="outline" className="border border-input bg-background text-white hover:bg-accent hover:text-accent-foreground" onClick={() => startFulfil(r)}>Edit / Fulfil</Button>
-                      )}
-                    </TableCell>
+                {freshFish.map((f: any) => (
+                  <TableRow key={f.id}>
+                    <TableCell className="font-medium">{f.fish_type}</TableCell>
+                    <TableCell>{Number(f.number_of_fish).toLocaleString()}</TableCell>
+                    <TableCell className="text-muted-foreground">{f.date_recorded ? format(new Date(f.date_recorded), 'MMM d, yyyy') : '-'}</TableCell>
+                    <TableCell><Badge className={f.status === 'sold' ? 'bg-blue-500/20 text-blue-500' : f.status === 'out_stock' ? 'bg-destructive/20 text-destructive' : 'bg-success/20 text-success'}>{f.status === 'in_stock' ? 'In-stock' : f.status === 'out_stock' ? 'Out-stock' : 'Sold'}</Badge></TableCell>
                   </TableRow>
                 ))}
-                {!lsRequests.filter((r: any) => r.status !== 'declined').length && <TableRow><TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No livestock requests</TableCell></TableRow>}
+                {!freshFish.length && <TableRow><TableCell colSpan={4} className="text-center py-8 text-muted-foreground">No fresh fish yet — use “Add Fresh Fish”.</TableCell></TableRow>}
               </TableBody>
             </Table>
           </Card>
@@ -738,7 +747,8 @@ export default function Livestock() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2"><Label>Weight (kg)</Label><Input type="number" step="0.01" min="0" value={pigForm.weight_kg} onChange={(e) => setPigForm({ ...pigForm, weight_kg: e.target.value })} required /></div>
-              <div className="space-y-2"><Label>Pig Pen Number</Label><Input value={pigForm.pen_number} onChange={(e) => setPigForm({ ...pigForm, pen_number: e.target.value })} placeholder="Block A01" required /></div>
+              {/* "Pig Pen Number" relabeled to "Location" per spec 6.2; still persisted via pen_number to avoid a data migration. */}
+              <div className="space-y-2"><Label>Location</Label><Input value={pigForm.pen_number} onChange={(e) => setPigForm({ ...pigForm, pen_number: e.target.value })} placeholder="Block A01" required /></div>
             </div>
             <div className="space-y-2"><Label>Date</Label><Input type="date" value={pigForm.date_recorded} onChange={(e) => setPigForm({ ...pigForm, date_recorded: e.target.value })} required /></div>
             <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={pigAdd.isPending || pigEdit.isPending}>{editItem ? 'Save Changes' : 'Add Pig'}</Button>
@@ -877,11 +887,61 @@ export default function Livestock() {
             )}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2"><Label>Type of Fish</Label><Input value={fishForm.fish_type} onChange={(e) => setFishForm({ ...fishForm, fish_type: e.target.value })} required /></div>
-              <div className="space-y-2"><Label>Batch Number</Label><Input value={fishForm.batch_number} onChange={(e) => setFishForm({ ...fishForm, batch_number: e.target.value })} required /></div>
+              {/* Batch number is auto-generated server-side (spec 6.3) */}
+              <div className="space-y-2"><Label>Batch Number</Label><Input value={editItem ? fishForm.batch_number : 'Auto-generated on save'} readOnly className="bg-muted text-muted-foreground" /></div>
             </div>
             <div className="space-y-2"><Label>Number of Fish</Label><Input type="number" value={fishForm.number_of_fish} onChange={(e) => setFishForm({ ...fishForm, number_of_fish: Number(e.target.value) })} /></div>
             <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={fishAdd.isPending || fishEdit.isPending}>{editItem ? 'Save Changes' : 'Add Fish'}</Button>
           </form>
+        </DialogContent>
+      </Dialog>
+      )}
+
+      {/* ADD FRESH FISH DIALOG (spec 6.4) */}
+      {canCreate('livestock') && (
+      <Dialog open={isFreshOpen} onOpenChange={(o) => { setIsFreshOpen(o); if (!o) setFreshForm({ pondId: '', fishType: '', amount: 0 }); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add Fresh Fish</DialogTitle></DialogHeader>
+          {(() => {
+            // Aggregate the selected pond's fish by type.
+            const byType: Record<string, number> = {};
+            for (const f of freshPondFish) byType[f.fish_type] = (byType[f.fish_type] || 0) + Number(f.number_of_fish);
+            const types = Object.entries(byType);
+            const selectedMax = byType[freshForm.fishType] ?? 0;
+            return (
+              <form onSubmit={(e) => { e.preventDefault(); if (!freshForm.pondId || !freshForm.fishType) { toast({ title: 'Select a pond and fish type', variant: 'destructive' }); return; } if (freshForm.amount < 1 || freshForm.amount > selectedMax) { toast({ title: `Enter 1–${selectedMax} fish`, variant: 'destructive' }); return; } addFreshFish.mutate(freshForm); }} className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Select Pond</Label>
+                  <select value={freshForm.pondId} onChange={(e) => setFreshForm({ ...freshForm, pondId: e.target.value, fishType: '', amount: 0 })} required className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground">
+                    <option value="">Choose a pond…</option>
+                    {ponds.map((p: any) => <option key={p.id} value={p.id}>{p.pond_id} — {Number(p.current_fish_count).toLocaleString()} fish</option>)}
+                  </select>
+                </div>
+                {freshForm.pondId && (
+                  <div className="space-y-2">
+                    <Label>Type of Fish</Label>
+                    {!types.length ? <p className="text-xs text-muted-foreground">No fish in this pond.</p> : (
+                      <div className="space-y-1 rounded-md border border-input bg-background p-2">
+                        {types.map(([t, count]) => (
+                          <label key={t} className="flex items-center justify-between gap-2 text-sm cursor-pointer px-1 py-0.5">
+                            <span className="flex items-center gap-2"><input type="radio" name="freshType" checked={freshForm.fishType === t} onChange={() => setFreshForm({ ...freshForm, fishType: t, amount: 0 })} className="accent-primary" />{t}</span>
+                            <span className="text-muted-foreground">{Number(count).toLocaleString()} available</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {freshForm.fishType && (
+                  <div className="space-y-2">
+                    <Label>Amount to Move to Fresh Fish <span className="text-muted-foreground text-xs">(max {selectedMax.toLocaleString()})</span></Label>
+                    <Input type="number" min={1} max={selectedMax} value={freshForm.amount || ''} onChange={(e) => setFreshForm({ ...freshForm, amount: Number(e.target.value) })} required />
+                  </div>
+                )}
+                <Button type="submit" className="w-full gradient-primary text-black font-medium" disabled={addFreshFish.isPending}>Move to Fresh Fish</Button>
+              </form>
+            );
+          })()}
         </DialogContent>
       </Dialog>
       )}

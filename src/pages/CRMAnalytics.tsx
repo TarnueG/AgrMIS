@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Users, ShoppingBag, ShoppingCart, PieChart as PieIcon, ChevronRight, RefreshCw, TrendingUp, TrendingDown } from 'lucide-react';
 
 // ── Types ──
-interface CustSummary { total: number; deltaPct: number; generatedAt: string; }
+interface CustSummary { total: number; active: number; deactivated: number; deltaPct: number; generatedAt: string; }
 interface PurchSummary { totalValue: number; ordersSettled: number; deltaPct: number; }
 interface CartSummary { itemCount: number; potentialValue: number; openCarts: number; }
 interface Segments { total: number; segments: { type: string; count: number; pct: number }[]; }
@@ -98,6 +98,34 @@ export default function CRMAnalytics() {
                   <p className="text-xs text-muted-foreground">Total Customers</p>
                   <p className="text-2xl font-bold">{cust.data!.total}</p>
                   <p className="text-xs text-muted-foreground"><DeltaPill pct={cust.data!.deltaPct} /> vs last month · Active accounts</p>
+                </div>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 mt-1 text-muted-foreground/30 group-hover:text-muted-foreground/70" />
+              </div>
+            </KpiShell>
+          )}
+          {/* Active customers (spec 5.4) */}
+          {cust.isLoading ? <SkeletonCard /> : cust.isError ? <CardError onRetry={cust.refetch} /> : (
+            <KpiShell label="Active Customers" cardClass="bg-success/10 border-success/20" onClick={() => goto('/crm/analytics/customers')}>
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-xl bg-success/20 shrink-0"><Users className="h-5 w-5 text-success" /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-muted-foreground">Active</p>
+                  <p className="text-2xl font-bold">{cust.data!.active}</p>
+                  <p className="text-xs text-muted-foreground">Enabled accounts</p>
+                </div>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 mt-1 text-muted-foreground/30 group-hover:text-muted-foreground/70" />
+              </div>
+            </KpiShell>
+          )}
+          {/* Deactivated customers (spec 5.4) */}
+          {cust.isLoading ? <SkeletonCard /> : cust.isError ? <CardError onRetry={cust.refetch} /> : (
+            <KpiShell label="Deactivated Customers" cardClass="bg-destructive/10 border-destructive/20" onClick={() => goto('/crm/analytics/customers')}>
+              <div className="flex items-start gap-3">
+                <div className="p-2 rounded-xl bg-destructive/20 shrink-0"><Users className="h-5 w-5 text-destructive" /></div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs text-muted-foreground">Deactivate</p>
+                  <p className="text-2xl font-bold">{cust.data!.deactivated}</p>
+                  <p className="text-xs text-muted-foreground">Disabled accounts</p>
                 </div>
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 mt-1 text-muted-foreground/30 group-hover:text-muted-foreground/70" />
               </div>
