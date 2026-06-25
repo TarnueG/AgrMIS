@@ -1,0 +1,21 @@
+# Trigger: push to your GitHub master branch.
+# Cloud Build SA needs roles: Cloud Run Admin + Service Account User + Artifact Registry Writer.
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/amis/amis-api:$SHORT_SHA', './backend']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/amis/amis-api:$SHORT_SHA']
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'amis-api'
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/amis/amis-api:$SHORT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/amis/amis-api:$SHORT_SHA'
+options:
+  logging: CLOUD_LOGGING_ONLY
