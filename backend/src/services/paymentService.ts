@@ -166,7 +166,7 @@ export async function handlePaymentSuccess(pi: any, eventId: string) {
 
   await db.marketing_orders.updateMany({
     where: { payment_intent_id: pi.id },
-    data: { payment_status: 'paid', status: 'confirmed', paid_at: new Date(), updated_at: new Date() },
+    data: { payment_status: 'paid', status: 'Pending', paid_at: new Date(), updated_at: new Date() },
   });
 
   // Clear cart for this farm after successful payment
