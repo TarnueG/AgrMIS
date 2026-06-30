@@ -25,6 +25,9 @@ import { seedPermissions } from './seeds/permissionSeed';
 dotenv.config();
 
 const app = express();
+// Disable ETag so dynamic, per-user responses (e.g. permissions) are never
+// served from the browser cache as 304 Not Modified.
+app.set('etag', false);
 const PORT = process.env.PORT || 3001;
 
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173').split(',').map(s => s.trim());

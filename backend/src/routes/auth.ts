@@ -225,6 +225,7 @@ router.post('/logout', requireAuth, async (req, res) => {
 // GET /api/v1/auth/permissions
 router.get('/permissions', requireAuth, async (req, res) => {
   const { roleId, roleName, farmId } = req.user!;
+  res.set('Cache-Control', 'no-store');
   try {
     const permissions = await getPermissions(roleId, roleName, farmId);
     return res.json({ role: roleName, permissions });
@@ -236,6 +237,7 @@ router.get('/permissions', requireAuth, async (req, res) => {
 // GET /api/v1/auth/card-permissions
 router.get('/card-permissions', requireAuth, async (req, res) => {
   const { roleId, roleName, farmId } = req.user!;
+  res.set('Cache-Control', 'no-store');
   try {
     const ids = await getCardPermissions(roleId, roleName, farmId);
     return res.json({ cardIds: Array.from(ids) });
