@@ -49,12 +49,28 @@ function signRefreshToken(userId: string): string {
 }
 
 async function getFarmId(userId: string): Promise<string | null> {
+  // 1. Staff/personnel: resolve the farm via their employee record.
   const employee = await prisma.employees.findFirst({
     where: { user_id: userId, deleted_at: null },
     select: { farm_id: true },
   });
   if (employee?.farm_id) return employee.farm_id;
-  // Fallback: users with no employee record still need a farm context for permission lookups
+
+  // 2. Customers: resolve the farm via the user's linked customer record so that
+  //    each customer is scoped to their own farm context (per-customer isolation).
+  const account = await prisma.users.findFirst({
+    where: { id: userId, deleted_at: null },
+    select: { linked_customer_id: true },
+  });
+  if (account?.linked_customer_id) {
+    const customer = await prisma.customers.findFirst({
+      where: { id: account.linked_customer_id, deleted_at: null },
+      select: { farm_id: true },
+    });
+    if (customer?.farm_id) return customer.farm_id;
+  }
+
+  // 3. Last-resort fallback: first farm (legacy behaviour for accounts with no link).
   const farm = await prisma.farm_profiles.findFirst({
     where: { deleted_at: null },
     select: { id: true },
